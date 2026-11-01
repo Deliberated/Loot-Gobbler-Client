@@ -1,0 +1,3 @@
+# Release files go on the GitHub Release as assets, not into the repo
+*.exe
+*.zip
