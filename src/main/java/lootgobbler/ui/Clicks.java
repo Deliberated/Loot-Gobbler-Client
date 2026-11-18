@@ -1,0 +1,63 @@
+package lootgobbler.ui;
+
+import javax.swing.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+
+/**
+ * Click handling that tolerates a moving mouse. Swing's mouseClicked only fires when press and release happen on the
+ * very same pixel; this fires when the left button is pressed and released anywhere on the component.
+ */
+public final class Clicks {
+    private Clicks() {
+    }
+
+    public static void onClick(JComponent c, Runnable action) {
+        onClick(c, e -> action.run());
+    }
+
+    /**
+     * Runs action as soon as the left button is pressed on c. For rows of lists that are rebuilt while data comes in
+     * (every second in a dungeon): a rebuild between press and release would lose a full click.
+     */
+    public static void onPress(JComponent c, Runnable action) {
+        c.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                if (SwingUtilities.isLeftMouseButton(e)) action.run();
+            }
+        });
+    }
+
+    /**
+     * Lays out a container whose children were just replaced right away instead of on the next layout pass: until
+     * then the new children have no size, and a click in that moment would hit the empty container behind them.
+     */
+    public static void layoutNow(JComponent c) {
+        c.revalidate();
+        java.awt.Container root = c;
+        while (root.getParent() != null && !(root instanceof JComponent j && j.isValidateRoot())) root = root.getParent();
+        root.validate();
+    }
+
+    /**
+     * Same, with the release event, for components that look up what is under the mouse (tables, painted maps).
+     */
+    public static void onClick(JComponent c, java.util.function.Consumer<MouseEvent> action) {
+        c.addMouseListener(new MouseAdapter() {
+            private boolean pressed;
+
+            @Override
+            public void mousePressed(MouseEvent e) {
+                pressed = SwingUtilities.isLeftMouseButton(e);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                boolean click = pressed && SwingUtilities.isLeftMouseButton(e) && c.contains(e.getPoint());
+                pressed = false;
+                if (click) action.accept(e);
+            }
+        });
+    }
+}

@@ -1,0 +1,548 @@
+package lootgobbler;
+
+import packets.data.StatData;
+import packets.data.enums.StatType;
+import packets.incoming.MapInfoPacket;
+import packets.incoming.VaultContentPacket;
+import tomato.backend.data.Entity;
+import tomato.backend.data.TomatoData;
+import tomato.realmshark.ParseEnchants;
+import tomato.realmshark.enums.LootBags;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Feeds the collection from what the sniffer sees: loot bags (Tomato's LootGUI), vault contents and
+ * your own inventory. Also triggers Discord alerts for drops. All methods run on the packet thread.
+ */
+public final class LootEvents {
+    /**
+     * One item in a bag, with the number of enchantments it carries (used as its rarity).
+     */
+    public record Drop(int id, int enchants, List<Integer> enchantIds) {
+        public Drop(int id, int enchants) {
+            this(id, enchants, null);
+        }
+    }
+
+    private static final String EMPTY_ENCHANT = "AAIE_f_9__3__f8=";
+    private static final Map<Integer, List<CollectionStore.Find>> vaultVisit = new LinkedHashMap<>();
+    private static final long INVENTORY_INTERVAL_MS = 5000;
+    private static long lastInventoryScan;
+
+    public static void bagDropped(MapInfoPacket map, Entity bag, Entity player) {
+        if (bag != null) lootBags.add(bag.id);   // items taken out of it are drops (UPE runs)
+        try {
+            List<Drop> drops = readBag(bag);
+            if (drops.isEmpty()) return;
+            ItemDb db = ItemDb.get();
+            String where = mapName(map), bagName = bagName(bag.objectType);
+            boolean recorded = false;
+            for (Drop d : drops) {
+                ItemDb.Item item = db.item(d.id());
+                if (item != null && item.isCollectible()) {
+                    CollectionStore.Find f = d.enchantIds() != null
+                            ? CollectionStore.Find.of(CollectionStore.DROP, d.enchantIds(), where, bagName)
+                            : CollectionStore.Find.of(CollectionStore.DROP, d.enchants(), where, bagName);
+                    f.seasonal = seasonal(player);
+                    CollectionStore.get().record(d.id(), f);
+                    recorded = true;
+                }
+            }
+            if (recorded) ServerSync.get().uploadSoon();   // shows up in the guild's caravan
+            DiscordAlerts.bagDropped(map, bag, player, drops);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Every vault packet (there can be several per visit). Recorded directly, independent of Tomato's own
+     * vault handling, which skips packets that arrive before your character is known.
+     */
+    public static void vaultPacket(VaultContentPacket p, Entity player) {
+        try {
+            // what you have: the vault slot by slot, saved once the visit is complete and its season known
+            if (Holdings.get().vaultPacket(p)) saveVault(player);
+            // a vault can arrive as several packets; collect copies until the one marked last, then record once
+            Boolean seasonal = seasonal(player);
+            int vault = addContainer(vaultVisit, p.vaultContents, p.vaultChestEnchants, "Vault chest", seasonal);
+            int gift = addContainer(vaultVisit, p.giftContents, p.giftChestEnchants, "Gift chest", seasonal);
+            System.out.println("Vault: " + vault + " vault + " + gift + " gift items"
+                    + (p.partial ? "  (packet only partly decoded)" : ""));
+            if (p.lastVaultPacket) {
+                // the vault usually arrives before your character does (it is forgotten on every map change), and
+                // which vault it is (seasonal or not) is only known from the character: until then it waits
+                if (player != null) vaultDone(player);
+                else vaultPending = true;
+            } else if (player != null) {
+                scanInventory(player);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /** One of your characters by id, from the character store; null if not known. */
+    private static CharacterStore.Char character(int charId) {
+        return CharacterStore.get().all().stream().filter(c -> c.charId == charId).findFirst().orElse(null);
+    }
+
+    /** Where on the character a copy is, by its slot index: 0-3 worn, anything else (inventory, backpack) inventory. */
+    public static String slotName(int i) {
+        return i < 4 ? "Equipped" : "Inventory";
+    }
+
+    private static boolean vaultPending;   // a whole vault came in before your character: recorded once it is known
+
+    /** Records a vault visit with the character in it: the vault's seasonality, and your inventory beside it. */
+    private static void vaultDone(Entity player) {
+        vaultPending = false;
+        CharacterStore.Char me = character(player.charId());
+        boolean seasonal = me != null ? me.seasonal : player.isSeasonal();   // the stat can still be missing on the first tick
+        for (List<CollectionStore.Find> finds : vaultVisit.values()) for (CollectionStore.Find f : finds) f.seasonal = seasonal;
+        // vault and inventory together: an item can't be in both, so this is everything you hold right now
+        inventoryFinds(player).forEach((id, finds) -> vaultVisit.computeIfAbsent(id, k -> new ArrayList<>()).addAll(finds));
+        int added = CollectionStore.get().recordHeld(vaultVisit);
+        System.out.println("Vault (" + (seasonal ? "seasonal" : "regular") + "): " + added + " copies new to the collection");
+        vaultVisit.clear();
+    }
+
+    /**
+     * Called every game tick; checks your equipment, inventory and backpack every few seconds.
+     */
+    public static void inventoryTick(TomatoData data) {
+        if (data.player != null && Holdings.get().vaultWaiting()) saveVault(data.player);
+        if (vaultPending && data.player != null) {
+            try {
+                vaultDone(data.player);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        long now = System.currentTimeMillis();
+        if (data.player == null || now - lastInventoryScan < INVENTORY_INTERVAL_MS) return;
+        lastInventoryScan = now;
+        try {
+            scanInventory(data.player);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static void scanInventory(Entity player) {
+        Map<Integer, Integer> chestsBefore = chestSlots;
+        int charBefore = chestChar;
+        Map<Integer, List<CollectionStore.Find>> held = inventoryFinds(player);
+        if (charBefore == player.charId()) openedChests(chestsBefore);   // first, so the copy is not counted twice
+        int added = held.isEmpty() ? 0 : CollectionStore.get().recordHeld(held);
+        if (added > 0) System.out.println("Inventory: " + added + " copies new to the collection");
+    }
+
+    /**
+     * What the game sent of the character you play: on entering a map (every stat) and in each tick (only the stats
+     * that changed). Only the slots sent change what you have.
+     */
+    public static void playerStatus(int charId, Entity player, packets.data.ObjectStatusData status, boolean entering) {
+        if (charId <= 0 || status == null || status.stats == null) return;
+        try {
+            StatData pack = player == null ? null : player.stat.get(StatType.BACKPACK_SLOTS_STAT);
+            java.util.List<Holdings.Slot> before = Holdings.get().slots("char:" + charId, Holdings.SLOTS);
+            int packSlots = pack != null ? pack.statValue : before != null ? Math.max(0, before.size() - 12) : 0;
+            Holdings.Live seen = liveSlots(status.stats, 12 + Math.max(0, Math.min(16, packSlots)), entering);
+            if (seen != null) Holdings.get().live(charId, seen);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /** A move you made between two slots (the swap packet you send): followed when it involves the vault. */
+    public static void invSwap(packets.outgoing.InvSwapPacket p, Entity player) {
+        if (p.slotFrom == null || p.slotTo == null) return;
+        lastSwap = p;   // a potion drunk from the storage is answered as "used up": the request says which
+        try {
+            int playerId = player == null ? 0 : player.id, charId = player == null ? 0 : player.charId();
+            Holdings.get().swap(playerId, charId, p.slotFrom.objectId, p.slotFrom.slotId, p.slotFrom.objectType,
+                    p.slotTo.objectId, p.slotTo.slotId, p.slotTo.objectType);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /** The game's answer to a move. */
+    public static void invResult(packets.incoming.InvResultPacket p, tomato.backend.data.TomatoData data) {
+        if (p.slotFrom == null || p.slotTo == null) return;
+        try {
+            Holdings.get().swapResult(p.result, p.resultType, p.slotFrom.objectId, p.slotFrom.slotId, p.slotFrom.objectType,
+                    p.slotTo.objectId, p.slotTo.slotId, p.slotTo.objectType);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        try {   // where items of your character came from, for UPE runs
+            Entity me = data == null ? null : data.player;
+            if (!p.result || me == null) return;
+            if (p.resultType == 1) {   // used up: a potion drunk straight from a vault container (the potion storage)
+                packets.outgoing.InvSwapPacket asked = lastSwap;
+                for (packets.data.SlotObjectData s : new packets.data.SlotObjectData[]{p.slotFrom, p.slotTo}) {
+                    String sec = Holdings.get().section(s.objectId);
+                    if (sec == null || asked == null) continue;
+                    packets.data.SlotObjectData was = asked.slotFrom.objectId == s.objectId && asked.slotFrom.slotId == s.slotId
+                            ? asked.slotFrom : asked.slotTo.objectId == s.objectId && asked.slotTo.slotId == s.slotId ? asked.slotTo : null;
+                    if (was != null) Upe.get().used(me.charId(), -1, was.objectType, sec);
+                }
+                return;
+            }
+            int a = p.slotFrom.objectId, b = p.slotTo.objectId;
+            Upe.get().moved(me.charId(), me.id, a, p.slotFrom.slotId, p.slotFrom.objectType, b, p.slotTo.slotId, p.slotTo.objectType,
+                    Holdings.get().section(a), isLootBag(data, a), Holdings.get().section(b), isLootBag(data, b));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static volatile packets.outgoing.InvSwapPacket lastSwap;
+    private static final java.util.Set<Integer> lootBags = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+
+    /** Whether the object is a loot bag (seen as one, or still on the map as one). */
+    static boolean isLootBag(tomato.backend.data.TomatoData data, int objectId) {
+        if (lootBags.contains(objectId)) return true;
+        Entity e = data.entityList.get(objectId);
+        return e != null && tomato.realmshark.enums.LootBags.lootBagName(e.objectType) != null;
+    }
+
+    /** An item used: a stat potion drunk from your inventory or straight from a vault container (UPE runs). */
+    public static void itemUsed(packets.outgoing.UseItemPacket p, tomato.backend.data.TomatoData data) {
+        try {
+            Entity me = data == null ? null : data.player;
+            if (me == null || p.slotObject == null) return;
+            int obj = p.slotObject.objectId;
+            Upe.get().used(me.charId(), p.slotObject.slotId, p.slotObject.objectType, obj == me.id ? null : Holdings.get().section(obj));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /** A trade window opened: both sides' slots with their enchantments, and the partner's name (UPE runs). */
+    public static void tradeStart(packets.incoming.TradeStartPacket p) {
+        Upe.get().tradeStart(p.partnerName, tradeItems(p.clientItems), tradeEnchants(p.clientItems),
+                tradeItems(p.partnerItems), tradeEnchants(p.partnerItems));
+    }
+
+    private static int[] tradeItems(packets.data.TradeItemData[] items) {
+        if (items == null) return new int[0];
+        int[] out = new int[items.length];
+        for (int i = 0; i < items.length; i++) out[i] = items[i] == null ? -1 : items[i].item;
+        return out;
+    }
+
+    private static int[][] tradeEnchants(packets.data.TradeItemData[] items) {
+        if (items == null) return new int[0][];
+        int[][] out = new int[items.length][];
+        for (int i = 0; i < items.length; i++) {
+            List<Integer> ids = items[i] == null || items[i].uniqueData == null ? null : enchantIds(items[i].uniqueData);
+            out[i] = ids == null ? new int[0] : ids.stream().mapToInt(Integer::intValue).toArray();
+        }
+        return out;
+    }
+
+    /** A trade that went through (UPE runs). */
+    public static void tradeDone(packets.incoming.TradeDonePacket p, tomato.backend.data.TomatoData data) {
+        AppLog.log("game", "Trade done: " + p.code + (p.description == null ? "" : " (" + p.description + ")"));
+        if (p.code != packets.data.enums.TradeResult.Successful || data == null || data.player == null) return;
+        Upe.get().traded(data.player.charId(), data.player.name());
+    }
+
+    /** What any object's status carries: for the vault's containers, the items of the page they show. */
+    public static void objectStatus(int objectId, packets.data.ObjectStatusData status) {
+        if (status == null || status.stats == null || !Holdings.get().isVaultObject(objectId)) return;
+        try {
+            Map<Integer, Integer> shown = new java.util.TreeMap<>();
+            int inv0 = StatType.INVENTORY_0_STAT.get();
+            for (StatData sd : status.stats) {
+                if (sd.statTypeNum >= inv0 && sd.statTypeNum < inv0 + 12) shown.put(sd.statTypeNum - inv0, sd.statValue);
+            }
+            Holdings.get().chestView(objectId, shown);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Saves a completed vault visit as the seasonal or regular vault. The season comes from the game's own stat
+     * for this character, else from the character list; until one of them is known, the visit waits.
+     */
+    private static void saveVault(Entity player) {
+        if (player == null) return;
+        StatData stat = player.stat.get(StatType.SEASONAL);
+        CharacterStore.Char me = character(player.charId());
+        Boolean seasonal = stat != null ? (Boolean) (stat.statValue == 1) : me != null ? (Boolean) me.seasonal : null;
+        String how = stat != null ? "from the character's stat" : "from the character list";
+        if (stat != null && me != null && me.seasonal != (stat.statValue == 1)) how += " (the character list said otherwise)";
+        Holdings.get().vaultSeason(seasonal, how);
+    }
+
+    /**
+     * The slots in one status of your character (n slots: equipment, inventory, then the packs; and the quick slots):
+     * UNKNOWN where the status does not carry that slot. Null if it carries no slot and no enchantments at all. On
+     * entering a map an empty quick slot counts as not sent: the game shows quick slots empty for a moment there.
+     */
+    @SuppressWarnings("unchecked")
+    static Holdings.Live liveSlots(StatData[] stats, int n, boolean entering) {
+        int[] items = new int[n];
+        java.util.Arrays.fill(items, Holdings.Live.UNKNOWN);
+        int[] quick = new int[QUICKSLOTS.length];
+        java.util.Arrays.fill(quick, Holdings.Live.UNKNOWN);
+        String codes = null;
+        boolean any = false, anyQuick = false;
+        int inv0 = StatType.INVENTORY_0_STAT.get(), pack0 = StatType.BACKPACK_0_STAT.get();
+        for (StatData sd : stats) {
+            int t = sd.statTypeNum, i = -1;
+            if (t >= inv0 && t < inv0 + 12) i = t - inv0;
+            else if (t >= pack0 && t < pack0 + 16) i = 12 + t - pack0;
+            if (i >= 0 && i < n) {
+                items[i] = sd.statValue < 1 ? -1 : sd.statValue;
+                any = true;
+                continue;
+            }
+            if (t == StatType.UNIQUE_DATA_STRING.get()) {
+                codes = sd.stringStatValue;
+                continue;
+            }
+            for (int k = 0; k < QUICKSLOTS.length; k++) {
+                if (t == QUICKSLOTS[k].get()) {
+                    if (sd.statValue < 1 && entering) continue;
+                    quick[k] = sd.statValue < 1 ? -1 : sd.statValue;
+                    anyQuick = true;
+                }
+            }
+        }
+        List<Integer>[] ench = new List[n];
+        if (codes != null) {   // one code per slot, every slot
+            String[] c = codes.split(",", -1);
+            for (int i = 0; i < n && i < c.length; i++) ench[i] = enchantIds(c[i]);
+        }
+        if (!any && !anyQuick && codes == null) return null;
+        return new Holdings.Live(items, ench, anyQuick ? quick : null);
+    }
+
+    /**
+     * A chest item (Eerie Music Box, mystery ST chests...) turns into the item it grants, in the same slot. Such an
+     * item is a new copy, counted like a drop ("Drop · Eerie Music Box"); without this, a second copy of an item
+     * you already have would only be counted once both are seen at the vault.
+     */
+    private static void openedChests(Map<Integer, Integer> chestsBefore) {
+        // only as many as chests of that kind went away: moving a chest and putting an item in its slot is no opening
+        Map<Integer, Integer> gone = new HashMap<>();
+        for (int chest : chestsBefore.values()) gone.merge(chest, 1, Integer::sum);
+        for (int chest : chestSlots.values()) gone.merge(chest, -1, Integer::sum);
+        boolean any = false;
+        for (Map.Entry<Integer, Integer> c : chestsBefore.entrySet()) {
+            Integer now = slotItems.get(c.getKey());
+            CollectionStore.Find copy = slotCopies.get(c.getKey());
+            if (now == null || copy == null) continue;   // still the chest, emptied, or not a collectible
+            if (gone.getOrDefault(c.getValue(), 0) <= 0) continue;
+            gone.merge(c.getValue(), -1, Integer::sum);
+            ItemDb.Item chest = ItemDb.get().item(c.getValue());
+            String from = chest == null ? "Chest" : chest.name;
+            CollectionStore.Find f = copy.enchantIds != null
+                    ? CollectionStore.Find.of(CollectionStore.DROP, copy.enchantIds, from, "")
+                    : CollectionStore.Find.of(CollectionStore.DROP, -1, from, "");
+            f.seasonal = copy.seasonal;
+            CollectionStore.get().record(now, f);
+            AppLog.log("items", "Opened " + from + ": " + ItemDb.get().item(now).name);
+            any = true;
+        }
+        if (any) ServerSync.get().uploadSoon();
+    }
+
+    private static volatile Map<Integer, Integer> chestSlots = Map.of();   // slot -> chest item, as of the last scan
+    private static volatile int chestChar;                                 // the character those slots belong to
+
+    /** The collectible copy in each slot (equipment, inventory, backpack) as of the last scan, by slot index. */
+    private static volatile Map<Integer, CollectionStore.Find> slotCopies = Map.of();
+    private static volatile Map<Integer, Integer> slotItems = Map.of();
+    /** Your three quick slots' item stats, and the slot numbers they get here (after every real slot). */
+    public static final StatType[] QUICKSLOTS = {StatType.POTION_ONE_TYPE, StatType.POTION_TWO_TYPE, StatType.POTION_THREE_TYPE};
+    private static final int QUICKSLOT_FIRST = 1000;
+
+    /**
+     * The copy of the item in a slot of yours as of the last inventory scan (its enchantments and whether the
+     * character is seasonal), or null if that slot held something else. For forging and feeding, which name slots.
+     */
+    public static CollectionStore.Find copyInSlot(int slot, int itemId) {
+        Integer there = slotItems.get(slot);
+        return there != null && there == itemId ? slotCopies.get(slot) : null;
+    }
+
+    /**
+     * Collectible items in your equipment, inventory and backpack: item id to one Find per copy.
+     */
+    private static Map<Integer, List<CollectionStore.Find>> inventoryFinds(Entity player) {
+        ItemDb db = ItemDb.get();
+        Map<Integer, List<CollectionStore.Find>> held = new LinkedHashMap<>();
+        Map<Integer, CollectionStore.Find> copies = new HashMap<>();
+        Map<Integer, Integer> items = new HashMap<>();
+        Map<Integer, Integer> chests = new HashMap<>();
+        // enchant codes for every slot (equipment, inventory, backpack), same per-slot list loot bags use
+        StatData udata = player.stat.get(StatType.UNIQUE_DATA_STRING);
+        String[] codes = udata == null || udata.stringStatValue == null ? new String[0] : udata.stringStatValue.split(",", -1);
+        // this very character (not "the one played", which lags behind a switch), as it looks now; its season from
+        // the character list, as the entity's stat can still be missing on the first tick
+        CharacterStore.Char me = character(player.charId());
+        CollectionStore.Seen here = me != null ? CollectionStore.Seen.character(me) : null;
+        boolean seasonal = me != null ? me.seasonal : player.isSeasonal();
+        for (int i = 0; i < 28; i++) {
+            boolean backpack = i >= 12;
+            int stat = backpack ? StatType.BACKPACK_0_STAT.get() + (i - 12) : StatType.INVENTORY_0_STAT.get() + i;
+            StatData sd = player.stat.get(stat);
+            if (sd == null || sd.statValue < 1) continue;
+            ItemDb.Item item = db.item(sd.statValue);
+            if (item != null && item.chest) chests.put(i, sd.statValue);
+            if (item == null || !item.isCollectible()) continue;
+            // live enchant codes: one per slot, equipment, inventory and backpack alike; when they are missing, use
+            // the character list's data for that slot, if the same item is still there
+            List<Integer> ids = i < codes.length ? enchantIds(codes[i]) : null;
+            if (ids == null) {
+                int[] known = CharacterStore.get().slotEnchants(player.charId(), i, sd.statValue);
+                if (known != null) ids = Arrays.stream(known).boxed().toList();
+            }
+            String slot = slotName(i);
+            CollectionStore.Find f = ids != null
+                    ? CollectionStore.Find.of(CollectionStore.INVENTORY, ids, "", slot)
+                    : CollectionStore.Find.of(CollectionStore.INVENTORY, -1, "", slot);
+            f.seasonal = seasonal;
+            f.seen = here;
+            held.computeIfAbsent(sd.statValue, k -> new ArrayList<>()).add(f);
+            copies.put(i, f);
+            items.put(i, sd.statValue);
+        }
+        // the three quick slots (their own stats, not inventory slots): quick-slot gear such as the Coral Juice Refinery
+        for (int k = 0; k < QUICKSLOTS.length; k++) {
+            StatData sd = player.stat.get(QUICKSLOTS[k]);
+            ItemDb.Item item = sd == null || sd.statValue < 1 ? null : db.item(sd.statValue);
+            if (item == null || !item.isCollectible()) continue;
+            CollectionStore.Find f = CollectionStore.Find.of(CollectionStore.INVENTORY, -1, "", "Quick slot");
+            f.seasonal = seasonal;
+            f.seen = here;
+            held.computeIfAbsent(sd.statValue, x -> new ArrayList<>()).add(f);
+            copies.put(QUICKSLOT_FIRST + k, f);
+            items.put(QUICKSLOT_FIRST + k, sd.statValue);
+        }
+        slotCopies = copies;
+        slotItems = items;
+        chestSlots = chests;
+        chestChar = player.charId();
+        return held;
+    }
+
+    /**
+     * True if (nearly) every non-empty slot holds a known equipment item. Guards against reading garbage when the
+     * vault packet only partly decodes.
+     */
+    private static boolean plausible(int[] ids) {
+        if (ids == null) return false;
+        int used = 0, known = 0;
+        ItemDb db = ItemDb.get();
+        for (int id : ids) {
+            if (id < 1) continue;
+            used++;
+            if (db.item(id) != null) known++;
+        }
+        return known >= used * 0.9;
+    }
+
+    /**
+     * Whether the character is seasonal, or null when it is not known yet (no player entity).
+     */
+    private static Boolean seasonal(Entity player) {
+        return player == null ? null : player.isSeasonal();
+    }
+
+    private static int addContainer(Map<Integer, List<CollectionStore.Find>> finds, int[] ids, String enchantData, String label,
+                                    Boolean seasonal) {
+        if (ids == null) return 0;
+        if (!plausible(ids)) {
+            System.out.println("Vault: skipped " + label + " (" + ids.length + " slots did not decode as items)");
+            return 0;
+        }
+        // limit -1 keeps trailing empty entries, so one entry per slot even when the last slots have no enchant
+        String[] enchants = enchantData == null ? null : enchantData.split(",", -1);
+        boolean aligned = enchants != null && enchants.length == ids.length;   // only trust it if it lines up
+        ItemDb db = ItemDb.get();
+        int count = 0;
+        for (int i = 0; i < ids.length; i++) {
+            if (ids[i] < 1) continue;
+            count++;
+            ItemDb.Item item = db.item(ids[i]);
+            if (item == null || !item.isCollectible()) continue;
+            CollectionStore.Find f = aligned
+                    ? CollectionStore.Find.of(CollectionStore.VAULT, enchantIds(enchants[i]), "Vault", label)
+                    : CollectionStore.Find.of(CollectionStore.VAULT, -1, "Vault", label);
+            f.seasonal = seasonal;
+            f.seen = CollectionStore.Seen.vault(label);
+            finds.computeIfAbsent(ids[i], k -> new ArrayList<>()).add(f);
+        }
+        return count;
+    }
+
+    static List<Drop> readBag(Entity bag) {
+        String[] enchants = null;
+        StatData udata = bag.stat.get(StatType.UNIQUE_DATA_STRING);
+        if (udata != null && udata.stringStatValue != null) enchants = udata.stringStatValue.split(",");
+
+        List<Drop> drops = new ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            StatData sd = bag.stat.get(StatType.INVENTORY_0_STAT.get() + i);
+            if (sd == null || sd.statValue < 1) continue;
+            List<Integer> ids = enchantIds(enchants != null && i < enchants.length ? enchants[i] : null);
+            drops.add(new Drop(sd.statValue, ids.size(), ids));
+        }
+        return drops;
+    }
+
+    /**
+     * Enchantment slots in an item's enchant code: the enchantment id per filled slot and -1 per empty
+     * (unlocked) slot. The list size is the item's rarity (1 uncommon .. 4 divine).
+     * Layout (URL-safe base64): header byte, short 1026, exactly four slot shorts, then an optional trailer.
+     * A slot is an enchantment id, -1 (empty), -2 (locked) or -3 (no slot); -3 can sit between enchantments,
+     * so all four slots are always read.
+     */
+    static List<Integer> enchantIds(String code) {
+        List<Integer> ids = new ArrayList<>();
+        if (code == null || code.isEmpty() || code.equals(EMPTY_ENCHANT)) return ids;
+        try {
+            byte[] raw = tomato.realmshark.PcStatsDecoder.sixBitStringToBytes(code);
+            java.nio.ByteBuffer b = java.nio.ByteBuffer.wrap(raw).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            if (b.remaining() < 3) return ids;
+            b.get();   // header
+            if (b.getShort() != 1026) return ids;
+            for (int slot = 0; slot < 4 && b.remaining() >= 2; slot++) {
+                short id = b.getShort();
+                if (id == -3 || id == -2) continue;   // no slot / locked: does not count
+                ids.add((int) id);                    // enchantment, or -1 for an empty slot
+            }
+        } catch (Exception ignored) {
+            // malformed code: treat as no enchantments
+        }
+        return ids;
+    }
+
+    static String bagName(int objectType) {
+        String n = LootBags.lootBagName(objectType);
+        if (n == null) return "Loot";
+        return n.startsWith("B.") ? "Boosted " + n.substring(2) : n;
+    }
+
+    public static String mapName(MapInfoPacket map) {
+        if (map == null) return "Unknown";
+        return map.displayName != null && !map.displayName.isEmpty() && !map.displayName.startsWith("{") ? map.displayName : map.name;
+    }
+
+    private LootEvents() {
+    }
+}
