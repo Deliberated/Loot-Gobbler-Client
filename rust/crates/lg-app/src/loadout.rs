@@ -56,11 +56,40 @@ pub struct Enchantment {
     pub item_excludes: Vec<String>,
     pub item_ids_excluded: Vec<String>,
     pub effects: Vec<Effect>,
+    pub description: String,
 }
 
 impl Enchantment {
     fn has(&self, l: &str) -> bool {
         self.labels.iter().any(|x| x == l)
+    }
+
+    /// Java `Enchantment.kind().label`: the group the enchanter sorts it into.
+    pub fn kind_label(&self) -> &'static str {
+        let has = |l: &str| self.labels.iter().any(|x| x == l);
+        if has("AWAKENED") {
+            return "Awakened";
+        }
+        if has("UNIQUE") {
+            return "Unique";
+        }
+        if has("SINGLESTAT") {
+            return "Single stat";
+        }
+        if has("DUALSTAT") {
+            return "Dual stat";
+        }
+        if has("REWARD") {
+            return "Reward";
+        }
+        for set in [&self.item_needs, &self.labels] {
+            for (l, label) in [("WEAPON", "Weapon"), ("ABILITY", "Ability"), ("ARMOR", "Armor"), ("RING", "Ring")] {
+                if set.iter().any(|x| x == l) {
+                    return label;
+                }
+            }
+        }
+        "Other"
     }
 
     pub fn rollable(&self) -> bool {
@@ -98,11 +127,28 @@ impl Rule {
 struct Pool {
     entries: Vec<Rule>,
     ids: HashSet<String>,
+    /// Weight multipliers for the enchantments a rule matches, and for single enchantments by key.
+    label_mods: Vec<(Rule, f64)>,
+    id_mods: HashMap<String, f64>,
 }
 
 impl Pool {
     fn contains(&self, e: &Enchantment) -> bool {
         self.ids.contains(&e.key) || self.entries.iter().any(|r| r.matches(&e.labels))
+    }
+
+    /// Java `Pool.weight`: its weight in this pool (0 if it is not in it).
+    fn weight(&self, e: &Enchantment) -> f64 {
+        if !self.contains(e) {
+            return 0.0;
+        }
+        let mut w = f64::from(e.weight);
+        for (r, m) in &self.label_mods {
+            if r.matches(&e.labels) {
+                w *= m;
+            }
+        }
+        w * self.id_mods.get(&e.key).copied().unwrap_or(1.0)
     }
 }
 
@@ -222,6 +268,7 @@ impl Enchantments {
                     item_excludes: set(&text(e, "IncompatibleWithItemLabels")),
                     item_ids_excluded: set(&text(e, "IncompatibleWithItemIds")),
                     effects,
+                    description: text(e, "Description"),
                 };
                 match out.by_type.get(&kind) {
                     Some(&i) => out.all[i] = en,
@@ -236,7 +283,8 @@ impl Enchantments {
             && let Ok(root) = xml::parse(&s)
         {
             for l in direct(&root, Some("EnchantmentList")) {
-                let mut pool = Pool { entries: Vec::new(), ids: HashSet::new() };
+                let mut pool = Pool { entries: Vec::new(), ids: HashSet::new(), label_mods: Vec::new(), id_mods: HashMap::new() };
+                let number = |v: &str| v.trim().parse::<f64>().unwrap_or(0.0);
                 for c in direct(l, None) {
                     match c.name.as_str() {
                         "EnchantmentEntryLabel" => pool.entries.push(Rule {
@@ -246,15 +294,25 @@ impl Enchantments {
                         "EnchantmentEntry" => {
                             pool.ids.insert(c.attr_or_empty("id").to_string());
                         }
+                        "ModifyEnchantmentWeightLabel" => pool.label_mods.push((
+                            Rule { include: set(c.attr_or_empty("includeLabelsOR")), exclude: set(c.attr_or_empty("excludeLabelsOR")) },
+                            number(c.attr_or_empty("mult")),
+                        )),
+                        "ModifyEnchantmentWeight" => {
+                            pool.id_mods.insert(c.attr_or_empty("id").to_string(), number(c.attr_or_empty("mult")));
+                        }
                         _ => {}
                     }
                 }
                 out.pools.insert(l.attr_or_empty("id").to_string(), pool);
             }
         }
-        out.pools
-            .entry(DEFAULT_POOL.into())
-            .or_insert_with(|| Pool { entries: vec![Rule { include: vec!["ROLLABLE".into()], exclude: vec![] }], ids: HashSet::new() });
+        out.pools.entry(DEFAULT_POOL.into()).or_insert_with(|| Pool {
+            entries: vec![Rule { include: vec!["ROLLABLE".into()], exclude: vec![] }],
+            ids: HashSet::new(),
+            label_mods: Vec::new(),
+            id_mods: HashMap::new(),
+        });
         // the most one rollable flat single-stat enchantment gives each stat; loot and flat regeneration likewise
         let mut u = [0.0f64; 8];
         for e in &out.all {
@@ -302,6 +360,14 @@ impl Enchantments {
     }
 
     /// Java `rollableOn`: what the enchanter can roll on the item, in file order.
+    /// Java `Enchantments.weightOn`: how likely a reroll of a slot of this item gives it (relative).
+    pub fn weight_on(&self, item: &Item, e: usize) -> f64 {
+        let Some(slots) = &item.enchant_slots else { return 0.0 };
+        let Some(pool) = self.pools.get(&slots.pool).or_else(|| self.pools.get(DEFAULT_POOL)) else { return 0.0 };
+        let en = &self.all[e];
+        if !en.fits(item) || !en.rollable() { 0.0 } else { pool.weight(en) }
+    }
+
     pub fn rollable_on(&self, item: &Item) -> Vec<usize> {
         let Some(slots) = &item.enchant_slots else { return Vec::new() };
         let Some(pool) = self.pools.get(&slots.pool).or_else(|| self.pools.get(DEFAULT_POOL)) else { return Vec::new() };
@@ -581,8 +647,12 @@ impl Aim {
 
 // ---- weapon DPS (Java `WeaponDps`) ------------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy)]
-struct Line {
+/// One subattack of a weapon (Java `WeaponDps.Line`): where it comes from (the weapon's or an enchantment's
+/// name) and its index.
+#[derive(Debug, Clone)]
+pub struct Line {
+    pub from: String,
+    pub index: usize,
     projectile: i32,
     shot: Shot,
     count: i32,
@@ -593,20 +663,50 @@ struct Line {
 }
 
 impl Line {
-    fn shots_per_second(&self, dex: f64) -> f64 {
+    pub fn count(&self) -> i32 {
+        self.count
+    }
+
+    pub fn burst(&self) -> i32 {
+        self.burst
+    }
+
+    pub fn rate_of_fire(&self) -> f64 {
+        self.rate
+    }
+
+    pub fn armor_piercing(&self) -> bool {
+        self.shot.armor_piercing
+    }
+
+    /// Average damage of one shot against this defense.
+    pub fn per_shot(&self, att: f64, def: f64) -> f64 {
+        let hit = (self.shot.min + self.shot.max) / 2.0 * damage_multiplier(att);
+        if self.shot.armor_piercing { hit } else { (hit - def).max(hit * 0.1) }
+    }
+
+    pub fn shots_per_second(&self, dex: f64) -> f64 {
         if self.burst > 0 && self.burst_delay > 0.0 {
             let t = (dex / 75.0).clamp(0.0, 1.0);
             let period = self.burst_delay + (self.burst_min - self.burst_delay) * t;
             return if period <= 0.0 { 0.0 } else { f64::from(self.count) * f64::from(self.burst) * self.rate / period };
         }
-        f64::from(self.count) * self.rate * (1.5 + 6.5 * dex / 75.0)
+        f64::from(self.count) * self.rate * attacks_per_second(dex)
     }
 
-    fn dps(&self, att: f64, dex: f64, def: f64) -> f64 {
-        let hit = (self.shot.min + self.shot.max) / 2.0 * (0.5 + att / 50.0);
-        let per = if self.shot.armor_piercing { hit } else { (hit - def).max(hit * 0.1) };
-        per * self.shots_per_second(dex)
+    pub fn dps(&self, att: f64, dex: f64, def: f64) -> f64 {
+        self.per_shot(att, def) * self.shots_per_second(dex)
     }
+}
+
+/// Java `WeaponDps.attacksPerSecond`.
+pub fn attacks_per_second(dex: f64) -> f64 {
+    1.5 + 6.5 * dex / 75.0
+}
+
+/// Java `WeaponDps.damageMultiplier`.
+pub fn damage_multiplier(att: f64) -> f64 {
+    0.5 + att / 50.0
 }
 
 pub fn is_weapon(item: Option<&Item>) -> bool {
@@ -631,9 +731,11 @@ fn attacks(item: &Item) -> Vec<lg_gamedata::items::Volley> {
         .collect()
 }
 
-fn line(from: &Item, v: &lg_gamedata::items::Volley) -> Option<Line> {
+fn line(from: &Item, v: &lg_gamedata::items::Volley, index: usize) -> Option<Line> {
     let shot = *from.weapon.as_ref()?.shots.get(&v.projectile)?;
     Some(Line {
+        from: from.name.clone(),
+        index,
         projectile: v.projectile,
         shot,
         count: v.count,
@@ -646,8 +748,13 @@ fn line(from: &Item, v: &lg_gamedata::items::Volley) -> Option<Line> {
 
 /// Java `WeaponDps.dps`: damage per second against this defense.
 pub fn dps(en: &Enchantments, data: &GameData, weapon: Option<&Item>, enchants: &[usize], att: f64, dex: f64, def: f64) -> f64 {
-    let Some(w) = weapon.filter(|w| is_weapon(Some(w))) else { return 0.0 };
-    let mut out: Vec<Option<Line>> = attacks(w).iter().map(|v| line(w, v)).collect();
+    lines(en, data, weapon, enchants).iter().map(|l| l.dps(att, dex, def)).sum()
+}
+
+/// Java `WeaponDps.lines`: the weapon's subattacks with its enchantments' changes.
+pub fn lines(en: &Enchantments, data: &GameData, weapon: Option<&Item>, enchants: &[usize]) -> Vec<Line> {
+    let Some(w) = weapon.filter(|w| is_weapon(Some(w))) else { return Vec::new() };
+    let mut out: Vec<Option<Line>> = attacks(w).iter().enumerate().map(|(i, v)| line(w, v, i)).collect();
     let parse = |s: Option<&String>, fallback: i32| s.and_then(|s| s.trim().parse::<f64>().ok()).map_or(fallback, |v| v as i32);
     for &e in enchants {
         for f in &en.all[e].effects {
@@ -666,8 +773,8 @@ pub fn dps(en: &Enchantments, data: &GameData, weapon: Option<&Item>, enchants: 
             if which < 0 || which as usize >= theirs.len() {
                 continue;
             }
-            let l = line(bx, &theirs[which as usize]);
             let at = at as usize;
+            let l = line(bx, &theirs[which as usize], at).map(|l| Line { from: en.all[e].name.clone(), ..l });
             while out.len() < at {
                 out.push(None);
             }
@@ -682,7 +789,7 @@ pub fn dps(en: &Enchantments, data: &GameData, weapon: Option<&Item>, enchants: 
         for f in &en.all[e].effects {
             let Effect::WeaponMod { what, factor, index } = f else { continue };
             for i in 0..out.len() {
-                let Some(mut l) = out[i] else { continue };
+                let Some(mut l) = out[i].clone() else { continue };
                 match what.as_str() {
                     "MinDamage" | "MaxDamage" => {
                         if *index >= 0 && *index != l.projectile {
@@ -707,7 +814,7 @@ pub fn dps(en: &Enchantments, data: &GameData, weapon: Option<&Item>, enchants: 
             }
         }
     }
-    out.iter().flatten().map(|l| l.dps(att, dex, def)).sum()
+    out.into_iter().flatten().collect()
 }
 
 // ---- picking per slot (Java `CharacterDetail`) ------------------------------------------------------------------
@@ -1072,7 +1179,12 @@ pub struct Settings {
     pub second_chance: usize,
     pub item_locks: String,
     pub enchant_locks: String,
+    /// Java `idealShowReplaced`: the enchantments a suggestion replaces are listed (struck through).
+    pub show_replaced: bool,
 }
+
+/// The scopes' names as saved (Java `SCOPES`).
+pub const SCOPES: [&str; 3] = ["current", "local", "global"];
 
 impl Settings {
     pub fn from(props: &crate::properties::Properties) -> Settings {
@@ -1100,7 +1212,56 @@ impl Settings {
             second_chance: int("idealSecondChance").map_or(0, |v| v.clamp(0, 2) as usize),
             item_locks: get("idealItemLocks").unwrap_or("").to_string(),
             enchant_locks: get("idealLocks").unwrap_or("").to_string(),
+            show_replaced: get("idealShowReplaced") == Some("true"),
         }
+    }
+
+    /// The settings as Java saves them, key and value.
+    pub fn saved(&self) -> Vec<(&'static str, String)> {
+        let def = if self.enemy_def.fract() == 0.0 { format!("{}", self.enemy_def as i64) } else { self.enemy_def.to_string() };
+        vec![
+            ("idealLoadoutStats", self.chosen.join(",")),
+            ("idealScope", SCOPES[self.scope.min(2)].to_string()),
+            ("idealEnemyDef", def),
+            ("idealSecondChance", self.second_chance.to_string()),
+            ("idealShowReplaced", self.show_replaced.to_string()),
+            ("idealItemLocks", self.item_locks.clone()),
+            ("idealLocks", self.enchant_locks.clone()),
+        ]
+    }
+
+    /// Java `toggleItemLock`: locks this item in the character's slot, or unlocks it if it is the one locked there.
+    pub fn toggle_item_lock(&mut self, char_id: i32, slot: usize, item: i32) {
+        let prefix = format!("{char_id}:{slot}:");
+        let mut was = false;
+        let mut parts: Vec<String> = Vec::new();
+        for part in self.item_locks.split(';') {
+            if part.trim().is_empty() {
+                continue;
+            }
+            if part.starts_with(&prefix) {
+                was |= part == format!("{prefix}{item}");
+                continue; // one item per slot
+            }
+            parts.push(part.to_string());
+        }
+        if !was {
+            parts.push(format!("{prefix}{item}"));
+        }
+        self.item_locks = parts.join(";");
+    }
+
+    /// Java `toggleLock`: an enchantment kept on the character's slot, or no longer.
+    pub fn toggle_enchant_lock(&mut self, char_id: i32, slot: usize, kind: i32) {
+        let entry = format!("{char_id}:{slot}:{kind}");
+        let mut parts: Vec<String> = self.enchant_locks.split(';').filter(|p| !p.trim().is_empty()).map(str::to_string).collect();
+        match parts.iter().position(|p| *p == entry) {
+            Some(i) => {
+                parts.remove(i);
+            }
+            None => parts.push(entry),
+        }
+        self.enchant_locks = parts.join(";");
     }
 
     /// Java `lockedItem`.
@@ -1255,6 +1416,9 @@ pub struct Summary {
     pub enchanted: [f64; 8],
     pub have: [f64; 8],
     pub has_weapon: bool,
+    /// Attack and dexterity with the suggestion (the DPS's tooltip shows them).
+    pub att: f64,
+    pub dex: f64,
     pub dps: f64,
     pub dps_now: f64,
     pub loot: f64,
@@ -1308,6 +1472,7 @@ pub fn summary(app: &crate::App, en: &Enchantments, c: &crate::characters::Char,
     let dex = f64::from(max[5]) + sug_d[5] + s.enchanted[5];
     let weapon = data.items.item(picks[0].id);
     s.has_weapon = is_weapon(weapon) || is_weapon(worn[0]);
+    (s.att, s.dex) = (att, dex);
     s.dps = dps(en, data, weapon, &s.finals[0], att, dex, def);
     let sug_all: Vec<usize> = s.finals.iter().flatten().copied().collect();
     let now_all: Vec<usize> = worn_lists.iter().flatten().copied().collect();

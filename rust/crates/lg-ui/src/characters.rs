@@ -749,7 +749,12 @@ impl CharactersView {
                             pos2(head.left() + 10.0 + 8.0 + 8.0 + tw + 8.0 + 13.0, head.center().y),
                             vec2(26.0, 26.0),
                         );
-                        let hover = ui.interact(bx, ui.scope_id().with("reset"), Sense::click());
+                        let hover = ui
+                            .interact(bx, ui.scope_id().with("reset"), Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(
+                                "Reset: turn off every stat and aim, set the scope to current, second chance and deleted enchants off, and the enemy DEF to 0\n(locked items and enchantments stay locked)",
+                            );
                         reset_box(&painter, bx, hover.hovered(), &p);
                         reset = hover.clicked();
                         if none_chosen {
@@ -770,11 +775,14 @@ impl CharactersView {
                     },
                 );
                 mark(ui, "characters.suggested", y0, y);
+                let before = c.loadout.saved();
                 if reset {
+                    // locked items and enchantments stay locked
                     c.loadout.chosen.clear();
                     c.loadout.scope = 0;
                     c.loadout.enemy_def = 0.0;
                     c.loadout.second_chance = 0;
+                    c.loadout.show_replaced = false;
                 }
                 match change {
                     Some(crate::suggested::Change::Toggle(k)) => {
@@ -786,7 +794,17 @@ impl CharactersView {
                     }
                     Some(crate::suggested::Change::Scope) => c.loadout.scope = (c.loadout.scope + 1) % 3,
                     Some(crate::suggested::Change::SecondChance) => c.loadout.second_chance = (c.loadout.second_chance + 1) % 3,
-                    _ => {}
+                    Some(crate::suggested::Change::ShowReplaced) => c.loadout.show_replaced = !c.loadout.show_replaced,
+                    Some(crate::suggested::Change::EnemyDef(v)) => c.loadout.enemy_def = v,
+                    Some(crate::suggested::Change::ItemLock(slot, item)) => c.loadout.toggle_item_lock(ch.char_id, slot, item),
+                    Some(crate::suggested::Change::EnchantLock(slot, kind)) => c.loadout.toggle_enchant_lock(ch.char_id, slot, kind),
+                    None => {}
+                }
+                // what changed is saved, as Java saves each setting at once
+                for ((k, v), (_, was)) in c.loadout.saved().into_iter().zip(before) {
+                    if v != was {
+                        c.asks.push(crate::window::Ask::Set(k.to_string(), v));
+                    }
                 }
             }
             let y0 = y;
