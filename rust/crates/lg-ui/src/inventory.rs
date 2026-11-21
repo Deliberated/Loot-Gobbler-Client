@@ -360,14 +360,77 @@ impl InventoryView {
                         let i = cy.floor() as usize * n + cx.floor() as usize;
                         (cx >= 0.0 && cy >= 0.0 && cx < cols && i < cells.len()).then_some(i)
                     };
+                    // the hover light (Java `paintLight`): a soft glow under the mouse that lights up the cell
+                    // borders near it, fading in (120 ms) and out (350 ms)
+                    let lid = egui::Id::unique("lg-grid-light");
+                    let (mut lp, mut la, lt) = ui.ctx().data(|d| d.get_temp::<(egui::Pos2, f32, f64)>(lid)).unwrap_or((top, 0.0, time_s));
+                    let dt = ((time_s - lt) * 1000.0) as f32;
+                    let on = resp.hovered();
+                    if let Some(q) = resp.hover_pos() {
+                        lp = q;
+                    }
+                    la = if on { (la + dt / 120.0).min(1.0) } else { (la - dt / 350.0).max(0.0) };
+                    ui.ctx().data_mut(|d| d.insert_temp(lid, (lp, la, time_s)));
+                    if la > 0.0 {
+                        const RADIUS: f32 = 90.0;
+                        let white = |k: f32| Color32::from_white_alpha((255.0 * k * la).round() as u8);
+                        let ring = |r: f32| {
+                            (0..48).map(move |i| {
+                                let a = i as f32 / 48.0 * std::f32::consts::TAU;
+                                lp + vec2(a.cos(), a.sin()) * r
+                            })
+                        };
+                        let mut mesh = egui::Mesh::default();
+                        mesh.colored_vertex(lp, white(0.13));
+                        for q in ring(RADIUS * 0.45) {
+                            mesh.colored_vertex(q, white(0.05));
+                        }
+                        for q in ring(RADIUS) {
+                            mesh.colored_vertex(q, Color32::TRANSPARENT);
+                        }
+                        for i in 0..48u32 {
+                            let j = (i + 1) % 48;
+                            mesh.add_triangle(0, 1 + i, 1 + j);
+                            mesh.add_triangle(1 + i, 49 + i, 49 + j);
+                            mesh.add_triangle(1 + i, 49 + j, 1 + j);
+                        }
+                        painter.add(egui::Shape::mesh(mesh));
+                        for i in 0..cells.len() {
+                            let cr = cell_rect(i);
+                            let d = (cr.center() - lp).length() / RADIUS;
+                            if d >= 1.0 {
+                                continue;
+                            }
+                            let strength = (1.0 - d) * (1.0 - d);
+                            painter.rect_stroke(
+                                cr.shrink(0.5),
+                                0.0,
+                                Stroke::new(1.0, white((0.38 * strength).min(1.0))),
+                                StrokeKind::Inside,
+                            );
+                        }
+                        if la < 1.0 {
+                            ui.ctx().request_repaint();
+                        }
+                    }
                     if let Some(i) = resp.hover_pos().and_then(at) {
-                        painter.rect_stroke(
-                            cell_rect(i).shrink(1.0),
-                            0.0,
-                            Stroke::new(2.0, Color32::from_white_alpha(90)),
-                            StrokeKind::Inside,
-                        );
+                        // the cell under the mouse: a light gold frame; its name and count beside the mouse
+                        let light_gold = crate::theme::mix(p.gold, Color32::WHITE, 0.5);
+                        painter.rect_stroke(cell_rect(i).shrink(1.0), 0.0, Stroke::new(2.0, light_gold), StrokeKind::Inside);
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        let it = data.items.item(cells[i].id);
+                        let name = it.map_or(String::new(), |it| {
+                            if it.is_shiny() && !it.name.contains("Shiny") { format!("{} (Shiny)", it.name) } else { it.name.clone() }
+                        });
+                        let (sub, sub_c) = if app.collection.entry(cells[i].id).is_none() && cells[i].held == 0 {
+                            ("Not found yet".to_string(), fixed::MUTED)
+                        } else {
+                            (format!("Count: {}", cells[i].held), Color32::from_rgb(0xF5, 0xC5, 0x42))
+                        };
+                        resp.clone().on_hover_ui_at_pointer(|ui| {
+                            ui.label(egui::RichText::new(&name).font(text(18.0)));
+                            ui.label(egui::RichText::new(&sub).font(text(18.0)).color(sub_c));
+                        });
                         if resp.clicked() {
                             clicked_cell.set(Some(cells[i].id));
                         }
