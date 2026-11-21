@@ -50,6 +50,8 @@ pub enum Ask {
     ExportLog(String),
     /// CHECK UPDATES (the status bar, About).
     CheckUpdates,
+    /// Info > About's "Check for updates": checks now and answers in a message.
+    CheckUpdatesAbout,
 }
 
 /// What the Server tab asks of the server (Java `ServerPanel`'s buttons).

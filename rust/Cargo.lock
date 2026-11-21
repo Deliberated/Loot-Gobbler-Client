@@ -1893,6 +1893,7 @@ dependencies = [
 name = "lg-net"
 version = "0.0.1"
 dependencies = [
+ "flate2",
  "lg-app",
  "lg-world",
  "ureq",

@@ -13,6 +13,16 @@ const MENU_H: f32 = 30.0;
 const TAB_H: f32 = 46.0;
 const STATUS_H: f32 = 43.0;
 
+/// How the update button looks: gold; dark while busy; glowing with a sliding shine when an update is there; a
+/// progress bar while downloading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateLook {
+    Normal,
+    Busy,
+    Available,
+    Downloading,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Server {
     NotConfigured,
@@ -51,6 +61,11 @@ pub struct Shell {
     pub clicked_overlay: bool,
     pub clicked_updates: bool,
     pub clicked_server: bool,
+    /// The update button (Java `UpdateButton`): what it says, its tooltip, how it looks, the download's progress.
+    pub update_text: String,
+    pub update_tip: String,
+    pub update_look: UpdateLook,
+    pub update_progress: f32,
     /// Tabs being reordered (Java `TabBar`): each tab's x as drawn (gliding to its slot), the tab dragged (its
     /// title, where it was grabbed, its x), when the last frame was, and whether a drag ended this frame.
     pub tab_x: std::collections::HashMap<String, f32>,
@@ -83,6 +98,10 @@ impl Default for Shell {
             clicked_overlay: false,
             clicked_updates: false,
             clicked_server: false,
+            update_text: "CHECK UPDATES".into(),
+            update_tip: String::new(),
+            update_look: UpdateLook::Normal,
+            update_progress: 0.0,
             tab_x: Default::default(),
             dragged: None,
             tab_time: 0.0,
@@ -486,7 +505,7 @@ impl Shell {
         let buttons = [
             (if self.sniffing { "STOP SNIFFER" } else { "START SNIFFER" }, 0),
             (if self.overlays_on { "HIDE OVERLAY" } else { "SHOW OVERLAY" }, 1),
-            ("CHECK UPDATES", 2),
+            (self.update_text.as_str(), 2),
         ];
         for (i, (t, which)) in buttons.iter().enumerate() {
             if i > 0 {
@@ -499,7 +518,11 @@ impl Shell {
             let resp = ui.interact(r, ui.scope_id().with(("status", which)), Sense::click());
             let resp = match which {
                 1 => resp.on_hover_text("Hides the overlays that are on, or shows them again (each is set up under Battles > Overlay)"),
-                2 => resp.on_hover_text("Check for a new Loot Gobbler version"),
+                2 => resp.on_hover_text(if self.update_tip.is_empty() {
+                    "Check for a new Loot Gobbler version"
+                } else {
+                    self.update_tip.as_str()
+                }),
                 _ => resp,
             };
             if *which == 0 {
@@ -512,8 +535,12 @@ impl Shell {
             } else {
                 p.gold
             };
-            painter.rect(r, 0.0, fill, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
-            text(ui, r.center(), Align2::CENTER_CENTER, t, label.clone(), p.on_accent);
+            if *which == 2 && self.update_look != UpdateLook::Normal {
+                update_button(ui, p, r, t, &label, self.update_look, self.update_progress, resp.is_pointer_button_down_on());
+            } else {
+                painter.rect(r, 0.0, fill, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
+                text(ui, r.center(), Align2::CENTER_CENTER, t, label.clone(), p.on_accent);
+            }
             if resp.clicked() {
                 match which {
                     0 => self.clicked_sniffer = true,
@@ -561,6 +588,69 @@ impl Shell {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
                 }
             }
+        }
+    }
+}
+
+/// Java `UpdateButton.paintComponent` and the status bar's glow: dark while busy; hover-gold with a pulsing glow
+/// around it and a glint sliding across when an update is available; a gold progress fill while downloading.
+fn update_button(ui: &Ui, p: &Palette, r: Rect, t: &str, font: &FontId, look: UpdateLook, progress: f32, pressed: bool) {
+    let painter = ui.painter();
+    let time = ui.input(|i| i.time);
+    match look {
+        UpdateLook::Busy => {
+            painter.rect(r, 0.0, p.gold_dark, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
+            text(ui, r.center(), Align2::CENTER_CENTER, t, font.clone(), p.on_accent);
+        }
+        UpdateLook::Downloading => {
+            painter.rect_filled(r, 0.0, p.header);
+            text(ui, r.center(), Align2::CENTER_CENTER, t, font.clone(), p.ink);
+            let fill = Rect::from_min_size(r.min, vec2((r.width() * progress.clamp(0.0, 1.0)).round(), r.height()));
+            painter.rect_filled(fill, 0.0, p.gold);
+            // the text dark on the gold part
+            jtext::draw(&painter.with_clip_rect(fill), r.center(), Align2::CENTER_CENTER, t, font, p.on_accent);
+            painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        _ => {
+            // the glow: rings from the outside in, strongest next to the button, one slow pulse every 1.6 s
+            let pulse = 0.35 + 0.65 * (0.5 - 0.5 * (std::f64::consts::TAU * time / 1.6).cos()) as f32;
+            let g = p.gold_hover;
+            for i in (1..=7).rev() {
+                let falloff = 1.0 - (i - 1) as f32 / 7.0;
+                let a = (255.0 * pulse * 0.45 * falloff * falloff).round() as u8;
+                painter.rect_stroke(
+                    r.expand(i as f32 - 0.5),
+                    0.0,
+                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(g.r(), g.g(), g.b(), a)),
+                    StrokeKind::Middle,
+                );
+            }
+            painter.rect(r, 0.0, if pressed { p.gold_dark } else { p.gold_hover }, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
+            text(ui, r.center(), Align2::CENTER_CENTER, t, font.clone(), p.on_accent);
+            // a glint sliding across every 3.2 s (resting the first half of each cycle)
+            let c = (time % 3.2) / 3.2;
+            if (0.55..=0.85).contains(&c) {
+                let q = (c - 0.55) / 0.30;
+                let q = if q < 0.5 { 2.0 * q * q } else { 1.0 - 2.0 * (1.0 - q) * (1.0 - q) } as f32;
+                let (band, slant) = (22.0, r.height() / 3.0);
+                let x = r.left() - band - slant + q * (r.width() + 2.0 * band + 2.0 * slant);
+                let light = Color32::from_rgba_unmultiplied(255, 250, 225, 215);
+                let clear = Color32::from_rgba_unmultiplied(255, 250, 225, 0);
+                let clip = painter.with_clip_rect(r);
+                let mut mesh = egui::Mesh::default();
+                for (dx, col) in [(0.0, clear), (band * 0.45, light), (band * 0.55, light), (band, clear)] {
+                    mesh.colored_vertex(pos2(x + dx + slant, r.top()), col);
+                    mesh.colored_vertex(pos2(x + dx - slant, r.bottom()), col);
+                }
+                for k in 0..3u32 {
+                    let i = 2 * k;
+                    mesh.add_triangle(i, i + 1, i + 2);
+                    mesh.add_triangle(i + 1, i + 3, i + 2);
+                }
+                clip.add(egui::Shape::mesh(mesh));
+            }
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(40));
         }
     }
 }

@@ -53,6 +53,18 @@ impl Logs {
     }
 }
 
+/// Opens a web page in the browser.
+pub fn open_url(url: &str) -> std::io::Result<()> {
+    let program = if cfg!(windows) {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program).arg(url).spawn().map(|_| ())
+}
+
 /// Opens a folder in the system's file manager.
 pub fn open_folder(dir: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
@@ -218,7 +230,7 @@ impl Info {
                 vec2(bw("CHECK FOR UPDATES"), 36.0),
             );
             if crate::inventory::button(ui, p, upd_r, "Check for updates", false, "about-updates") {
-                asks.push(Ask::CheckUpdates);
+                asks.push(Ask::CheckUpdatesAbout);
             }
             let cr = ui.interact(close_r, ui.scope_id().with("about-close"), Sense::click());
             painter.rect(close_r, 0.0, p.gold, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);

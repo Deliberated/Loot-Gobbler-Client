@@ -41,10 +41,13 @@ pub struct Gui {
     net: crate::net::Net,
     /// The latest saved run as last seen (a new one may clear a quest map stage).
     seen_run: Option<i64>,
+    /// The update checks (none with --offline), and when the restart into a new version began.
+    updater: Option<lg_net::updater::Updater>,
+    restarting: Option<std::time::Instant>,
 }
 
 impl Gui {
-    pub fn new(app: lg_app::App, own: PathBuf, assets: PathBuf) -> Gui {
+    pub fn new(app: lg_app::App, own: PathBuf, assets: PathBuf, updates: bool) -> Gui {
         let props = lg_app::properties::Properties::load(&own);
         let start = props.get("sniffer") == Some("T");
         let mut g = Gui {
@@ -63,6 +66,8 @@ impl Gui {
             frames: 0,
             net: Default::default(),
             seen_run: None,
+            updater: updates.then(|| lg_net::updater::Updater::new(env!("CARGO_PKG_VERSION"))),
+            restarting: None,
         };
         g.seen_run = g.app.dps_history.runs.first().map(|r| r.start);
         // Java `GobblerServer.reconnect` on start: the saved server and session
@@ -133,6 +138,59 @@ impl Gui {
     }
 
     /// Info > Logs > Export...: the system's save dialog on a thread of its own, then the file copied there.
+    /// A message over the window with its OK.
+    fn message(&mut self, title: &str, text: &str) {
+        self.window.ask(lg_ui::window::Ask::Confirm {
+            title: title.into(),
+            text: text.into(),
+            yes: "OK".into(),
+            no: String::new(),
+            then: Box::new(lg_ui::window::Ask::Nothing),
+        });
+    }
+
+    /// The update button as the updater stands (Java `UpdateButton.show`); a check's answer for About; the restart
+    /// into a new version.
+    fn updates(&mut self, ctx: &egui::Context) {
+        use lg_net::updater::State;
+        use lg_ui::shell::UpdateLook;
+        let Some(u) = self.updater.clone() else { return };
+        let (state, progress) = (u.state(), u.progress());
+        let shell = &mut self.window.shell;
+        shell.update_text = match state {
+            State::Checking => "CHECKING...".into(),
+            State::UpToDate => "UP TO DATE".into(),
+            State::Available => "UPDATE AVAILABLE".into(),
+            State::Downloading => format!("DOWNLOADING {}%", (progress * 100.0) as i64),
+            State::Restarting => "RESTARTING...".into(),
+            State::Failed => "UPDATE FAILED".into(),
+            State::Idle => "CHECK UPDATES".into(),
+        };
+        shell.update_look = match state {
+            State::Checking | State::Restarting => UpdateLook::Busy,
+            State::Available => UpdateLook::Available,
+            State::Downloading => UpdateLook::Downloading,
+            _ => UpdateLook::Normal,
+        };
+        shell.update_progress = progress as f32;
+        shell.update_tip = u.message();
+        if matches!(state, State::Checking | State::Downloading) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
+        if let Some(answer) = u.take_answer() {
+            self.message("Check for updates", &answer);
+        }
+        // the new version runs: close (all that saves on closing still runs), after RESTARTING showed a moment
+        if state == State::Restarting {
+            let since = *self.restarting.get_or_insert_with(std::time::Instant::now);
+            if since.elapsed() >= std::time::Duration::from_millis(800) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+
     fn export_log(&mut self, path: String) {
         let from = PathBuf::from(path);
         std::thread::spawn(move || {
@@ -474,6 +532,7 @@ impl eframe::App for Gui {
             }
         }
         self.window.shell.sniffing = self.capture.is_some();
+        self.updates(ui.ctx());
         let ids = ["dungeon", "mana", "dps", "buffs"];
         let on_key = |id: &str| lg_ui::overlay_page::key_of(id, "On");
         self.window.shell.overlays_on = ids.iter().any(|id| self.window.props.get(&on_key(id)) == Some("true"));
@@ -512,13 +571,20 @@ impl eframe::App for Gui {
                 lg_ui::window::Ask::Choose { key, title, folder } => self.choose(key, title, folder),
                 lg_ui::window::Ask::Server(s) => self.server_ask(s),
                 lg_ui::window::Ask::ExportLog(path) => self.export_log(path),
-                lg_ui::window::Ask::CheckUpdates => self.window.ask(lg_ui::window::Ask::Confirm {
-                    title: "Check for updates".into(),
-                    text: "Updates are not in the Rust app yet.".into(),
-                    yes: "OK".into(),
-                    no: String::new(),
-                    then: Box::new(lg_ui::window::Ask::Nothing),
-                }),
+                lg_ui::window::Ask::CheckUpdates => match &self.updater {
+                    Some(u) => {
+                        if let Some(page) = u.clicked()
+                            && let Err(e) = lg_ui::info::open_url(&page)
+                        {
+                            lg_app::applog::err(&format!("cannot open {page}: {e}"));
+                        }
+                    }
+                    None => self.message("Check for updates", "Updates are not checked with --offline."),
+                },
+                lg_ui::window::Ask::CheckUpdatesAbout => match &self.updater {
+                    Some(u) => u.check_and_answer(),
+                    None => self.message("Check for updates", "Updates are not checked with --offline."),
+                },
                 lg_ui::window::Ask::RefreshCharacters => {
                     let status = self.app.refresh_characters(self.capture.is_some(), now_ms());
                     self.window.characters.refresh_status = status;
@@ -575,6 +641,12 @@ impl eframe::App for Gui {
         self.remember_bounds(ui.ctx());
         // the test hook: LG_TRY=card:<charId> or LG_TRY=grid presses that "Copy as image" after start-up
         self.frames += 1;
+        if self.frames == 2
+            && let Some(u) = &self.updater
+        {
+            // Java `Updater.start`: first check a few seconds after start, then every hour
+            u.start();
+        }
         if self.frames == 2 {
             // Java `NewcomerGuide.afterStart`: once the window is up
             self.window.guide.after_start(&self.window.props);

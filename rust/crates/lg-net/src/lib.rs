@@ -4,6 +4,7 @@
 //! a refusal (Java prints the error and returns null).
 
 pub mod server;
+pub mod updater;
 
 use lg_app::web::{Web, joined_lines};
 use std::time::Duration;

@@ -54,6 +54,12 @@ fn now_ms() -> i64 {
 }
 
 fn main() -> ExitCode {
+    // what version this program is (the updater asks a downloaded one before it puts it in place)
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
+    lg_net::updater::clean_up();
     let o = match options() {
         Ok(o) => o,
         Err(e) => {
@@ -130,7 +136,8 @@ fn main() -> ExitCode {
         // SAFETY: no other thread runs yet
         unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
     }
-    let gui = gui::Gui::new(app, own, assets);
+    // no update checks with --offline, unless a test points them elsewhere (LG_UPDATE_API)
+    let gui = gui::Gui::new(app, own, assets, !o.offline || std::env::var_os("LG_UPDATE_API").is_some());
     match eframe::run_native("Loot Gobbler", options, Box::new(|_| Ok(Box::new(gui)))) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
