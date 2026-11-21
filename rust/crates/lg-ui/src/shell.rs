@@ -51,6 +51,12 @@ pub struct Shell {
     pub clicked_overlay: bool,
     pub clicked_updates: bool,
     pub clicked_server: bool,
+    /// Tabs being reordered (Java `TabBar`): each tab's x as drawn (gliding to its slot), the tab dragged (its
+    /// title, where it was grabbed, its x), when the last frame was, and whether a drag ended this frame.
+    pub tab_x: std::collections::HashMap<String, f32>,
+    pub dragged: Option<(String, f32, f32)>,
+    pub tab_time: f64,
+    pub order_changed: bool,
 }
 
 impl Default for Shell {
@@ -77,6 +83,10 @@ impl Default for Shell {
             clicked_overlay: false,
             clicked_updates: false,
             clicked_server: false,
+            tab_x: Default::default(),
+            dragged: None,
+            tab_time: 0.0,
+            order_changed: false,
         }
     }
 }
@@ -213,16 +223,86 @@ impl Shell {
             }
         }
 
-        // the tab row
+        // the tab row: drag a tab to reorder them; the others glide out of its way (Java `TabBar`)
+        self.order_changed = false;
         let row = Rect::from_min_size(pos2(all.left(), menu.bottom()), vec2(all.width(), TAB_H));
         painter.rect_filled(row, 0.0, p.sand);
         let font = theme::head(17.0);
-        let mut x = row.left();
-        for title in self.order.clone() {
+        let widths: Vec<f32> = self.order.iter().map(|t| text_width(ui, &t.to_uppercase(), &font) + s(26.0)).collect();
+        let strip_w: f32 = widths.iter().sum();
+        let now = ui.input(|i| i.time);
+        let frames = ((now - self.tab_time) / 0.015).clamp(0.0, 60.0) as i32;
+        self.tab_time = now;
+        let mut target = 0.0;
+        let mut moving = false;
+        for (t, w) in self.order.iter().zip(&widths) {
+            let x = self.tab_x.entry(t.clone()).or_insert(target);
+            if self.dragged.as_ref().is_some_and(|d| d.0 == *t) {
+                *x = self.dragged.as_ref().map_or(target, |d| d.2);
+            } else {
+                for _ in 0..frames {
+                    *x += (target - *x) * 0.28;
+                }
+                if (target - *x).abs() < 0.5 {
+                    *x = target;
+                } else {
+                    moving = true;
+                }
+            }
+            target += w;
+        }
+        if moving {
+            ui.ctx().request_repaint();
+        }
+        // the dragged tab last, above the ones it passes
+        let mut drawn: Vec<(String, f32)> = self.order.iter().cloned().zip(widths.iter().copied()).collect();
+        if let Some(d) = &self.dragged
+            && let Some(i) = drawn.iter().position(|(t, _)| *t == d.0)
+        {
+            let it = drawn.remove(i);
+            drawn.push(it);
+        }
+        for (title, w) in drawn {
             let label = title.to_uppercase();
-            let w = text_width(ui, &label, &font) + s(26.0);
+            let x = row.left() + self.tab_x.get(&title).copied().unwrap_or(0.0);
             let r = Rect::from_min_size(pos2(x, row.top()), vec2(w, TAB_H));
-            let resp = ui.interact(r, ui.scope_id().with(("tab", &title)), Sense::click());
+            let resp = ui.interact(r, ui.scope_id().with(("tab", &title)), Sense::click_and_drag());
+            if resp.drag_started()
+                && let Some(q) = resp.interact_pointer_pos()
+            {
+                self.dragged = Some((title.clone(), q.x - x, x - row.left()));
+            }
+            if resp.dragged()
+                && let Some(q) = ui.input(|i| i.pointer.interact_pos())
+                && let Some(d) = self.dragged.as_mut().filter(|d| d.0 == title)
+            {
+                // it follows the mouse; past a neighbour's centre the order changes
+                d.2 = (q.x - row.left() - d.1).clamp(0.0, (strip_w - w).max(0.0));
+                let center = d.2 + w / 2.0;
+                let mut index = 0;
+                let mut tx = 0.0;
+                for (t, tw) in self.order.iter().zip(&widths) {
+                    if *t != title && tx + tw / 2.0 < center {
+                        index += 1;
+                    }
+                    if *t != title {
+                        tx += tw;
+                    }
+                }
+                if let Some(i) = self.order.iter().position(|t| *t == title)
+                    && i != index
+                {
+                    let t = self.order.remove(i);
+                    self.order.insert(index.min(self.order.len()), t);
+                }
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                ui.ctx().request_repaint();
+            }
+            if resp.drag_stopped() {
+                self.dragged = None; // glides into its slot
+                self.order_changed = true;
+                ui.ctx().request_repaint();
+            }
             let on = title == self.selected;
             let bg = if on {
                 p.paper
@@ -244,7 +324,6 @@ impl Shell {
             if resp.clicked() {
                 self.selected = title.clone();
             }
-            x += w;
         }
         painter.rect_filled(Rect::from_min_size(pos2(all.left(), row.bottom()), vec2(all.width(), 1.0)), 0.0, p.line);
         // the notifications bell at the right end of the tab row

@@ -158,6 +158,21 @@ pub struct Window {
     pending_dialog: Option<usize>,
 }
 
+/// Java `withNewTabs`: the saved order plus the tabs new since it was saved, each in front of the saved tab that
+/// follows it in the default order; unknown names left out.
+fn with_new_tabs(saved: &str) -> Vec<String> {
+    let mut names: Vec<String> = saved.split('|').filter(|t| shell::TABS.contains(t)).map(str::to_string).collect();
+    names.dedup();
+    for i in (0..shell::TABS.len()).rev() {
+        if names.iter().any(|n| n == shell::TABS[i]) {
+            continue;
+        }
+        let at = shell::TABS[i + 1..].iter().find_map(|t| names.iter().position(|n| n == t)).unwrap_or(names.len());
+        names.insert(at, shell::TABS[i].to_string());
+    }
+    names
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
@@ -169,8 +184,14 @@ impl Window {
     pub fn new(assets: &Path, props: Properties) -> Window {
         let loadout = lg_app::loadout::Settings::from(&props);
         let palette = theme::palette(props.get("theme"));
+        // the saved tab order (Java `restoreOrder`); the app opens on the tab dragged to the far left
+        let mut shell = shell::Shell::default();
+        if let Some(saved) = props.get("tabOrder").filter(|s| !s.trim().is_empty()) {
+            shell.order = with_new_tabs(&saved.replace("DPS Logger", "Battles"));
+            shell.selected = shell.order[0].clone();
+        }
         Window {
-            shell: shell::Shell::default(),
+            shell,
             palette,
             icons: Icons::new(assets),
             en: lg_app::loadout::Enchantments::load(&assets.join("xml")),
@@ -441,6 +462,9 @@ impl Window {
             if let Some(v) = &app.dungeon_visits.current {
                 self.battles.selected = v.start;
             }
+        }
+        if self.shell.order_changed {
+            self.asks.push(Ask::Set("tabOrder".into(), self.shell.order.join("|")));
         }
         if self.shell.clicked_server {
             self.open("Server");

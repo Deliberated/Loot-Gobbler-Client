@@ -173,9 +173,7 @@ impl DpsView {
         }
         // the boss damage and the run history beside it
         let below = Rect::from_min_max(pos2(body.left(), strip.bottom() + 8.0), body.max);
-        let main_w = widgets::split_main(ui, c.props, "dps", below.width(), 400.0, 220.0, 200.0);
-        let main = Rect::from_min_size(below.min, vec2(main_w, below.height()));
-        widgets::split_gap(ui, c.p, "dps", main.right(), below.top(), below.bottom(), below.right());
+        let (main, _) = widgets::side_split(ui, c.p, c.props, "dps", below, 400.0, 220.0, 200.0, None);
         let side = Rect::from_min_max(pos2(main.right() + 10.0, below.top()), pos2(below.right() - 8.0, below.bottom()));
         let icons = &mut *c.icons;
         let data = app.world.data();

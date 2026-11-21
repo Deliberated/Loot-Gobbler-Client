@@ -299,11 +299,9 @@ impl InventoryView {
 
         // the split: the side 380 px, the grid snapped down to whole columns
         let overhead = 2.0 + 12.0;
-        let main_w = widgets::split_main(ui, c.props, "collectionGrid", body.width(), 380.0, 200.0, 560.0);
-        let cols = ((main_w - overhead - 2.0 * PAD) / CELL).floor().max(1.0);
-        let main = Rect::from_min_size(body.min, vec2(overhead + 2.0 * PAD + cols * CELL, body.height()));
-        let side = Rect::from_min_max(pos2(main.right() + 8.0, body.top()), body.max);
-        widgets::split_gap(ui, c.p, "collectionGrid", main.right(), body.top(), body.bottom(), body.right());
+        let base = overhead + 2.0 * PAD;
+        let (main, side) = widgets::side_split(ui, c.p, c.props, "collectionGrid", body, 380.0, 200.0, 560.0, Some((base, CELL)));
+        let cols = ((main.width() - base + 0.001) / CELL).floor().max(1.0);
         let title = if self.upe_char != 0 {
             let name = app.characters.get(self.upe_char).map_or("UPE".to_string(), |ch| format!("{} (UPE)", ch.class_name));
             format!("Collection · {name}")
@@ -736,11 +734,9 @@ impl InventoryView {
         shown.sort_by(|a, b| n_of(b).cmp(&n_of(a)).then(a.title.cmp(&b.title)));
         // the split: the side 280 px, the cards snapped down to whole columns
         let overhead = 2.0 + 12.0;
-        let main_w = widgets::split_main(ui, c.props, "stSets", body.width(), 280.0, 220.0, 200.0);
-        let cols = (((main_w - overhead - 20.0 + GAP) / (CARD_MIN_WIDTH + GAP)).floor()).max(1.0);
-        let main = Rect::from_min_size(body.min, vec2(overhead + cols * (CARD_MIN_WIDTH + GAP) - GAP + 20.0, body.height()));
-        let side = Rect::from_min_max(pos2(main.right() + 8.0, body.top()), body.max);
-        widgets::split_gap(ui, c.p, "stSets", main.right(), body.top(), body.bottom(), body.right());
+        let base = overhead + 20.0 - GAP;
+        let (main, side) = widgets::side_split(ui, c.p, c.props, "stSets", body, 280.0, 220.0, 200.0, Some((base, CARD_MIN_WIDTH + GAP)));
+        let cols = (((main.width() - base + 0.001) / (CARD_MIN_WIDTH + GAP)).floor()).max(1.0);
         let filters = ["All", "Complete", "In progress", "Tokens"];
         let mut filter = self.st_filter;
         let icons = &mut *c.icons;

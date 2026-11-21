@@ -209,10 +209,7 @@ impl CharactersView {
             natural = natural.max(self.card_width(&painter, x, gain(x), app, now));
         }
         let left_min = natural + 16.0 + 12.0 + 2.0 + 24.0;
-        let main_w = widgets::split_main(ui, c.props, "characterDetail", body.width(), 760.0, 300.0, left_min);
-        let left = Rect::from_min_size(body.min, vec2(main_w, body.height()));
-        let right = Rect::from_min_max(pos2(left.right() + 8.0, body.top()), body.max);
-        widgets::split_gap(ui, c.p, "characterDetail", left.right(), body.top(), body.bottom(), body.right());
+        let (left, right) = widgets::side_split(ui, c.p, c.props, "characterDetail", body, 760.0, 300.0, left_min, None);
 
         let upes: Vec<i32> = {
             let mut v: Vec<i32> = app

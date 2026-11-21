@@ -90,13 +90,10 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
     infos.sort_by(|a, b| b.total.cmp(&a.total).then(b.sum.cmp(&a.sum)).then(a.name.cmp(&b.name)));
 
     // the split: the side 280 px, the main area snapped down to whole columns of cards (Java `SideSplit.setSnap`)
-    let main_w = widgets::split_main(ui, c.props, "classes", body.width(), 280.0, 220.0, 200.0);
     let overhead = 2.0 + 12.0;
-    let cols = (((main_w - overhead - 20.0 + GAP) / (CARD_MIN_WIDTH + GAP)).floor()).max(1.0);
-    let main_w = overhead + cols * (CARD_MIN_WIDTH + GAP) - GAP + 20.0;
-    let main = Rect::from_min_size(body.min, vec2(main_w, body.height()));
-    let side = Rect::from_min_max(pos2(main.right() + 8.0, body.top()), body.max);
-    widgets::split_gap(ui, c.p, "classes", main.right(), body.top(), body.bottom(), body.right());
+    let base = overhead + 20.0 - GAP;
+    let (main, side) = widgets::side_split(ui, c.p, c.props, "classes", body, 280.0, 220.0, 200.0, Some((base, CARD_MIN_WIDTH + GAP)));
+    let cols = (((main.width() - base + 0.001) / (CARD_MIN_WIDTH + GAP)).floor()).max(1.0);
 
     let icons = &mut *c.icons;
     widgets::section(

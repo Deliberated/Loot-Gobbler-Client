@@ -445,51 +445,98 @@ fn split_id(name: &str) -> egui::Id {
     egui::Id::unique("lg-side-width").with(name)
 }
 
-/// Java `SideSplit`: a main area on the left and a side column on the right with a gap between them, dragged to
-/// make the side wider or narrower (saved per view as "sideWidth.<name>"). Gives the main area's width for a
-/// `total` wide body; the view may snap it down to whole columns, then calls [`split_gap`] where the gap is.
-pub fn split_main(
+/// A split's state: the side's width (set by dragging), the main area's width on screen (gliding towards where it
+/// settles), and when it was last drawn.
+#[derive(Clone, Copy)]
+struct Split {
+    side: f32,
+    shown: f32,
+    at: f64,
+}
+
+/// Snaps a main area's width to whole columns: `(base, step)` means base + n * step; nearest or down.
+fn snap_main(w: f32, snap: Option<(f32, f32)>, nearest: bool) -> f32 {
+    match snap {
+        None => w,
+        Some((base, step)) => {
+            let n = (w - base) / step;
+            let n = if nearest { n.round() } else { (n + 0.001).floor() }.max(1.0);
+            base + n * step
+        }
+    }
+}
+
+/// Java `SideSplit`: a main area on the left, a side column on the right and an 8 px gap between them; dragging the
+/// gap makes the side wider or narrower (saved per view as "sideWidth.<name>"). With `snap` (base, step) the main
+/// area settles only where its grid shows whole columns: while dragging at the nearest such place, and it glides
+/// there. Gives the main area and the side.
+pub fn side_split(
     ui: &Ui,
+    p: &Palette,
     props: &lg_app::properties::Properties,
     name: &str,
-    total: f32,
+    body: Rect,
     default: f32,
     min_side: f32,
     min_main: f32,
-) -> f32 {
-    let saved = ui
-        .ctx()
-        .data(|d| d.get_temp::<f32>(split_id(name)))
-        .or_else(|| props.get(&format!("sideWidth.{name}")).and_then(|v| v.trim().parse::<f32>().ok()))
-        .unwrap_or(default);
-    let max = (total - SPLIT_GAP - min_main).max(min_side);
-    (total - SPLIT_GAP - saved.min(max).max(min_side)).max(0.0)
-}
-
-/// The gap of a [`split_main`] split, from `x` (its left edge) over `top..bottom`, the body ending at `right`: a
-/// resize cursor and a thin gold line while hovered or dragged; dragging it sets the side's width, saved on letting go.
-pub fn split_gap(ui: &Ui, p: &Palette, name: &str, x: f32, top: f32, bottom: f32, right: f32) {
-    let r = Rect::from_min_max(pos2(x, top), pos2(x + SPLIT_GAP, bottom));
+    snap: Option<(f32, f32)>,
+) -> (Rect, Rect) {
+    let id = split_id(name);
+    let now = ui.input(|i| i.time);
+    let total = body.width();
+    let saved = props.get(&format!("sideWidth.{name}")).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(default);
+    let mut st = ui.ctx().data(|d| d.get_temp::<Split>(id)).unwrap_or(Split { side: saved, shown: -1.0, at: now });
+    let effective = |side: f32| side.min((total - SPLIT_GAP - min_main).max(min_side)).max(min_side);
+    // where the main area settles: from the side's width, snapped down to whole columns (the side takes the rest)
+    let target_of = |side: f32| {
+        let m = snap_main((total - effective(side) - SPLIT_GAP).max(0.0), snap, false);
+        let max = total - SPLIT_GAP - min_side;
+        let m = if m > max { snap_main(max, snap, false).min(max.max(0.0)) } else { m };
+        m.max(0.0)
+    };
+    let target = target_of(st.side);
+    // glide: about a third of the way every 8 ms
+    if st.shown < 0.0 {
+        st.shown = target;
+    } else {
+        let steps = ((now - st.at) / 0.008).clamp(0.0, 60.0) as i32;
+        let mut shown = st.shown;
+        for _ in 0..steps {
+            shown += (target - shown) * 0.35;
+        }
+        st.shown = if (target - shown).abs() < 0.5 { target } else { shown };
+    }
+    if (st.shown - target).abs() > 0.0 {
+        ui.ctx().request_repaint();
+    }
+    st.at = now;
+    let main_w = st.shown.round();
+    let main = Rect::from_min_size(body.min, vec2(main_w, body.height()));
+    let side = Rect::from_min_max(pos2(main.right() + SPLIT_GAP, body.top()), body.max);
+    // the gap: a resize cursor and a thin gold line while hovered or dragged
+    let gap = Rect::from_min_max(pos2(main.right(), body.top()), pos2(main.right() + SPLIT_GAP, body.bottom()));
     let resp = ui
-        .interact(r, ui.scope_id().with(("split-gap", name)), Sense::drag())
+        .interact(gap, ui.scope_id().with(("split-gap", name)), Sense::drag())
         .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
         .on_hover_text("Drag to resize the column");
     if resp.hovered() || resp.dragged() {
-        ui.painter().rect_filled(Rect::from_min_max(pos2(r.center().x - 1.0, top), pos2(r.center().x + 1.0, bottom)), 0.0, p.gold);
+        ui.painter().rect_filled(
+            Rect::from_min_max(pos2(gap.center().x - 1.0, gap.top()), pos2(gap.center().x + 1.0, gap.bottom())),
+            0.0,
+            p.gold,
+        );
     }
     if resp.dragged()
         && let Some(q) = ui.input(|i| i.pointer.interact_pos())
     {
-        let side = (right - (q.x - SPLIT_GAP / 2.0) - SPLIT_GAP).round();
-        ui.ctx().data_mut(|d| d.insert_temp(split_id(name), side));
+        // the nearest whole-column place to the pointer
+        let m = snap_main((q.x - SPLIT_GAP / 2.0 - body.left()).max(0.0), snap, true);
+        st.side = effective(total - m - SPLIT_GAP);
+        ui.ctx().request_repaint();
     }
-    if resp.drag_stopped()
-        && let Some(side) = ui.ctx().data(|d| d.get_temp::<f32>(split_id(name)))
-    {
-        // the width it shows, within its limits
-        let shown = (right - x - SPLIT_GAP).round();
-        ui.ctx().data_mut(|d| d.insert_temp(split_id(name), shown));
-        let _ = side;
-        crate::window::ask_later(ui.ctx(), crate::window::Ask::Set(format!("sideWidth.{name}"), format!("{}", shown as i64)));
+    if resp.drag_stopped() {
+        crate::window::ask_later(ui.ctx(), crate::window::Ask::Set(format!("sideWidth.{name}"), format!("{}", st.side.round() as i64)));
     }
+    ui.ctx().data_mut(|d| d.insert_temp(id, st));
+    (main, side)
 }

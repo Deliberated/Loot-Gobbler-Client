@@ -112,3 +112,53 @@ fn typing_into_the_inventory_search() {
     h.run_steps(2);
     assert_eq!(h.state().inventory.search, "lute");
 }
+
+#[test]
+fn tabs_reorder_by_dragging() {
+    let app = Box::leak(Box::new(lg_app::App::new(lg_world::World::new(lg_gamedata::GameData::default()), 0)));
+    let props = lg_app::properties::Properties::in_memory("tabOrder=Inventory|Profile|Characters\n");
+    let win = Window::new(std::path::Path::new("/nonexistent"), props);
+    // a saved order: the new tabs in their default places, the app opening on the leftmost
+    assert_eq!(&win.shell.order[..3], &["Inventory", "Profile", "Characters"]);
+    assert_eq!(win.shell.order.len(), lg_ui::shell::TABS.len());
+    assert_eq!(win.shell.selected, "Inventory");
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1799.0, 1005.0)).with_pixels_per_point(1.0).build_ui_state(
+        |ui, win: &mut Window| {
+            let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
+            win.show(&mut all, app, 0);
+        },
+        win,
+    );
+    h.run_steps(2);
+    let _ = h.state_mut().take_asks();
+    // Inventory dragged past Characters' middle
+    let y = 30.0 + 23.0;
+    let to = h.state().shell.tab_x["Characters"] + 10.0;
+    let from = 20.0;
+    h.input_mut().events.push(Event::PointerMoved(Pos2::new(from, y)));
+    h.run_steps(1);
+    h.input_mut().events.push(Event::PointerButton {
+        pos: Pos2::new(from, y),
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Default::default(),
+    });
+    h.run_steps(1);
+    let mut x = from;
+    while x < to {
+        x += 15.0;
+        h.input_mut().events.push(Event::PointerMoved(Pos2::new(x, y)));
+        h.run_steps(1);
+    }
+    h.input_mut().events.push(Event::PointerButton {
+        pos: Pos2::new(x, y),
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Default::default(),
+    });
+    h.run_steps(1);
+    assert_eq!(&h.state().shell.order[..3], &["Profile", "Characters", "Inventory"]);
+    let asks = h.state_mut().take_asks();
+    let want = format!("Profile|Characters|Inventory|{}", lg_ui::shell::TABS[3..].join("|"));
+    assert!(asks.contains(&Ask::Set("tabOrder".into(), want)), "{asks:?}");
+}
