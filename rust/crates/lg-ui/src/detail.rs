@@ -13,7 +13,7 @@ use lg_app::characters::Char;
 pub type Rarity = [Option<egui::TextureHandle>; 5];
 
 /// Rarity colours by enchantment count (Java `EnchantBadge.COLORS`).
-const RARITY_COLORS: [Color32; 5] = [
+pub const RARITY_COLORS: [Color32; 5] = [
     Color32::from_rgb(0x9C, 0xA3, 0xAF),
     Color32::from_rgb(0x4C, 0xD1, 0x5A),
     Color32::from_rgb(0x3F, 0xB6, 0xF2),

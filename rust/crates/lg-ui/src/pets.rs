@@ -77,10 +77,11 @@ impl PetsView {
         }
         // the split: the side 460 px, the tiles snapped down to whole columns
         let overhead = 2.0 + 12.0;
-        let main_w = body.width() - 460.0 - 8.0;
+        let main_w = widgets::split_main(ui, c.props, "petDetail", body.width(), 460.0, 300.0, 200.0);
         let cols = (((main_w - overhead - 20.0 + GAP) / (TILE_MIN_WIDTH + GAP)).floor()).max(1.0);
         let main = Rect::from_min_size(body.min, vec2(overhead + cols * (TILE_MIN_WIDTH + GAP) - GAP + 20.0, body.height()));
         let side = Rect::from_min_max(pos2(main.right() + 8.0, body.top()), body.max);
+        widgets::split_gap(ui, c.p, "petDetail", main.right(), body.top(), body.bottom(), body.right());
         let (mut sort, mut reverse) = (self.sort, self.reverse);
         let mut picked = None;
         let icons = &mut *c.icons;

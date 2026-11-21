@@ -224,6 +224,21 @@ impl Characters {
         self.order.iter().map(|id| &self.chars[id])
     }
 
+    /// Java `toggle`: favourite (true) or dead (false) switched by hand; the game's data overwrites it again
+    /// whenever it tells.
+    pub fn toggle(&mut self, char_id: i32, favorite: bool, now: i64) {
+        let Some(c) = self.chars.get_mut(&char_id) else { return };
+        if favorite {
+            c.favorite = !c.favorite;
+            c.favorite_at = now;
+        } else {
+            c.alive = !c.alive;
+            c.died_by = if c.alive { None } else { Some("user".into()) };
+            c.alive_at = now;
+        }
+        self.save(now);
+    }
+
     pub(crate) fn save(&mut self, now: i64) {
         self.last_save = now;
         self.dirty = true;

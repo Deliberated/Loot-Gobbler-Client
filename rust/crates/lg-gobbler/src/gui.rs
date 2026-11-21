@@ -500,6 +500,7 @@ impl eframe::App for Gui {
                 lg_ui::window::Ask::HideRun(start) => self.app.dps_history.remove(start),
                 lg_ui::window::Ask::ClearRuns => self.app.dps_history.clear(),
                 lg_ui::window::Ask::ClearCollection => self.app.collection.clear(),
+                lg_ui::window::Ask::ToggleChar(id, favorite) => self.app.characters.toggle(id, favorite, now_ms()),
                 lg_ui::window::Ask::UpeMark { char_id, on, mode, no_pet } => self.app.upe_mark(char_id, on, mode.as_deref(), no_pet),
                 lg_ui::window::Ask::UpeMode(char_id, mode) => self.app.upe_mode(char_id, &mode),
                 lg_ui::window::Ask::UpeNoPet(char_id, no_pet) => self.app.upe_no_pet(char_id, no_pet),
@@ -572,6 +573,16 @@ impl eframe::App for Gui {
         if self.frames == 2 {
             // Java `NewcomerGuide.afterStart`: once the window is up
             self.window.guide.after_start(&self.window.props);
+        }
+        // LG_TRY=guide-next:<step>: the guide at that step, then Next pressed
+        if let Ok(t) = std::env::var("LG_TRY")
+            && let Some(n) = t.strip_prefix("guide-next:").and_then(|n| n.parse::<usize>().ok())
+        {
+            match self.frames {
+                30 => self.window.guide.start_at(n),
+                90 => self.window.guide.next(),
+                _ => {}
+            }
         }
         if self.frames == 60 && std::env::var("LG_TRY").is_ok_and(|t| t == "bell") {
             self.window.shell.bell_open = true;

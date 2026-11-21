@@ -426,10 +426,70 @@ pub fn tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, t: &str
 /// Java `ItemLinks.link`: an item's icon that opens the item in the Inventory tab when clicked, with a hand cursor;
 /// only for the items the Inventory tracks (UTs, STs and top tiers). Marked for the Newcomer's Guide.
 pub fn item_link(ui: &Ui, data: &lg_gamedata::GameData, r: Rect, id: i32) {
-    let Some(item) = (id > 0).then(|| data.items.item(id)).flatten().filter(|i| i.is_collectible()) else { return };
+    let Some(item) = (id > 0).then(|| data.items.item(id)).flatten() else { return };
+    if !item.is_collectible() {
+        // say why a click does nothing
+        tip(ui, r, ("item-link-note", id, r.min.x as i32, r.min.y as i32), "Not in the Inventory (it tracks UT/ST and top-tier items)");
+        return;
+    }
     crate::guide::mark_item(ui, r, id);
     let resp = ui.interact(r, ui.scope_id().with(("item-link", id, r.min.x as i32, r.min.y as i32)), Sense::click());
     if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-        crate::window::open_later(ui.ctx(), format!("Inventory:item:{}", item.name));
+        crate::window::open_later(ui.ctx(), format!("Inventory:item:{id}"));
+    }
+}
+
+const SPLIT_GAP: f32 = 8.0;
+
+fn split_id(name: &str) -> egui::Id {
+    egui::Id::unique("lg-side-width").with(name)
+}
+
+/// Java `SideSplit`: a main area on the left and a side column on the right with a gap between them, dragged to
+/// make the side wider or narrower (saved per view as "sideWidth.<name>"). Gives the main area's width for a
+/// `total` wide body; the view may snap it down to whole columns, then calls [`split_gap`] where the gap is.
+pub fn split_main(
+    ui: &Ui,
+    props: &lg_app::properties::Properties,
+    name: &str,
+    total: f32,
+    default: f32,
+    min_side: f32,
+    min_main: f32,
+) -> f32 {
+    let saved = ui
+        .ctx()
+        .data(|d| d.get_temp::<f32>(split_id(name)))
+        .or_else(|| props.get(&format!("sideWidth.{name}")).and_then(|v| v.trim().parse::<f32>().ok()))
+        .unwrap_or(default);
+    let max = (total - SPLIT_GAP - min_main).max(min_side);
+    (total - SPLIT_GAP - saved.min(max).max(min_side)).max(0.0)
+}
+
+/// The gap of a [`split_main`] split, from `x` (its left edge) over `top..bottom`, the body ending at `right`: a
+/// resize cursor and a thin gold line while hovered or dragged; dragging it sets the side's width, saved on letting go.
+pub fn split_gap(ui: &Ui, p: &Palette, name: &str, x: f32, top: f32, bottom: f32, right: f32) {
+    let r = Rect::from_min_max(pos2(x, top), pos2(x + SPLIT_GAP, bottom));
+    let resp = ui
+        .interact(r, ui.scope_id().with(("split-gap", name)), Sense::drag())
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+        .on_hover_text("Drag to resize the column");
+    if resp.hovered() || resp.dragged() {
+        ui.painter().rect_filled(Rect::from_min_max(pos2(r.center().x - 1.0, top), pos2(r.center().x + 1.0, bottom)), 0.0, p.gold);
+    }
+    if resp.dragged()
+        && let Some(q) = ui.input(|i| i.pointer.interact_pos())
+    {
+        let side = (right - (q.x - SPLIT_GAP / 2.0) - SPLIT_GAP).round();
+        ui.ctx().data_mut(|d| d.insert_temp(split_id(name), side));
+    }
+    if resp.drag_stopped()
+        && let Some(side) = ui.ctx().data(|d| d.get_temp::<f32>(split_id(name)))
+    {
+        // the width it shows, within its limits
+        let shown = (right - x - SPLIT_GAP).round();
+        ui.ctx().data_mut(|d| d.insert_temp(split_id(name), shown));
+        let _ = side;
+        crate::window::ask_later(ui.ctx(), crate::window::Ask::Set(format!("sideWidth.{name}"), format!("{}", shown as i64)));
     }
 }

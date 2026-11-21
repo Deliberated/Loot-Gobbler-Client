@@ -31,6 +31,8 @@ const LOOT_DROP_BOOST: f64 = 50.0;
 
 pub struct CharactersView {
     pub page: usize,
+    /// A class to show on the Classes page's right (Java `ClassesView.open`).
+    pub open_class: Option<i32>,
     pub range: usize,
     pub graveyard: bool,
     pub selected: i32,
@@ -47,6 +49,7 @@ impl Default for CharactersView {
     fn default() -> Self {
         CharactersView {
             page: 0,
+            open_class: None,
             range: 1,
             graveyard: false,
             selected: TOTAL,
@@ -167,6 +170,9 @@ impl CharactersView {
         );
         let body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
         if self.page == 1 {
+            if let Some(id) = self.open_class.take() {
+                crate::classes::open(ui.ctx(), id);
+            }
             crate::classes::show(ui, c, body);
             return;
         }
@@ -203,9 +209,10 @@ impl CharactersView {
             natural = natural.max(self.card_width(&painter, x, gain(x), app, now));
         }
         let left_min = natural + 16.0 + 12.0 + 2.0 + 24.0;
-        let side = (body.width() - 8.0 - left_min).clamp(300.0, 760.0);
-        let left = Rect::from_min_max(body.min, pos2(body.right() - side - 8.0, body.bottom()));
+        let main_w = widgets::split_main(ui, c.props, "characterDetail", body.width(), 760.0, 300.0, left_min);
+        let left = Rect::from_min_size(body.min, vec2(main_w, body.height()));
         let right = Rect::from_min_max(pos2(left.right() + 8.0, body.top()), body.max);
+        widgets::split_gap(ui, c.p, "characterDetail", left.right(), body.top(), body.bottom(), body.right());
 
         let upes: Vec<i32> = {
             let mut v: Vec<i32> = app
@@ -486,6 +493,7 @@ impl CharactersView {
             }
             if i < 4 {
                 self.enchant_badge(&painter, sr.right_bottom() - vec2(1.0, 1.0), enchant_count(c, i), 8.0);
+                widgets::item_link(ui, data, sr, id);
             }
         }
         for (j, id) in quick.iter().enumerate() {
@@ -493,6 +501,7 @@ impl CharactersView {
             if let Some(t) = icons.object(ui.ctx(), data, *id, 30) {
                 painter.image(t.id(), Rect::from_center_size(qr.center(), vec2(30.0, 30.0)), uv(), Color32::WHITE);
             }
+            widgets::item_link(ui, data, qr, *id);
         }
         // the name with how long ago, then level or fame and the gain in the range
         let tx = lx + 5.0 * SLOT + 16.0 + 16.0;
@@ -544,11 +553,27 @@ impl CharactersView {
         // the star (favourite) and the gravestone (dead)
         x -= 34.0;
         star(&painter, pos2(x, mid - 17.0), c.favorite, p.ink);
+        // click: switched by hand (Java `toggleIcon`)
+        let toggle = |r: Rect, favorite: bool, tip: &str| {
+            let resp = ui
+                .interact(r, ui.scope_id().with(("char-toggle", c.char_id, favorite)), Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(tip);
+            if resp.clicked() {
+                crate::window::ask_later(ui.ctx(), crate::window::Ask::ToggleChar(c.char_id, favorite));
+            }
+        };
+        toggle(
+            Rect::from_min_size(pos2(x, mid - 17.0), vec2(34.0, 34.0)),
+            true,
+            if c.favorite { "Favourite" } else { "Mark as favourite" },
+        );
         x -= 8.0 + 30.0;
         if let Some(t) = &self.grave {
             let tint = if c.alive { Color32::from_white_alpha(64) } else { Color32::WHITE };
             painter.image(t.id(), Rect::from_min_size(pos2(x, mid - 15.0), vec2(30.0, 30.0)), uv(), tint);
         }
+        toggle(Rect::from_min_size(pos2(x, mid - 15.0), vec2(30.0, 30.0)), false, if c.alive { "Mark as dead" } else { "Mark as alive" });
         x -= 8.0;
         let stats = format!("{}/8", c.stats_maxed);
         let ss = widgets::outlined_size(&painter, &stats, 34.0);

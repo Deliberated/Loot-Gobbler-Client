@@ -680,7 +680,14 @@ impl CaravanView {
                     if let Some(m) = members.iter().find(|m| m.id == picked) {
                         let cw = (w - 16.0) / 2.0;
                         let place = members.iter().position(|x| x.id == m.id).map_or(0, |i| i + 1);
-                        let h = self_card_height(&painter);
+                        // both as tall as the taller one: the card, or the best finds (up to four)
+                        let shown = m.items.len().min(4) as f32;
+                        let finds_h = 14.0
+                            + jtext::height(&painter, &crate::theme::head(30.0))
+                            + 4.0
+                            + if shown == 0.0 { fh } else { shown * (36.0 + fh + 6.0) - 6.0 }
+                            + 14.0;
+                        let h = self_card_height(&painter).max(finds_h);
                         let left = Rect::from_min_size(pos2(x, y), vec2(cw, h));
                         let right = Rect::from_min_size(pos2(x + cw + 16.0, y), vec2(cw, h));
                         for r in [left, right] {

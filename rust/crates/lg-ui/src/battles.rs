@@ -202,9 +202,10 @@ impl BattlesView {
             .map(|v| v.start);
         // the split: the side 420 px, the tiles snapped down to whole columns
         let overhead = 2.0 + 12.0;
-        let main_w = body.width() - 420.0 - 8.0;
+        let main_w = widgets::split_main(ui, c.props, "dungeonDetail", body.width(), 420.0, 300.0, 200.0);
         let cols = (((main_w - overhead - 20.0 + GAP) / (TILE_MIN_WIDTH + GAP)).floor()).max(1.0);
         let main = Rect::from_min_size(body.min, vec2(overhead + cols * (TILE_MIN_WIDTH + GAP) - GAP + 20.0, body.height()));
+        widgets::split_gap(ui, &p, "dungeonDetail", main.right(), body.top(), body.bottom(), body.right());
         let mut picked = None;
         let mut toggled = None;
         let pending = std::cell::RefCell::new(Vec::new());

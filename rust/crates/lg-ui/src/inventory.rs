@@ -33,7 +33,18 @@ pub struct InventoryView {
     pub upe_char: i32,
     pub st_filter: usize,
     pub st_class: Option<String>,
+    /// The item whose history replaces the Recent list (Java `historyItem`).
+    pub history: Option<i32>,
+    /// An item opened from another tab, to be scrolled to and pulsed once the grid is drawn (Java `showItem`).
+    pub show_item: Option<i32>,
+    /// The gold box growing and fading around an item: which, since when (s), how long (s); and to scroll to it.
+    pulse: Option<(i32, f64, f64)>,
+    scroll_to: Option<i32>,
 }
+
+const PULSE_S: f64 = 2.0;
+const CLICK_PULSE_S: f64 = 1.0;
+const PULSE_GROW: f32 = 14.0;
 
 /// What you hold and how much, as the Items page counts it (Java `collected`, `held`, `bestEnchants`).
 struct Owned {
@@ -268,13 +279,31 @@ impl InventoryView {
                     || has_enchant(*id)
             })
             .collect();
+        // an item opened from elsewhere: its history, and the item pulsing in the grid; hidden by the filter or the
+        // search, those are cleared first (Java `showHistory`)
+        let time_s = ui.input(|i| i.time);
+        if let Some(id) = self.show_item {
+            self.history = Some(id);
+            if grid.contains(&id) {
+                self.pulse = Some((id, time_s, PULSE_S));
+                self.scroll_to = Some(id);
+                self.show_item = None;
+            } else if self.filter != 0 || !self.search.is_empty() {
+                self.filter = 0;
+                self.search.clear();
+                ui.ctx().request_repaint();
+            } else {
+                self.show_item = None;
+            }
+        }
 
         // the split: the side 380 px, the grid snapped down to whole columns
         let overhead = 2.0 + 12.0;
-        let main_w = body.width() - 380.0 - 8.0;
+        let main_w = widgets::split_main(ui, c.props, "collectionGrid", body.width(), 380.0, 200.0, 560.0);
         let cols = ((main_w - overhead - 2.0 * PAD) / CELL).floor().max(1.0);
         let main = Rect::from_min_size(body.min, vec2(overhead + 2.0 * PAD + cols * CELL, body.height()));
         let side = Rect::from_min_max(pos2(main.right() + 8.0, body.top()), body.max);
+        widgets::split_gap(ui, c.p, "collectionGrid", main.right(), body.top(), body.bottom(), body.right());
         let title = if self.upe_char != 0 {
             let name = app.characters.get(self.upe_char).map_or("UPE".to_string(), |ch| format!("{} (UPE)", ch.class_name));
             format!("Collection · {name}")
@@ -286,6 +315,9 @@ impl InventoryView {
         let grid_cells: std::cell::RefCell<(Vec<Cell>, usize)> = Default::default();
         let mut search = self.search.clone();
         let icons = &mut *c.icons;
+        let clicked_cell = std::cell::Cell::new(None);
+        let pulse = self.pulse.filter(|(_, start, dur)| time_s - start < *dur);
+        let scroll_to = self.scroll_to.take();
         crate::guide::mark(ui, "inventory.grid", main);
         widgets::section(
             ui,
@@ -316,13 +348,55 @@ impl InventoryView {
                     let cells: Vec<Cell> =
                         grid.iter().map(|id| Cell { id: *id, have: owned_set.contains(id), best: best_of(*id), held: held(*id) }).collect();
                     paint_cells(&painter, ui.ctx(), icons, data, rarity, &cells, cols as usize, top);
+                    let n = cols as usize;
+                    let cell_rect = |i: usize| {
+                        Rect::from_min_size(
+                            pos2(top.x + PAD + (i % n) as f32 * CELL, top.y + PAD + (i / n) as f32 * CELL),
+                            vec2(CELL, CELL),
+                        )
+                    };
+                    let (_, resp) = ui.allocate_exact_size(vec2(gw, gh), Sense::click());
+                    // hover: a light frame; a click: the item's history and a short pulse
+                    let at = |q: egui::Pos2| {
+                        let (cx, cy) = ((q.x - top.x - PAD) / CELL, (q.y - top.y - PAD) / CELL);
+                        let i = cy.floor() as usize * n + cx.floor() as usize;
+                        (cx >= 0.0 && cy >= 0.0 && cx < cols && i < cells.len()).then_some(i)
+                    };
+                    if let Some(i) = resp.hover_pos().and_then(at) {
+                        painter.rect_stroke(
+                            cell_rect(i).shrink(1.0),
+                            0.0,
+                            Stroke::new(2.0, Color32::from_white_alpha(90)),
+                            StrokeKind::Inside,
+                        );
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        if resp.clicked() {
+                            clicked_cell.set(Some(cells[i].id));
+                        }
+                    }
+                    if let Some((id, start, dur)) = pulse
+                        && let Some(i) = cells.iter().position(|c| c.id == id)
+                    {
+                        let t = ((time_s - start) / dur).clamp(0.0, 1.0) as f32;
+                        let eased = 1.0 - (1.0 - t) * (1.0 - t);
+                        let gold = Color32::from_rgb(0xF5, 0xC5, 0x42).gamma_multiply(1.0 - t);
+                        painter.rect_stroke(cell_rect(i).expand(eased * PULSE_GROW), 0.0, Stroke::new(5.0, gold), StrokeKind::Middle);
+                        if scroll_to == Some(id) {
+                            ui.scroll_to_rect(cell_rect(i), Some(egui::Align::Center));
+                        }
+                        ui.ctx().request_repaint();
+                    }
                     *grid_cells.borrow_mut() = (cells, cols as usize);
-                    ui.allocate_exact_size(vec2(gw, gh), Sense::hover());
                 });
             },
         );
         self.filter = filter;
         self.search = search;
+        self.pulse = pulse;
+        if let Some(id) = clicked_cell.get() {
+            self.history = Some(id);
+            self.pulse = Some((id, time_s, CLICK_PULSE_S));
+        }
 
         // the side: progress and actions on top, recent finds below
         let painter = ui.painter().clone();
@@ -450,6 +524,36 @@ impl InventoryView {
         };
         by_last.sort_by(|a, b| b.1.cmp(&a.1));
         let today = app.zone.local_date_time(app.world.now().max(c.now));
+        // a picked item's history in place of the Recent list (Java `renderHistory`); "Recent" goes back
+        if let Some(item) = self.history.filter(|id| data.items.item(*id).is_some()) {
+            let mut back = false;
+            let c_now = c.now;
+            let count = held(item);
+            widgets::section(
+                ui,
+                &p,
+                recent,
+                "History",
+                fixed::PURPLE,
+                |ui, head| {
+                    let bw = jtext::width(ui.painter(), "RECENT", &small()) + 32.0;
+                    back = button(
+                        ui,
+                        &p,
+                        Rect::from_min_size(pos2(head.right() - bw, head.top()), vec2(bw, head.height())),
+                        "Recent",
+                        false,
+                        "back-recent",
+                    );
+                },
+                |ui, r| crate::item_history::show(ui, &p, app, icons, rarity, item, count, c_now, r),
+            );
+            if back {
+                self.history = None;
+            }
+            return;
+        }
+        let picked_recent = std::cell::Cell::new(None);
         widgets::section(
             ui,
             &p,
@@ -492,10 +596,22 @@ impl InventoryView {
                         &text(18.0),
                         p.ink,
                     );
+                    // click: the item in the grid (scrolled to, pulsing) and its history
+                    let row = Rect::from_min_size(pos2(x, y), vec2(w, rh));
+                    if ui
+                        .interact(row, ui.scope_id().with(("recent", id)), Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        picked_recent.set(Some(*id));
+                    }
                     y += rh + 4.0;
                 }
             },
         );
+        if let Some(id) = picked_recent.get() {
+            self.show_item = Some(id);
+        }
     }
 }
 
@@ -620,10 +736,11 @@ impl InventoryView {
         shown.sort_by(|a, b| n_of(b).cmp(&n_of(a)).then(a.title.cmp(&b.title)));
         // the split: the side 280 px, the cards snapped down to whole columns
         let overhead = 2.0 + 12.0;
-        let main_w = body.width() - 280.0 - 8.0;
+        let main_w = widgets::split_main(ui, c.props, "stSets", body.width(), 280.0, 220.0, 200.0);
         let cols = (((main_w - overhead - 20.0 + GAP) / (CARD_MIN_WIDTH + GAP)).floor()).max(1.0);
         let main = Rect::from_min_size(body.min, vec2(overhead + cols * (CARD_MIN_WIDTH + GAP) - GAP + 20.0, body.height()));
         let side = Rect::from_min_max(pos2(main.right() + 8.0, body.top()), body.max);
+        widgets::split_gap(ui, c.p, "stSets", main.right(), body.top(), body.bottom(), body.right());
         let filters = ["All", "Complete", "In progress", "Tokens"];
         let mut filter = self.st_filter;
         let icons = &mut *c.icons;

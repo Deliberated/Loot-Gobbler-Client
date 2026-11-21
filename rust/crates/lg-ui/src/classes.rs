@@ -90,12 +90,13 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
     infos.sort_by(|a, b| b.total.cmp(&a.total).then(b.sum.cmp(&a.sum)).then(a.name.cmp(&b.name)));
 
     // the split: the side 280 px, the main area snapped down to whole columns of cards (Java `SideSplit.setSnap`)
-    let main_w = body.width() - 280.0 - 8.0;
+    let main_w = widgets::split_main(ui, c.props, "classes", body.width(), 280.0, 220.0, 200.0);
     let overhead = 2.0 + 12.0;
     let cols = (((main_w - overhead - 20.0 + GAP) / (CARD_MIN_WIDTH + GAP)).floor()).max(1.0);
     let main_w = overhead + cols * (CARD_MIN_WIDTH + GAP) - GAP + 20.0;
     let main = Rect::from_min_size(body.min, vec2(main_w, body.height()));
     let side = Rect::from_min_max(pos2(main.right() + 8.0, body.top()), body.max);
+    widgets::split_gap(ui, c.p, "classes", main.right(), body.top(), body.bottom(), body.right());
 
     let icons = &mut *c.icons;
     widgets::section(
@@ -116,6 +117,14 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
                     let (col, row) = ((i as f32 % cols), (i as f32 / cols).floor());
                     let cr = Rect::from_min_size(pos2(top.x + 10.0 + col * (cw + GAP), top.y + 10.0 + row * (ch + GAP)), vec2(cw, ch));
                     card(ui, &p, icons, data, info, cr);
+                    // click: the class on the right
+                    let resp = ui
+                        .interact(cr, ui.scope_id().with(("class-card", info.id)), Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(format!("Deaths and best dungeons of the {}", info.name));
+                    if resp.clicked() {
+                        ui.ctx().data_mut(|d| d.insert_temp(selected_id(), info.id));
+                    }
                 }
                 let rows = (infos.len() as f32 / cols).ceil();
                 ui.allocate_exact_size(vec2(r.width() - 12.0, 20.0 + rows * (ch + GAP) - GAP), Sense::hover());
@@ -132,7 +141,43 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
     let lh = jtext::height(&painter, &text(18.0));
     let prog_h = jtext::height(&painter, &small()) + 10.0 + lh + 6.0 + lh;
     let head = widgets::section_head_height(&painter);
-    let prog = Rect::from_min_size(side.min, vec2(side.width(), head + 2.0 + 20.0 + prog_h));
+    // the picked class on top, with Close
+    let picked = ui.ctx().data(|d| d.get_temp::<i32>(selected_id())).filter(|id| data.classes.iter().any(|k| k.id == *id));
+    let mut side_top = side.top();
+    if let Some(class) = picked {
+        let name = data.classes.iter().find(|k| k.id == class).map_or(String::new(), |k| k.name.clone());
+        let body_h = class_body(ui, &p, c.icons, app, class, c.now, Rect::from_min_size(side.min, vec2(side.width(), 0.0)), false);
+        let r = Rect::from_min_size(side.min, vec2(side.width(), head + 2.0 + body_h));
+        let mut close = false;
+        let icons = &mut *c.icons;
+        let now = c.now;
+        widgets::section(
+            ui,
+            &p,
+            r,
+            &name,
+            fixed::BLUE,
+            |ui, h| {
+                let bw = jtext::width(ui.painter(), "CLOSE", &small()) + 32.0;
+                close = crate::inventory::button(
+                    ui,
+                    &p,
+                    Rect::from_min_size(pos2(h.right() - bw, h.top()), vec2(bw, h.height())),
+                    "Close",
+                    false,
+                    "class-close",
+                );
+            },
+            |ui, b| {
+                class_body(ui, &p, icons, app, class, now, b, true);
+            },
+        );
+        if close {
+            ui.ctx().data_mut(|d| d.remove::<i32>(selected_id()));
+        }
+        side_top = r.bottom() + 8.0;
+    }
+    let prog = Rect::from_min_size(pos2(side.left(), side_top), vec2(side.width(), head + 2.0 + 20.0 + prog_h));
     widgets::section(
         ui,
         &p,
@@ -283,4 +328,201 @@ fn card(ui: &Ui, p: &Palette, icons: &mut Icons, data: &lg_gamedata::GameData, i
         format!("{} character{}  ·  best {} fame", info.chars, if info.chars == 1 { "" } else { "s" }, num(info.best))
     };
     jtext::draw(painter, pos2(bx, y), Align2::LEFT_TOP, &who, &text(18.0), fixed::MUTED);
+}
+
+/// Shows this class on the right as if its card was clicked (Java `open`).
+pub fn open(ctx: &egui::Context, class: i32) {
+    ctx.data_mut(|d| d.insert_temp(selected_id(), class));
+}
+
+/// The class picked on its card (Java `selected`), -1: none.
+fn selected_id() -> egui::Id {
+    egui::Id::unique("lg-class-selected")
+}
+
+const STAGE_TRACK: Color32 = Color32::from_rgb(0x3A, 0x2E, 0x20);
+const STAGE_EDGE: Color32 = Color32::from_rgb(0x1A, 0x14, 0x0D);
+const STAGE_RECENT: Color32 = Color32::from_rgb(0x4C, 0x8F, 0xE0);
+const STAGE_INSET: f32 = 6.0;
+
+/// Java `stageTip`.
+fn stage_tip(before: i32, progress: i32) -> String {
+    let lv = level(progress) as usize;
+    let max = THRESHOLDS.len();
+    let day = if progress > before { format!("\n+{} in the last 24 hours", progress - before) } else { String::new() };
+    if lv >= max {
+        return format!("All {max} exaltations{day}");
+    }
+    let next = THRESHOLDS[lv];
+    format!("{lv} of {max} exaltations  ·  {} to the next (at {next}){day}", next - progress)
+}
+
+/// Java `StageBar`: a stat's progress from 0 to 75 to scale, a diamond at each exaltation, lit once reached; what
+/// came in the last 24 hours blue.
+fn stage_bar(painter: &egui::Painter, r: Rect, before: i32, progress: i32) {
+    let before = before.min(progress);
+    let end = *THRESHOLDS.last().expect("thresholds") as f32;
+    let w = r.width() - 2.0 * STAGE_INSET;
+    let (h, cy) = (6.0, r.center().y);
+    let y = cy - h / 2.0;
+    let x0 = r.left() + STAGE_INSET;
+    painter.rect_filled(Rect::from_min_size(pos2(x0, y), vec2(w, h)), 0.0, STAGE_TRACK);
+    let old = (w * before.min(end as i32) as f32 / end).round();
+    painter.rect_filled(Rect::from_min_size(pos2(x0, y), vec2(old, h)), 0.0, PIP_ON);
+    let now = (w * progress.min(end as i32) as f32 / end).round();
+    painter.rect_filled(Rect::from_min_size(pos2(x0 + old, y), vec2((now - old).max(0.0), h)), 0.0, STAGE_RECENT);
+    for at in THRESHOLDS {
+        let x = x0 + (w * at as f32 / end).round();
+        let pts = vec![pos2(x, cy - 7.0), pos2(x + 6.0, cy), pos2(x, cy + 7.0), pos2(x - 6.0, cy)];
+        let fill = if before >= at {
+            PIP_ON
+        } else if progress >= at {
+            STAGE_RECENT
+        } else {
+            STAGE_TRACK
+        };
+        painter.add(egui::Shape::convex_polygon(pts, fill, Stroke::new(1.0, STAGE_EDGE)));
+    }
+}
+
+/// The picked class on the right (Java `showClass`): its exaltations per stat to scale, how many of your
+/// characters of it died, the dungeons with your best DPS with it. Paints only with `paint`; gives its height.
+fn class_body(ui: &Ui, p: &Palette, icons: &mut Icons, app: &lg_app::App, class: i32, now: i64, r: Rect, paint: bool) -> f32 {
+    let data = app.world.data();
+    let painter = ui.painter().clone();
+    let f = text(18.0);
+    let lh = jtext::height(&painter, &f);
+    let sh = jtext::height(&painter, &small());
+    let (x, w) = (r.left() + 10.0, r.width() - 20.0);
+    let mut y = r.top() + 10.0;
+    let name = data.classes.iter().find(|k| k.id == class).map_or(String::new(), |k| k.name.clone());
+    if paint {
+        if let Some(t) = icons.object(ui.ctx(), data, class, 64) {
+            painter.image(t.id(), Rect::from_min_size(pos2(x, y), vec2(64.0, 64.0)), crate::detail::uv(), Color32::WHITE);
+        }
+        jtext::draw(&painter, pos2(x + 64.0 + 12.0, y + 32.0), Align2::LEFT_CENTER, &name, &text(26.0), p.ink);
+    }
+    y += 64.0 + 8.0;
+    let caption = |y: &mut f32, t: &str| {
+        if paint {
+            jtext::draw(&painter, pos2(x, *y), Align2::LEFT_TOP, t, &small(), p.ink_muted);
+        }
+        *y += sh;
+    };
+    let line = |y: &mut f32, t: &str, font: &egui::FontId, color: Color32| {
+        if paint {
+            jtext::draw(&painter, pos2(x, *y), Align2::LEFT_TOP, t, font, color);
+        }
+        *y += jtext::height(&painter, font);
+    };
+    // each stat's progress on the way to 75, its five exaltations marked where they are reached
+    caption(&mut y, "EXALTATIONS");
+    match app.exalts.progress(class) {
+        None => line(&mut y, "Not known yet: loads when you log in with the sniffer running.", &f, fixed::MUTED),
+        Some(progress) => {
+            let end = *THRESHOLDS.last().expect("thresholds");
+            for s in 0..8 {
+                let pr = progress.get(STAT_INDEX[s]).copied().unwrap_or(0);
+                let before = app.exalts.progress_at(&app.dungeon_visits, class, STAT_INDEX[s] as i32, now - 24 * 3_600_000);
+                if paint {
+                    let rh = lh.max(18.0);
+                    if let Some(t) = icons.object(ui.ctx(), data, STAT_POTION[s], 18) {
+                        painter.image(
+                            t.id(),
+                            Rect::from_min_size(pos2(x, y + (rh - 18.0) / 2.0), vec2(18.0, 18.0)),
+                            crate::detail::uv(),
+                            Color32::WHITE,
+                        );
+                    }
+                    jtext::draw(&painter, pos2(x + 26.0, y + rh / 2.0), Align2::LEFT_CENTER, STAT_NAMES[s], &f, p.ink);
+                    jtext::draw(&painter, pos2(x + w, y + rh / 2.0), Align2::RIGHT_CENTER, &format!("{} / {end}", pr.min(end)), &f, p.ink);
+                    let br = Rect::from_min_size(pos2(x, y + rh + 2.0), vec2(w, 16.0));
+                    stage_bar(&painter, br, before, pr);
+                    widgets::tip(ui, br, ("stage", class, s), &stage_tip(before, pr));
+                }
+                y += lh.max(18.0) + 2.0 + 16.0 + 5.0;
+            }
+            // the scale: 0 and where each exaltation is reached
+            if paint {
+                let bw = w - 2.0 * STAGE_INSET;
+                for at in std::iter::once(0).chain(THRESHOLDS) {
+                    let t = at.to_string();
+                    let tw = jtext::width(&painter, &t, &small());
+                    let tx = (x + STAGE_INSET + (bw * at as f32 / end as f32).round() - tw / 2.0).clamp(x, x + w - tw);
+                    jtext::draw(&painter, pos2(tx, y), Align2::LEFT_TOP, &t, &small(), fixed::MUTED);
+                }
+            }
+            y += 16.0;
+        }
+    }
+    y += 12.0;
+    // deaths
+    let all: Vec<_> = app.characters.all().filter(|c| c.class_type == class).collect();
+    let dead: Vec<_> = all.iter().filter(|c| !c.alive).collect();
+    caption(&mut y, "DEATHS");
+    line(
+        &mut y,
+        &format!(
+            "{} {}  ·  {} alive",
+            dead.len(),
+            if dead.len() == 1 { "character died" } else { "characters died" },
+            all.len() - dead.len()
+        ),
+        &f,
+        p.ink,
+    );
+    if let Some(best) = dead.iter().map(|c| c.fame).max() {
+        line(&mut y, &format!("best fame of a fallen one: {}", num(best)), &f, fixed::MUTED);
+    }
+    y += 12.0;
+    // the best peak DPS per dungeon, over the runs where you played this class
+    let peak = |r: &lg_app::dps_history::Run| -> f64 {
+        r.bosses
+            .iter()
+            .filter_map(|b| b.players.iter().find(|x| x.me).map(|me| f64::from(me.damage) / (b.fight_ms as f64 / 1000.0).max(1.0)))
+            .fold(0.0, f64::max)
+    };
+    let mut best: Vec<&lg_app::dps_history::Run> = Vec::new();
+    for r in &app.dps_history.runs {
+        if r.guild_hall || !r.bosses.iter().any(|b| b.players.iter().any(|x| x.me && x.class_type == class)) {
+            continue;
+        }
+        match best.iter_mut().find(|b| b.dungeon == r.dungeon) {
+            Some(b) if peak(r) > peak(b) => *b = r,
+            Some(_) => {}
+            None => best.push(r),
+        }
+    }
+    best.sort_by(|a, b| peak(b).total_cmp(&peak(a)));
+    caption(&mut y, "TOP DPS DUNGEONS");
+    if best.is_empty() {
+        line(&mut y, "No dungeon runs with this class yet.", &f, fixed::MUTED);
+    }
+    for (i, r) in best.iter().take(3).enumerate() {
+        let nf = text(if i == 0 { 20.0 } else { 18.0 });
+        let rh = (jtext::height(&painter, &nf) + lh).max(32.0) + 8.0;
+        if paint {
+            if let Some(id) = data.dungeons.portal_by_name.get(&r.dungeon)
+                && let Some(t) = icons.fitted(ui.ctx(), data, *id, 32, 32)
+            {
+                painter.image(
+                    t.id(),
+                    Rect::from_min_size(pos2(x, y + (rh - 32.0) / 2.0), vec2(32.0, 32.0)),
+                    crate::detail::uv(),
+                    Color32::WHITE,
+                );
+            }
+            let t = jtext::draw(&painter, pos2(x + 42.0, y + 4.0), Align2::LEFT_TOP, &r.dungeon, &nf, p.ink);
+            jtext::draw(
+                &painter,
+                pos2(x + 42.0, t.bottom()),
+                Align2::LEFT_TOP,
+                &format!("{} DPS", num(peak(r).round() as i64)),
+                &f,
+                fixed::MUTED,
+            );
+        }
+        y += rh;
+    }
+    y + 10.0 - r.top()
 }

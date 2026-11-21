@@ -343,6 +343,7 @@ pub fn suggested(
                 painter.image(t.id(), ir, uv(), Color32::WHITE);
             }
             enchant_badge(&painter, rarity, ir.right_bottom() - vec2(1.0, 1.0), pk.enchants.as_ref().map_or(0, Vec::len), 6.0);
+            widgets::item_link(ui, data, ir, pk.id);
         }
         let tx = ix + 60.0 + 10.0;
         let tw = iw - 70.0;

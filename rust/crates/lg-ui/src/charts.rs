@@ -217,17 +217,17 @@ pub fn fame_chart(
     area.push(pos2(right, last_y));
     area.push(pos2(right, bottom));
     let g = p.gold;
-    // the area as columns between the steps (it is not convex)
+    // the area as columns between the steps (it is not convex), in one mesh: one even colour, no seams where
+    // the columns meet (separate see-through rectangles overlap at their soft edges and show stripes)
+    let fill = Color32::from_rgba_unmultiplied(g.r(), g.g(), g.b(), 50);
+    let mut mesh = egui::Mesh::default();
     for wv in area.windows(2) {
         if wv[1].x > wv[0].x {
             let y = wv[0].y.min(wv[1].y).max(wv[0].y);
-            painter.rect_filled(
-                Rect::from_min_max(pos2(wv[0].x, y), pos2(wv[1].x, bottom)),
-                0.0,
-                Color32::from_rgba_unmultiplied(g.r(), g.g(), g.b(), 50),
-            );
+            mesh.add_colored_rect(Rect::from_min_max(pos2(wv[0].x, y), pos2(wv[1].x, bottom)), fill);
         }
     }
+    painter.add(Shape::mesh(mesh));
     painter.add(Shape::line(line, Stroke::new(2.0, g)));
     for (a, b, cx) in tl.breaks(left, right) {
         let cx = cx.round();

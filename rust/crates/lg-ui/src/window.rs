@@ -23,6 +23,8 @@ pub enum Ask {
     ClearRuns,
     /// The whole collection history gone.
     ClearCollection,
+    /// A character's favourite (true) or dead (false) mark switched by hand.
+    ToggleChar(i32, bool),
     /// Nothing (what a message's button asks).
     Nothing,
     /// Play a sound: a bundled file ("pm.wav"), "item:<setting key>" or "startup:<id>" (Settings' previews).
@@ -205,13 +207,21 @@ impl Window {
                 self.inventory.upe_char = p[4..].parse().unwrap_or(0);
             }
             ("Inventory", p) if p.starts_with("item:") => {
-                // Java `showItem`: the Items page, the item found by its name
+                // Java `showItem`: the Items page, the item scrolled to and pulsing, its history beside the grid
                 self.inventory.page = 0;
-                self.inventory.search = p[5..].to_string();
+                self.inventory.upe_char = 0;
+                match p[5..].parse::<i32>() {
+                    Ok(id) => self.inventory.show_item = Some(id),
+                    Err(_) => self.inventory.search = p[5..].to_string(),
+                }
             }
             ("Inventory", p) => self.inventory.page = ["", "st", "log"].iter().position(|x| *x == p).unwrap_or(0),
             ("Characters", "classes") => self.characters.page = 1,
             ("Characters", "pets") => self.characters.page = 2,
+            ("Characters", p) if p.starts_with("class:") => {
+                self.characters.page = 1;
+                self.characters.open_class = p[6..].parse().ok();
+            }
             ("Characters", id) if !id.is_empty() => {
                 self.characters.page = 0;
                 self.characters.selected = id.parse().unwrap_or(0);

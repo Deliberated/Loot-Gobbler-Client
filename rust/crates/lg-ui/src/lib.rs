@@ -19,6 +19,7 @@ pub mod guild;
 pub mod icons;
 pub mod info;
 pub mod inventory;
+pub mod item_history;
 pub mod jtext;
 pub mod overlay_page;
 pub mod overlay_windows;

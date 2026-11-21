@@ -595,8 +595,7 @@ fn recent_drops(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, drops: &
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
-            let name = data.items.item(d.item).map_or(String::new(), |i| i.name.clone());
-            crate::window::open_later(ui.ctx(), format!("Inventory:item:{name}"));
+            crate::window::open_later(ui.ctx(), format!("Inventory:item:{}", d.item));
         }
         ui.add_space(6.0);
     }

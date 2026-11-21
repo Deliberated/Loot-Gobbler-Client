@@ -238,6 +238,13 @@ impl Guide {
         self.begin(at);
     }
 
+    /// Next, as the card's button (for trying it out).
+    pub fn next(&mut self) {
+        if self.running {
+            self.go(self.index + 1, false);
+        }
+    }
+
     /// The Server tab registered an account.
     pub fn registered_account(&mut self) {
         self.registered = true;
@@ -436,8 +443,14 @@ impl Guide {
             }
             Step::ChItem => {
                 let data = app.world.data();
+                // only the items in the character's boxes (not those on the cards in the list)
+                let boxes: Vec<Rect> =
+                    ["characters.loadout", "characters.inventory"].iter().filter_map(|n| t.rects.get(n).copied()).collect();
                 for (r, id) in &t.items {
-                    if clicks.len() < 6 && data.items.item(*id).is_some_and(|i| i.is_ut() || i.is_st()) {
+                    if clicks.len() < 6
+                        && boxes.iter().any(|b| b.contains_rect(*r))
+                        && data.items.item(*id).is_some_and(|i| i.is_ut() || i.is_st())
+                    {
                         clicks.push(*r);
                     }
                 }
@@ -578,10 +591,17 @@ impl Guide {
 
     fn frame(&mut self, ctx: &egui::Context, p: &Palette, seen: &Seen) {
         let s = self.step();
+        // an item opened in the Inventory: on to the Inventory step (before anything opens the character again)
+        if s == Step::ChItem && seen.tab == "Inventory" {
+            self.go(ordinal(Step::Inventory), true);
+            ctx.request_repaint();
+            return;
+        }
         let chars = matches!(s, Step::ChStats | Step::ChLoadout | Step::ChProgress | Step::ChItem);
         let t = targets(ctx);
         let loaded = seen.app.characters.all().any(|c| c.alive && c.class_type > 0);
         if chars
+            && seen.tab == "Characters"
             && loaded
             && (self.want_character || (!t.rects.contains_key("characters.loadout") && seen.now - self.last_character_nav > 1500))
         {
@@ -599,12 +619,6 @@ impl Guide {
                 .input(|i| i.pointer.primary_clicked() && i.pointer.interact_pos().is_some_and(|q| v.clicks.iter().any(|r| r.contains(q))))
         {
             self.go(self.index + 1, true);
-            ctx.request_repaint();
-            return;
-        }
-        // an item opened in the Inventory: on to the Inventory step
-        if s == Step::ChItem && seen.tab == "Inventory" {
-            self.go(ordinal(Step::Inventory), true);
             ctx.request_repaint();
             return;
         }
@@ -670,15 +684,18 @@ fn paint_layer(painter: &egui::Painter, p: &Palette, screen: Rect, v: &View, tim
     xs.dedup();
     ys.sort_by(f32::total_cmp);
     ys.dedup();
+    // one mesh, so the cells' soft edges do not overlap into lines
+    let mut mesh = egui::Mesh::default();
     for wy in ys.windows(2) {
         for wx in xs.windows(2) {
             let cell = Rect::from_min_max(pos2(wx[0], wy[0]), pos2(wx[1], wy[1]));
             if cell.width() <= 0.0 || cell.height() <= 0.0 || holes.iter().any(|h| h.contains_rect(cell)) {
                 continue;
             }
-            painter.rect_filled(cell, 0.0, grey);
+            mesh.add_colored_rect(cell, grey);
         }
     }
+    painter.add(egui::Shape::mesh(mesh));
     let gold = p.gold;
     for h in &holes {
         for i in (1..=6).rev() {
