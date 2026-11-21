@@ -560,7 +560,27 @@ pub const KEPT: [&str; 17] = [
 /// The app's own folder: next to the program, as the Java app keeps its files next to itself.
 pub fn own_folder() -> std::io::Result<std::path::PathBuf> {
     let exe = std::env::current_exe()?;
-    Ok(exe.parent().map_or_else(|| std::path::PathBuf::from("."), Path::to_path_buf))
+    let dir = exe.parent().map_or_else(|| std::path::PathBuf::from("."), Path::to_path_buf);
+    // Java `Launcher.dataDir`: an installed package (rpm) lives in /opt, which the user can't write to: its data goes
+    // to ~/.local/share/LootGobbler instead (the portable folder keeps it next to the program)
+    if cfg!(target_os = "linux") && !writable(&dir) {
+        let base = match std::env::var("XDG_DATA_HOME") {
+            Ok(x) if x.starts_with('/') => std::path::PathBuf::from(x),
+            _ => std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local").join("share"),
+        };
+        let own = base.join("LootGobbler");
+        std::fs::create_dir_all(&own)?;
+        return Ok(own);
+    }
+    Ok(dir)
+}
+
+/// Whether files can be made in a folder (a probe file, made and removed).
+fn writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".lg-write-{}", std::process::id()));
+    let ok = std::fs::write(&probe, b"").is_ok();
+    let _ = std::fs::remove_file(&probe);
+    ok
 }
 
 /// On a first start (no data in the own folder yet) the Java app's settings (`realmShark.properties`) copied

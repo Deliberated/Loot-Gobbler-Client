@@ -67,10 +67,23 @@ jobs:
               sudo setcap cap_net_raw,cap_net_admin=eip ./LootGobbler
           TXT
           tar -C dist -czf dist/LootGobbler-linux-x86_64.tar.gz LootGobbler
+      - name: rpm (installed in /opt, with the capture rights)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q rpm
+          version="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          rpmbuild -bb packaging/linux/lootgobbler.spec --define "_topdir $RUNNER_TEMP/rpm" \
+            --define "app_version $version" --define "app_image $PWD/dist/LootGobbler" \
+            --define "desktop_file $PWD/packaging/linux/lootgobbler.desktop" \
+            --define "icon_file $PWD/assets/icon/lootgobbler-256.png"
+          cp "$RUNNER_TEMP"/rpm/RPMS/x86_64/lootgobbler-*.rpm dist/LootGobbler-x86_64.rpm
+          rpm -qp --filecaps dist/LootGobbler-x86_64.rpm | grep -q 'LootGobbler.*cap_net_raw' \
+            || { echo "the program in the rpm has no capture capabilities"; exit 1; }
       - uses: actions/upload-artifact@v7
         with:
           name: linux
-          path: rust/dist/LootGobbler-linux-x86_64.tar.gz
+          path: |
+            rust/dist/LootGobbler-linux-x86_64.tar.gz
+            rust/dist/LootGobbler-x86_64.rpm
           if-no-files-found: error
 
   release:
@@ -99,4 +112,4 @@ jobs:
           title="$(git log -1 --format=%s "$GITHUB_REF_NAME")"
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --title "$title" --notes-file RELEASE_NOTES.md \
-            dist/LootGobbler.exe dist/LootGobbler-portable.zip dist/LootGobbler-linux-x86_64.tar.gz
+            dist/LootGobbler.exe dist/LootGobbler-portable.zip dist/LootGobbler-linux-x86_64.tar.gz dist/LootGobbler-x86_64.rpm

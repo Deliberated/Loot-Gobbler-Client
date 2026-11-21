@@ -7,8 +7,11 @@ use std::path::PathBuf;
 /// The window as it was left (Java `WindowMemory`: `windowBounds` "x,y,w,h", `windowMaximized`), else 1799 x 1062.
 pub fn viewport(props: &lg_app::properties::Properties) -> egui::ViewportBuilder {
     // its own title bar, as the Java app's (FlatLaf's): no frame of the system's
-    let mut v =
-        egui::ViewportBuilder::default().with_title("Loot Gobbler by Gunshit").with_decorations(false).with_min_inner_size([640.0, 420.0]);
+    let mut v = egui::ViewportBuilder::default()
+        .with_title("Loot Gobbler by Gunshit")
+        .with_app_id("lootgobbler")
+        .with_decorations(false)
+        .with_min_inner_size([640.0, 420.0]);
     if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon/lootgobbler-256.png")) {
         v = v.with_icon(std::sync::Arc::new(icon));
     }
