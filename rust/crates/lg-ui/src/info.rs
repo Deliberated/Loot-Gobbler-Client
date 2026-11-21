@@ -1,4 +1,4 @@
-//! The Info menu's windows (Java `LogsDialog`, `AboutDialog`, `TomatoBandwidth`, the Java version message).
+//! The Info menu's windows (Java `LogsDialog`, `AboutDialog`, `TomatoBandwidth`).
 
 use crate::jtext;
 use crate::theme::{Palette, fixed};
@@ -86,15 +86,6 @@ impl Info {
             }
             "About" => self.about = true,
             "Net traffic" => self.net = true,
-            "Java version" => asks.push(message(
-                "Java version",
-                &format!(
-                    "No Java: this is the Rust build of Loot Gobbler {} ({}, {}).",
-                    env!("CARGO_PKG_VERSION"),
-                    std::env::consts::OS,
-                    std::env::consts::ARCH
-                ),
-            )),
             _ => {}
         }
     }

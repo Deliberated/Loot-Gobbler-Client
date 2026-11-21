@@ -120,8 +120,8 @@ impl Shell {
             self.guide_menu_open = false;
         }
         if self.info_open {
-            // Java's Info menu: Logs, Release Notes, What's New Tour | Newcomer's Guide | About, Java version, Net traffic
-            const ITEMS: [(&str, bool); 9] = [
+            // Java's Info menu: Logs, Release Notes, What's New Tour | Newcomer's Guide | About, Net traffic (no Java)
+            const ITEMS: [(&str, bool); 8] = [
                 ("Logs", true),
                 ("Release Notes", false),
                 ("What's New Tour", false),
@@ -129,7 +129,6 @@ impl Shell {
                 ("Newcomer's Guide", true),
                 ("-", false),
                 ("About", true),
-                ("Java version", true),
                 ("Net traffic", true),
             ];
             let mut guide_item = Rect::NOTHING;
