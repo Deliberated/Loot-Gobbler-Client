@@ -6,7 +6,12 @@ use std::path::PathBuf;
 
 /// The window as it was left (Java `WindowMemory`: `windowBounds` "x,y,w,h", `windowMaximized`), else 1799 x 1062.
 pub fn viewport(props: &lg_app::properties::Properties) -> egui::ViewportBuilder {
-    let mut v = egui::ViewportBuilder::default().with_title("Loot Gobbler").with_min_inner_size([640.0, 420.0]);
+    // its own title bar, as the Java app's (FlatLaf's): no frame of the system's
+    let mut v =
+        egui::ViewportBuilder::default().with_title("Loot Gobbler by Gunshit").with_decorations(false).with_min_inner_size([640.0, 420.0]);
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../../../../src/main/resources/icon/lootgobbler-256.png")) {
+        v = v.with_icon(std::sync::Arc::new(icon));
+    }
     let bounds: Option<Vec<f32>> = props.get("windowBounds").and_then(|b| b.split(',').map(|x| x.trim().parse::<f32>().ok()).collect());
     match bounds.as_deref() {
         Some([x, y, w, h]) if *w >= 200.0 && *h >= 150.0 => v = v.with_position([*x, *y]).with_inner_size([*w, *h]),

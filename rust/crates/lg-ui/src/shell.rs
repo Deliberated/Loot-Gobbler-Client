@@ -113,11 +113,78 @@ impl Shell {
         let painter = ui.painter().clone();
         painter.rect_filled(all, 0.0, p.sand);
 
-        // the menu bar
+        // the title bar with the menus in it (FlatLaf's: icon, menus, the title in the middle, the window's buttons);
+        // dragged it moves the window, a double click maximizes it
         let menu = Rect::from_min_size(all.min, vec2(all.width(), MENU_H));
         painter.rect_filled(menu, 0.0, p.title);
         painter.rect_filled(Rect::from_min_max(pos2(menu.left(), menu.bottom() - 1.5), menu.max), 0.0, p.line);
-        let info_r = text(ui, pos2(menu.left() + 12.0, menu.center().y - 0.75), Align2::LEFT_CENTER, "Info", theme::body(18.0), p.ink);
+        let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+        let bar = ui.interact(menu, ui.scope_id().with("title-bar"), Sense::click_and_drag());
+        if bar.drag_started() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if bar.double_clicked() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+        }
+        let icon = ui.ctx().data_mut(|d| d.get_temp::<egui::TextureHandle>(egui::Id::unique("lg-title-icon"))).unwrap_or_else(|| {
+            let img = image::load_from_memory(include_bytes!("../../../../src/main/resources/icon/lootgobbler-32.png"))
+                .map(|i| i.to_rgba8())
+                .unwrap_or_default();
+            let t = ui.ctx().load_texture(
+                "title-icon",
+                egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw()),
+                egui::TextureOptions::LINEAR,
+            );
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("lg-title-icon"), t.clone()));
+            t
+        });
+        painter.image(
+            icon.id(),
+            Rect::from_center_size(pos2(menu.left() + 8.0 + 8.0, menu.center().y), vec2(16.0, 16.0)),
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        jtext::draw(&painter, menu.center(), Align2::CENTER_CENTER, "Loot Gobbler by Gunshit", &theme::head(19.0), p.title_fg);
+        // minimize, maximize / restore, close
+        let mut bx = menu.right();
+        for which in [2, 1, 0] {
+            let r = Rect::from_min_max(pos2(bx - 44.0, menu.top()), pos2(bx, menu.bottom() - 1.5));
+            bx -= 44.0;
+            let resp = ui.interact(r, ui.scope_id().with(("window-button", which)), Sense::click());
+            if resp.hovered() {
+                let bg = if which == 2 { Color32::from_rgb(0xC4, 0x2B, 0x1C) } else { p.title_fg.gamma_multiply(0.15) };
+                painter.rect_filled(r, 0.0, bg);
+            }
+            let ink = if resp.hovered() && which == 2 { Color32::WHITE } else { p.title_fg };
+            let c = r.center();
+            let st = Stroke::new(1.0, ink);
+            match which {
+                0 => {
+                    painter.line_segment([pos2(c.x - 5.0, c.y), pos2(c.x + 5.0, c.y)], st);
+                }
+                1 if maximized => {
+                    painter.rect_stroke(Rect::from_min_size(pos2(c.x - 5.0, c.y - 3.0), vec2(8.0, 8.0)), 0.0, st, StrokeKind::Middle);
+                    painter.line_segment([pos2(c.x - 3.0, c.y - 5.0), pos2(c.x + 5.0, c.y - 5.0)], st);
+                    painter.line_segment([pos2(c.x + 5.0, c.y - 5.0), pos2(c.x + 5.0, c.y + 3.0)], st);
+                }
+                1 => {
+                    painter.rect_stroke(Rect::from_center_size(c, vec2(10.0, 10.0)), 0.0, st, StrokeKind::Middle);
+                }
+                _ => {
+                    painter.line_segment([pos2(c.x - 5.0, c.y - 5.0), pos2(c.x + 5.0, c.y + 5.0)], st);
+                    painter.line_segment([pos2(c.x - 5.0, c.y + 5.0), pos2(c.x + 5.0, c.y - 5.0)], st);
+                }
+            }
+            if resp.clicked() {
+                ui.ctx().send_viewport_cmd(match which {
+                    0 => egui::ViewportCommand::Minimized(true),
+                    1 => egui::ViewportCommand::Maximized(!maximized),
+                    _ => egui::ViewportCommand::Close,
+                });
+            }
+        }
+        let info_r =
+            text(ui, pos2(menu.left() + 32.0 + 8.0, menu.center().y - 0.75), Align2::LEFT_CENTER, "Info", theme::body(18.0), p.title_fg);
         let info_zone = Rect::from_min_max(pos2(menu.left(), menu.top()), pos2(info_r.right() + 12.0, menu.bottom()));
         self.menu_rect = menu;
         self.menu_end = info_zone.right();
@@ -465,6 +532,29 @@ impl Shell {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(content));
         child.set_clip_rect(content);
         view(&mut child, &self.selected.clone());
+        // without the system's frame: the edges and corners resize the window (above everything else)
+        if !ui.input(|i| i.viewport().maximized.unwrap_or(false)) {
+            use egui::{CursorIcon as C, ResizeDirection as D};
+            let (e, k) = (5.0, 12.0);
+            let zones = [
+                (Rect::from_min_max(all.min, pos2(all.left() + k, all.top() + k)), D::NorthWest, C::ResizeNwSe),
+                (Rect::from_min_max(pos2(all.right() - k, all.top()), pos2(all.right(), all.top() + k)), D::NorthEast, C::ResizeNeSw),
+                (Rect::from_min_max(pos2(all.left(), all.bottom() - k), pos2(all.left() + k, all.bottom())), D::SouthWest, C::ResizeNeSw),
+                (Rect::from_min_max(pos2(all.right() - k, all.bottom() - k), all.max), D::SouthEast, C::ResizeNwSe),
+                (Rect::from_min_max(all.min, pos2(all.right(), all.top() + e)), D::North, C::ResizeVertical),
+                (Rect::from_min_max(pos2(all.left(), all.bottom() - e), all.max), D::South, C::ResizeVertical),
+                (Rect::from_min_max(all.min, pos2(all.left() + e, all.bottom())), D::West, C::ResizeHorizontal),
+                (Rect::from_min_max(pos2(all.right() - e, all.top()), all.max), D::East, C::ResizeHorizontal),
+            ];
+            let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("lg-resize"));
+            let edges = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(all));
+            for (i, (r, dir, cursor)) in zones.into_iter().enumerate() {
+                let resp = edges.interact(r, edges.scope_id().with(("resize", i)), Sense::drag()).on_hover_cursor(cursor);
+                if resp.drag_started() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+                }
+            }
+        }
     }
 }
 
