@@ -20,7 +20,7 @@ pub const RARITY_COLORS: [Color32; 5] = [
     Color32::from_rgb(0xB0, 0x5C, 0xF0),
     Color32::from_rgb(0xF2, 0xC2, 0x32),
 ];
-const SLOT_NAMES: [&str; 4] = ["Weapon", "Ability", "Armor", "Ring"];
+pub const SLOT_NAMES: [&str; 4] = ["Weapon", "Ability", "Armor", "Ring"];
 const UT: Color32 = Color32::from_rgb(0x80, 0x49, 0xA8);
 const ST: Color32 = Color32::from_rgb(0xE0, 0x7B, 0x2A);
 const TIER: Color32 = Color32::from_rgb(0xB0, 0x7D, 0x0A);
@@ -72,6 +72,8 @@ pub fn loadout(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, c: &Char,
         color: Color32,
         lines: Vec<(i32, String)>,
         note: Option<String>,
+        ench: Option<Vec<i32>>,
+        slot: &'static str,
     }
     let mut slots = Vec::new();
     for (i, slot_name) in SLOT_NAMES.iter().enumerate() {
@@ -98,7 +100,15 @@ pub fn loadout(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, c: &Char,
             })
             .collect();
         let note = if i == 3 { amulet_note(app, c, id) } else { None };
-        slots.push(Slot { id, name, color: if n > 0 { RARITY_COLORS[n.min(4)] } else { p.ink }, lines, note });
+        slots.push(Slot {
+            id,
+            name,
+            color: if n > 0 { RARITY_COLORS[n.min(4)] } else { p.ink },
+            lines,
+            note,
+            ench: enchant_ids(c, i),
+            slot: SLOT_NAMES[i],
+        });
     }
     // GridBag: two columns at their natural widths (the second 20 px off), the line and the reusables after; with
     // too little room the columns give up what they must, their texts cut
@@ -145,10 +155,14 @@ pub fn loadout(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, c: &Char,
         if s.id > 0 {
             let t = icons.object(&ctx, data, s.id, 44);
             image(&painter, &t, Rect::from_min_size(pos2(x + 2.0, y), vec2(44.0, 44.0)));
+            widgets::item_tip(ui, Rect::from_min_size(pos2(x, y), vec2(48.0, 48.0)), data, s.id, s.ench.as_deref(), s.slot);
             widgets::item_link(ui, data, Rect::from_min_size(pos2(x, y), vec2(48.0, 48.0)), s.id);
         }
         if let Some(n) = &s.note {
-            jtext::draw(&painter, pos2(x + 24.0, y + 48.0), Align2::CENTER_TOP, n, &text(15.0), AMULET_BLUE);
+            let r = jtext::draw(&painter, pos2(x + 24.0, y + 48.0), Align2::CENTER_TOP, n, &text(15.0), AMULET_BLUE);
+            if let Some(t) = amulet_tip(app, c, s.id) {
+                widgets::tip(ui, r, ("amulet-note", c.char_id), &t);
+            }
         }
         let tx = x + 48.0 + 10.0;
         let tw = w - 58.0;
@@ -182,6 +196,7 @@ pub fn loadout(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, c: &Char,
             let cy = r.top() + k as f32 * (row + 4.0) + row / 2.0;
             let t = icons.object(&ctx, data, *id, 32);
             image(&painter, &t, Rect::from_min_size(pos2(rx, cy - 16.0), vec2(32.0, 32.0)));
+            widgets::item_tip(ui, Rect::from_min_size(pos2(rx, cy - 16.0), vec2(32.0, 32.0)), data, *id, None, "Quick slot");
             widgets::item_link(ui, data, Rect::from_min_size(pos2(rx, cy - 16.0), vec2(32.0, 32.0)), *id);
             let name = data.items.item(*id).map_or(String::new(), |i| i.name.clone());
             jtext::draw(&painter, pos2(rx + 40.0, cy), Align2::LEFT_CENTER, &name, &name_f, p.ink);
@@ -192,6 +207,29 @@ pub fn loadout(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, c: &Char,
 
 /// Java `amuletNote`: with an amulet that saves you, "at 182HP", the life it fires below.
 fn amulet_note(app: &App, c: &Char, ring: i32) -> Option<String> {
+    let (at, _) = amulet_life(app, c, ring)?;
+    Some(format!("at {at}HP"))
+}
+
+/// Java `amuletNote`'s tooltip: when it fires and how often; an estimate says so.
+fn amulet_tip(app: &App, c: &Char, ring: i32) -> Option<String> {
+    let a = app.world.data().amulets.of(ring)?;
+    let (at, life) = amulet_life(app, c, ring)?;
+    let saved = app.amulet_saves.saves.iter().filter(|s| s.char_id == c.char_id && !s.removed).count();
+    Some(format!(
+        "{} fires when you take damage below {} life ({}% of {}{})\n2 seconds invulnerable, every {} minutes{}",
+        a.name,
+        num(at),
+        (a.threshold * 100.0).round() as i64,
+        num(i64::from(life)),
+        if c.max_hp <= 0 { ", estimated until this character is played with Loot Gobbler running" } else { "" },
+        a.cooldown_s / 60,
+        if saved > 0 { format!("\nSaved this character {saved} {}", if saved == 1 { "time" } else { "times" }) } else { String::new() }
+    ))
+}
+
+/// The life the amulet fires below, and the character's maximum life (estimated from its class and gear if not seen).
+fn amulet_life(app: &App, c: &Char, ring: i32) -> Option<(i64, i32)> {
     let a = app.world.data().amulets.of(ring)?;
     let mut life = c.max_hp;
     if life <= 0 {
@@ -209,7 +247,7 @@ fn amulet_note(app: &App, c: &Char, ring: i32) -> Option<String> {
             .sum();
         life = base + bonus;
     }
-    Some(format!("at {}HP", (f64::from(life) * a.threshold).round() as i64))
+    Some(((f64::from(life) * a.threshold).round() as i64, life))
 }
 
 /// Java `SectionLine`: a vertical gold line with short caps, setting off a new part.
@@ -380,6 +418,8 @@ pub fn inventory(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, rarity:
             let x = r.left() + k as f32 * (cw + 12.0);
             let t = icons.object(&ctx, data, *id, 40);
             image(&painter, &t, Rect::from_min_size(pos2(x, y + lh - 20.0), vec2(40.0, 40.0)));
+            let name = data.items.item(*id).map_or(format!("Item {id}"), |i| i.name.clone());
+            widgets::tip(ui, Rect::from_min_size(pos2(x, y + lh - 20.0), vec2(40.0, 40.0)), ("highlight", *id, k), &name);
             widgets::item_link(ui, data, Rect::from_min_size(pos2(x, y + lh - 20.0), vec2(40.0, 40.0)), *id);
             let tx = x + 50.0;
             jtext::draw(
@@ -472,6 +512,8 @@ pub fn inventory(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, rarity:
                 let b = cell(row, pack * 4 + k);
                 let t = icons.object(&ctx, data, id, (S - 10.0) as u32);
                 image(&painter, &t, Rect::from_center_size(b.center(), vec2(S - 10.0, S - 10.0)));
+                let ench = c.slot_enchant_ids.as_ref().and_then(|e| e.get(i)).cloned();
+                widgets::item_tip(ui, b, data, id, ench.as_deref(), ["Inventory", "Backpack", "Extender"][pack.min(2)]);
                 widgets::item_link(ui, data, b, id);
                 let ne = c.slot_enchant_ids.as_ref().and_then(|e| e.get(i)).map_or(0, Vec::len);
                 enchant_badge(&painter, rarity, pos2(b.right() - 3.0, b.bottom() - 3.0), ne, if S >= 64.0 { 8.0 } else { 5.0 });

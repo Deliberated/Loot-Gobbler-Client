@@ -540,3 +540,65 @@ pub fn side_split(
     ui.ctx().data_mut(|d| d.insert_temp(id, st));
     (main, side)
 }
+
+/// A line of a rich tooltip: pieces of text, each with its colour (None: the ink) and whether bold.
+pub type TipLine = Vec<(String, Option<Color32>, bool)>;
+
+/// A tooltip of several lines with coloured and bold parts (Java's HTML tooltips).
+pub fn rich_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, lines: &[TipLine]) {
+    if lines.is_empty() {
+        return;
+    }
+    let resp = ui.interact(r, ui.scope_id().with(("rich-tip", id)), Sense::hover());
+    let ink = ui.visuals().override_text_color.unwrap_or(Color32::WHITE);
+    resp.on_hover_ui(|ui| {
+        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+        let f = text(18.0);
+        for line in lines {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                for (t, c, bold) in line {
+                    let color = c.unwrap_or(ink);
+                    let mut rt = egui::RichText::new(t).font(f.clone()).color(color);
+                    if *bold {
+                        rt = rt.strong();
+                    }
+                    ui.label(rt);
+                }
+            });
+        }
+    });
+}
+
+/// Java `CharactersView.itemTooltip`: "Slot: name (Rarity)" and its enchantments, one per line.
+pub fn item_tip_lines(data: &lg_gamedata::GameData, id: i32, enchants: Option<&[i32]>, slot: &str) -> Vec<TipLine> {
+    let name = data
+        .items
+        .item(id)
+        .filter(|i| !i.name.is_empty())
+        .map_or_else(|| data.object_name(id).map_or(format!("Item {id}"), str::to_string), |i| i.name.clone());
+    let mut first: TipLine = vec![(format!("{slot}:"), None, true), (format!(" {name}"), None, false)];
+    let n = enchants.map_or(0, <[i32]>::len);
+    let mut lines = Vec::new();
+    if n > 0 {
+        const RARITY: [&str; 5] = ["Common", "Uncommon", "Rare", "Legendary", "Divine"];
+        first.push((format!("  ({})", RARITY[n.min(4)]), Some(crate::detail::RARITY_COLORS[n.min(4)]), false));
+    }
+    lines.push(first);
+    for e in enchants.into_iter().flatten() {
+        let t = match *e {
+            -1 => "empty slot".to_string(),
+            e if e < 0 => "refresh to see".to_string(),
+            e => data.enchant_looks.get(&e).map_or(format!("Enchantment {e}"), |l| l.name.clone()),
+        };
+        lines.push(vec![(format!("  • {t}"), if *e < 0 { Some(theme::fixed::MUTED) } else { None }, false)]);
+    }
+    lines
+}
+
+/// An item's tooltip over `r` (Java `itemTooltip`).
+pub fn item_tip(ui: &Ui, r: Rect, data: &lg_gamedata::GameData, id: i32, enchants: Option<&[i32]>, slot: &str) {
+    if id > 0 {
+        rich_tip(ui, r, ("item-tip", id, r.min.x as i32, r.min.y as i32), &item_tip_lines(data, id, enchants, slot));
+    }
+}

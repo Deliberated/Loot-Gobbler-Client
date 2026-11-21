@@ -78,6 +78,12 @@ fn png_decode(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 
 /// Java `LootBonus.parts`/`total`: enchantments of the worn gear, crucible, blood ritual, a running loot drop boost.
 pub fn loot_bonus(c: &Char, data: &lg_gamedata::GameData, now: i64) -> f64 {
+    loot_bonus_parts(c, data, now).iter().filter(|p| p.2).map(|p| p.1).sum()
+}
+
+/// Java `LootBonus.parts`: each source with its percent, and whether the amount is known.
+pub fn loot_bonus_parts(c: &Char, data: &lg_gamedata::GameData, now: i64) -> Vec<(&'static str, f64, bool)> {
+    let mut out = Vec::new();
     let mut total = 0.0;
     if let Some(ids) = &c.enchant_ids {
         for slot in ids.iter().take(4) {
@@ -91,16 +97,20 @@ pub fn loot_bonus(c: &Char, data: &lg_gamedata::GameData, now: i64) -> f64 {
             }
         }
     }
+    if total > 0.0 {
+        out.push(("Enchantments", total, true));
+    }
+    let multiplier = |name: &'static str, m: Option<f64>| (name, m.map_or(0.0, |m| (m - 1.0) * 100.0), m.is_some());
     if c.crucible {
-        total += c.crucible_loot.map_or(0.0, |m| (m - 1.0) * 100.0);
+        out.push(multiplier("Crucible", c.crucible_loot));
     }
     if c.ritual {
-        total += c.ritual_loot.map_or(0.0, |m| (m - 1.0) * 100.0);
+        out.push(multiplier("Blood ritual", c.ritual_loot));
     }
     if c.loot_drop_until > now {
-        total += LOOT_DROP_BOOST;
+        out.push(("Loot drop boost", LOOT_DROP_BOOST, true));
     }
-    total
+    out
 }
 
 /// Java's `DecimalFormat("0.#")`.
@@ -490,7 +500,11 @@ impl CharactersView {
             }
             if i < 4 {
                 self.enchant_badge(&painter, sr.right_bottom() - vec2(1.0, 1.0), enchant_count(c, i), 8.0);
+                let ench = crate::detail::enchant_ids(c, i);
+                widgets::item_tip(ui, sr, data, id, ench.as_deref(), crate::detail::SLOT_NAMES[i]);
                 widgets::item_link(ui, data, sr, id);
+            } else if id > 0 {
+                widgets::item_tip(ui, sr, data, id, None, if c.extender { "Backpack Extender" } else { "Backpack" });
             }
         }
         for (j, id) in quick.iter().enumerate() {
@@ -498,6 +512,8 @@ impl CharactersView {
             if let Some(t) = icons.object(ui.ctx(), data, *id, 30) {
                 painter.image(t.id(), Rect::from_center_size(qr.center(), vec2(30.0, 30.0)), uv(), Color32::WHITE);
             }
+            let name = data.items.item(*id).map_or(format!("Item {id}"), |i| i.name.clone());
+            widgets::tip(ui, qr, ("card-quick", c.char_id, j), &format!("Quick slot: {name}"));
             widgets::item_link(ui, data, qr, *id);
         }
         // the name with how long ago, then level or fame and the gain in the range
@@ -582,6 +598,12 @@ impl CharactersView {
             34.0,
             if c.stats_maxed == 8 { STATS_MAXED } else { STATS_OPEN },
         );
+        widgets::tip(
+            ui,
+            Rect::from_min_size(pos2(x, mid - ss.y / 2.0), ss),
+            ("stats", c.char_id),
+            &format!("{} of 8 stats maxed", c.stats_maxed),
+        );
         x -= 8.0;
         let lb = loot_bonus(c, data, now);
         let lt = format!("+{}%", percent(lb));
@@ -594,12 +616,33 @@ impl CharactersView {
             34.0,
             if lb > 0.0 { LOOT_ON } else { STATS_OPEN },
         );
+        // the loot bonus and its sources (Java `lootBonus`)
+        {
+            let parts = loot_bonus_parts(c, data, now);
+            let mut lines: Vec<widgets::TipLine> = vec![vec![(format!("Loot bonus (LB): +{}%", percent(lb)), None, true)]];
+            if parts.is_empty() {
+                lines.push(vec![("No enchantment, crucible, blood ritual or loot drop boost adds to loot.".into(), None, false)]);
+            }
+            for (src, pct, known) in &parts {
+                let v = if *known { format!("+{}%", percent(*pct)) } else { "active, amount not known yet".into() };
+                lines.push(vec![(format!("{src}: {v}"), None, false)]);
+            }
+            if c.loot_tier_until > now {
+                lines.push(vec![("Loot tier boost running (better drops, not more)".into(), None, false)]);
+            }
+            if parts.iter().any(|p| !p.2) {
+                lines.push(vec![("Log in with this character to read its crucible / ritual settings.".into(), Some(fixed::MUTED), false)]);
+            }
+            widgets::rich_tip(ui, Rect::from_min_size(pos2(x, mid - ls.y / 2.0), ls), ("lb", c.char_id), &lines);
+        }
         x -= 16.0 + 8.0;
         if c.pet_skin > 0 {
             x -= 36.0;
             if let Some(t) = icons.object(ui.ctx(), data, c.pet_skin, 36) {
                 painter.image(t.id(), Rect::from_min_size(pos2(x, mid - 18.0), vec2(36.0, 36.0)), uv(), Color32::WHITE);
             }
+            let pet = c.pet_name.as_deref().filter(|n| !n.trim().is_empty()).map_or("Pet".to_string(), |n| format!("Pet: {n}"));
+            widgets::tip(ui, Rect::from_min_size(pos2(x, mid - 18.0), vec2(36.0, 36.0)), ("pet", c.char_id), &pet);
         }
         resp.clicked()
     }
