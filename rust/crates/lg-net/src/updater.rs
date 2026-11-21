@@ -674,3 +674,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+#[cfg(test)]
+mod real_zip {
+    /// LG_ZIP=<a LootGobbler-portable.zip>: it unpacks, and its program is where the updater looks.
+    #[test]
+    fn unpacks_a_release_zip() {
+        let Ok(zip) = std::env::var("LG_ZIP") else { return };
+        let dir = std::env::temp_dir().join(format!("lg-real-zip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        super::unzip(std::path::Path::new(&zip), &dir).unwrap();
+        let exe = dir.join("LootGobbler.exe");
+        assert!(exe.is_file(), "no LootGobbler.exe");
+        eprintln!("LootGobbler.exe: {} bytes", std::fs::metadata(&exe).unwrap().len());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
