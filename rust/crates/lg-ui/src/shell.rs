@@ -220,7 +220,7 @@ impl Shell {
             const ITEMS: [(&str, bool); 8] = [
                 ("Logs", true),
                 ("Release Notes", true),
-                ("What's New Tour", false),
+                ("What's New Tour", true),
                 ("-", false),
                 ("Newcomer's Guide", true),
                 ("-", false),

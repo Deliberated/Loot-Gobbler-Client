@@ -149,6 +149,7 @@ pub struct Window {
     pub social: social::SocialView,
     pub guild: guild::GuildView,
     pub guide: crate::guide::Guide,
+    pub tour: crate::guide::FeatureTour,
     /// The greeting of the very first start, the release notes window, and what of the start is still to come
     /// (Java `TomatoGUI`: the release notes after an update, then the greeting, then the Newcomer's Guide).
     pub welcome: bool,
@@ -225,6 +226,7 @@ impl Window {
             social: social::SocialView::default(),
             guild: guild::GuildView::default(),
             guide: Default::default(),
+            tour: Default::default(),
             welcome: false,
             release_notes: None,
             start: StartStep::Done,
@@ -330,10 +332,18 @@ impl Window {
             self.asks.push(Ask::Set("welcomeShown".into(), "true".into()));
             self.welcome = true;
             self.start = StartStep::Welcome;
+            // new to the app: nothing is new to them
+            self.tour.first_start(&self.props);
         } else {
-            self.start = StartStep::Done;
-            self.guide.after_start(&self.props);
+            self.after_welcome();
         }
+    }
+
+    /// The Newcomer's Guide, then (not while it runs) the What's New tour not seen yet.
+    fn after_welcome(&mut self) {
+        self.start = StartStep::Done;
+        self.guide.after_start(&self.props);
+        self.tour.after_start(&self.props, self.guide.running());
     }
 
     /// Asks as a view would (for parts outside the views, e.g. the overlay windows).
@@ -517,6 +527,17 @@ impl Window {
         match self.shell.clicked_info {
             Some("Quick tour") => self.guide.start_quick(),
             Some("Release Notes") => self.asks.push(Ask::ReleaseNotes),
+            Some("What's New Tour") => {
+                if !self.tour.show_latest(self.guide.running()) {
+                    self.asks.push(Ask::Confirm {
+                        title: "What's New Tour".into(),
+                        text: "No tour yet: the new features of the next releases are shown here.".into(),
+                        yes: "OK".into(),
+                        no: String::new(),
+                        then: Box::new(Ask::Nothing),
+                    });
+                }
+            }
             Some(item) => self.info.open(item, &mut self.asks),
             None => {}
         }
@@ -561,8 +582,7 @@ impl Window {
         if self.welcome && crate::welcome::welcome(ui.ctx(), &self.palette) {
             self.welcome = false;
             if self.start == StartStep::Welcome {
-                self.start = StartStep::Done;
-                self.guide.after_start(&self.props);
+                self.after_welcome();
             }
         }
         if let Some(n) = &self.release_notes {
@@ -586,7 +606,9 @@ impl Window {
         // the Newcomer's Guide over all of it
         let seen =
             crate::guide::Seen { app, sniffing: self.shell.sniffing, tab: &self.shell.selected, menu_open: self.shell.info_open, now };
-        let out = self.guide.show(ui.ctx(), &self.palette, &seen, &mut self.asks);
+        let mut out = self.guide.show(ui.ctx(), &self.palette, &seen, &mut self.asks);
+        let tour = self.tour.show(ui.ctx(), &self.palette, &self.props, &mut self.asks);
+        out.open.extend(tour.open);
         for spec in &out.open {
             match spec.strip_prefix("tab:") {
                 Some(tab) => self.shell.selected = tab.to_string(),

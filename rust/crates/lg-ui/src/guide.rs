@@ -879,3 +879,185 @@ fn card(ui: &mut Ui, p: &Palette, v: &View, size: egui::Vec2, back: bool, skip: 
     }
     press
 }
+
+// ---- What's New tours (Java `FeatureTour`) ------------------------------------------------------------------------
+
+/// One step of a tour: its title and text, the view it opens when it starts (a `Window::open` spec), what it
+/// frames, what glows (clicking that goes on), and whether the frames are one.
+pub struct TourStep {
+    pub title: String,
+    pub body: String,
+    pub open: Option<String>,
+    pub spots: Vec<&'static str>,
+    pub clicks: Vec<&'static str>,
+    pub merged: bool,
+}
+
+pub struct Tour {
+    pub id: &'static str,
+    pub steps: Vec<TourStep>,
+}
+
+const KEY_TOURS_SEEN: &str = "featureToursSeen";
+const GREETING_TITLE: &str = "Hey, welcome!";
+const GREETING_BODY: &str = "I have some new features for you.";
+
+/// The tours: one per release with features worth showing, the latest last. To present a release's features, add a
+/// tour here (a new id, and its steps); it shows once after the update, and Info > What's New Tour shows the latest.
+pub fn tours() -> Vec<Tour> {
+    Vec::new()
+}
+
+/// Java `FeatureTour`: after an update, once the release notes are closed, a short tour of a release's new
+/// features in the Newcomer's Guide's look; each starts with the same greeting, then its own steps. A tour is shown
+/// once (finished or skipped).
+#[derive(Default)]
+pub struct FeatureTour {
+    tour: Option<Tour>,
+    /// -1: the greeting.
+    index: i32,
+    pending: Out,
+    sets: Vec<(&'static str, String)>,
+    scroll: Option<Vec<(&'static str, bool)>>,
+}
+
+fn seen_tours(props: &lg_app::properties::Properties) -> Vec<String> {
+    props.get(KEY_TOURS_SEEN).unwrap_or("").split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+}
+
+impl FeatureTour {
+    pub fn running(&self) -> bool {
+        self.tour.is_some()
+    }
+
+    /// After the release notes and the Newcomer's Guide: the latest tour not seen yet.
+    pub fn after_start(&mut self, props: &lg_app::properties::Properties, guide_running: bool) {
+        if guide_running {
+            return;
+        }
+        let seen = seen_tours(props);
+        if let Some(t) = tours().into_iter().rfind(|t| !seen.iter().any(|s| s == t.id)) {
+            self.begin(t);
+        }
+    }
+
+    /// The first start ever: the Newcomer's Guide shows the app as it is, the tours so far count as seen.
+    pub fn first_start(&mut self, props: &lg_app::properties::Properties) {
+        let mut seen = seen_tours(props);
+        for t in tours() {
+            if !seen.iter().any(|s| s == t.id) {
+                seen.push(t.id.to_string());
+            }
+        }
+        self.sets.push((KEY_TOURS_SEEN, seen.join(",")));
+    }
+
+    /// Info > What's New Tour: the latest tour again; false if there is none.
+    pub fn show_latest(&mut self, guide_running: bool) -> bool {
+        if guide_running {
+            return true;
+        }
+        match tours().pop() {
+            Some(t) => {
+                self.begin(t);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn begin(&mut self, t: Tour) {
+        self.tour = Some(t);
+        self.go(-1);
+    }
+
+    fn end(&mut self, props: &lg_app::properties::Properties) {
+        if let Some(t) = self.tour.take() {
+            let mut seen = seen_tours(props);
+            if !seen.iter().any(|s| s == t.id) {
+                seen.push(t.id.to_string());
+            }
+            self.sets.push((KEY_TOURS_SEEN, seen.join(",")));
+        }
+    }
+
+    fn go(&mut self, i: i32) {
+        let Some(t) = &self.tour else { return };
+        self.index = i.max(-1);
+        if let Some(s) = (self.index >= 0).then(|| t.steps.get(self.index as usize)).flatten() {
+            if let Some(o) = &s.open {
+                self.pending.open.push(o.clone());
+            }
+            self.scroll = Some(s.spots.iter().map(|n| (*n, s.merged)).collect());
+        }
+    }
+
+    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, props: &lg_app::properties::Properties, asks: &mut Vec<Ask>) -> Out {
+        if let Some(names) = self.scroll.take() {
+            request_scroll(ctx, names);
+        }
+        if let Some(t) = &self.tour {
+            let of = t.steps.len();
+            let step = (self.index >= 0).then(|| t.steps.get(self.index as usize)).flatten();
+            let last = self.index == of as i32 - 1;
+            let targets = targets(ctx);
+            let rects = |names: &[&'static str]| names.iter().filter_map(|n| targets.rects.get(n).copied()).collect::<Vec<_>>();
+            let mut spots = step.map_or_else(Vec::new, |s| rects(&s.spots));
+            if step.is_some_and(|s| s.merged) && spots.len() > 1 {
+                let u = spots.iter().skip(1).fold(spots[0], |u, r| u.union(*r));
+                spots = vec![u];
+            }
+            let clicks = step.map_or_else(Vec::new, |s| rects(&s.clicks));
+            let v = View {
+                head: if self.index < 0 { "WHAT'S NEW".into() } else { format!("WHAT'S NEW · {} / {of}", self.index + 1) },
+                title: step.map_or(GREETING_TITLE.to_string(), |s| s.title.clone()),
+                body: step.map_or(GREETING_BODY.to_string(), |s| s.body.clone()),
+                waiting: None,
+                spots,
+                clicks,
+                on_click: true,
+                open: true,
+                next: if last { "FINISH" } else { "NEXT" },
+                choose: false,
+            };
+            // a click on what glows does what it always does, then the tour goes on
+            let clicked = !v.clicks.is_empty()
+                && ctx.input(|i| {
+                    i.pointer.primary_clicked() && i.pointer.interact_pos().is_some_and(|q| v.clicks.iter().any(|r| r.contains(q)))
+                });
+            let screen = ctx.content_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::unique("lg-tour-layer")));
+            paint_layer(&painter, p, screen, &v, ctx.input(|i| i.time));
+            let size = card_size(&painter, p, &v, self.index > 0, !last);
+            let at = place(&v.spots, &v.clicks, size, screen);
+            let mut press = None;
+            egui::Area::new(Id::unique("lg-tour-card")).order(egui::Order::Tooltip).fixed_pos(at).show(ctx, |ui| {
+                press = card(ui, p, &v, size, self.index > 0, !last);
+            });
+            match press {
+                Some(Press::Back) => self.go(self.index - 1),
+                Some(Press::Next) => {
+                    if last {
+                        self.end(props);
+                    } else {
+                        self.go(self.index + 1);
+                    }
+                }
+                Some(Press::Skip) => self.end(props),
+                _ if clicked => {
+                    if last {
+                        self.end(props);
+                    } else {
+                        self.go(self.index + 1);
+                    }
+                }
+                _ => {}
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(40));
+        }
+        for (k, v) in self.sets.drain(..) {
+            asks.push(Ask::Set(k.into(), v));
+        }
+        std::mem::take(&mut self.pending)
+    }
+}
