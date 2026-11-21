@@ -1,6 +1,7 @@
 //! Clicks in the window ask for the settings Java would save.
 
 use egui::{Event, PointerButton, Pos2};
+use egui_kittest::kittest::Queryable as _;
 use lg_ui::window::{Ask, Window};
 
 fn click(h: &mut egui_kittest::Harness<'_, Window>, at: Pos2) {
@@ -161,4 +162,42 @@ fn tabs_reorder_by_dragging() {
     let asks = h.state_mut().take_asks();
     let want = format!("Profile|Characters|Inventory|{}", lg_ui::shell::TABS[3..].join("|"));
     assert!(asks.contains(&Ask::Set("tabOrder".into(), want)), "{asks:?}");
+}
+
+#[test]
+fn tips_show_under_clickable_widgets() {
+    // a tip first, then a clickable widget on the same spot (as an item's tooltip and its link)
+    let mut themed = false;
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(400.0, 300.0)).build_ui(move |ui| {
+        if !themed {
+            lg_ui::theme::apply(ui.ctx(), &lg_ui::theme::palette(None));
+            themed = true;
+        }
+        let r = egui::Rect::from_min_size(egui::pos2(50.0, 50.0), egui::vec2(40.0, 40.0));
+        lg_ui::widgets::tip(ui, r, "under", "Under a link");
+        let _ = ui.interact(r, ui.scope_id().with("link"), egui::Sense::click());
+    });
+    h.input_mut().events.push(Event::PointerMoved(Pos2::new(70.0, 70.0)));
+    for _ in 0..40 {
+        h.step();
+    }
+    assert!(h.query_by_label("Under a link").is_some(), "the tip does not show");
+}
+
+#[test]
+fn tips_show_alone() {
+    let mut themed = false;
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(400.0, 300.0)).build_ui(move |ui| {
+        if !themed {
+            lg_ui::theme::apply(ui.ctx(), &lg_ui::theme::palette(None));
+            themed = true;
+        }
+        let r = egui::Rect::from_min_size(egui::pos2(50.0, 50.0), egui::vec2(40.0, 40.0));
+        lg_ui::widgets::tip(ui, r, "alone", "Alone tip");
+    });
+    h.input_mut().events.push(Event::PointerMoved(Pos2::new(70.0, 70.0)));
+    for _ in 0..40 {
+        h.step();
+    }
+    assert!(h.query_by_label("Alone tip").is_some(), "the tip does not show");
 }

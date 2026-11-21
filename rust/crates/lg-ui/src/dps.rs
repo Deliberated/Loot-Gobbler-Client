@@ -479,9 +479,27 @@ fn boss_block(
                 );
             }
         }
+        // Java `loadoutText`: "Weapon: name" per slot
+        let text = match b.loadout {
+            None => "unknown".to_string(),
+            Some(l) => (0..4)
+                .map(|i| {
+                    let name = if l[i] > 0 {
+                        data.items.item(l[i]).map_or(format!("Item {}", l[i]), |it| it.name.clone())
+                    } else {
+                        "empty".into()
+                    };
+                    format!("{}: {name}", crate::detail::SLOT_NAMES[i])
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        };
+        widgets::tip(ui, Rect::from_min_size(pos2(lx, hr.top()), vec2(4.0 * 26.0, hr.height())), ("gh-loadout", key), &text);
         lx += 4.0 * 22.0 + 12.0 + 16.0;
         let total: i64 = b.players.iter().map(|x| i64::from(x.damage)).sum();
-        jtext::draw(painter, pos2(lx, hr.center().y), Align2::LEFT_CENTER, &format!("{} total damage", num(total)), &f, fixed::GOLD);
+        let tr =
+            jtext::draw(painter, pos2(lx, hr.center().y), Align2::LEFT_CENTER, &format!("{} total damage", num(total)), &f, fixed::GOLD);
+        widgets::tip(ui, tr, ("gh-total", key), "Your damage with this loadout");
     }
     let bw = jtext::width(painter, "COPY LOG", &small()) + 32.0;
     let br = Rect::from_min_size(pos2(hr.right() - 7.0 - bw, hr.center().y - 18.0), vec2(bw, 36.0));

@@ -221,6 +221,21 @@ impl GameModesView {
                             fixed::GREEN,
                         );
                     }
+                    if playing > 0 {
+                        let cr = Rect::from_min_size(pos2(er.right() - 40.0, er.top()), vec2(40.0, er.height()));
+                        widgets::tip(
+                            ui,
+                            cr,
+                            ("playing", m.code),
+                            &format!("{playing} character{} playing it", if playing == 1 { "" } else { "s" }),
+                        );
+                    }
+                    widgets::tip(
+                        ui,
+                        Rect::from_min_max(pos2(er.left(), er.center().y), pos2(er.right() - 40.0, er.bottom())),
+                        ("mode-name", m.code),
+                        m.summary,
+                    );
                     if ui.interact(er, ui.scope_id().with(("mode", m.code)), Sense::click()).clicked() {
                         picked = Some(m.code.to_string());
                     }
@@ -277,6 +292,14 @@ impl GameModesView {
                     let names: Vec<String> = UPE_VARIANTS.iter().map(|v| upe::label(v)).collect();
                     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
                     let sel = UPE_VARIANTS.iter().position(|v| *v == cur_variant).unwrap_or(0);
+                    // each variant's name and summary on hover
+                    let mut vx = x + 6.0;
+                    for (k, v) in UPE_VARIANTS.iter().enumerate() {
+                        let vw = widgets::segmented_width(&painter, &refs[k..=k], false);
+                        let info = upe::info(v);
+                        widgets::tip(ui, Rect::from_min_size(pos2(vx, y), vec2(vw, 36.0)), ("variant", k), &format!("{}: {}", info.name, info.summary));
+                        vx += vw;
+                    }
                     if let Some(i) = widgets::segmented(ui, &p, pos2(x + 6.0, y), 36.0, &refs, sel, false, &[]) {
                         variant = Some(UPE_VARIANTS[i].to_string());
                     }
@@ -416,22 +439,27 @@ fn card(
     let id = r.char_id;
     // each button: its label, primary, enabled, what it does (an ask, or a page to open)
     let mut buttons: Vec<(String, bool, bool, Result<Ask, String>)> = Vec::new();
+    // the tooltips of the greyed out ones, and of Allow a pet (by label)
+    let mut tips: Vec<(String, String)> = Vec::new();
     if c.alive && r.potential() {
         let ask = Ask::UpeMark { char_id: id, on: true, mode: Some(mode.to_string()), no_pet: Some(no_pet) };
-        buttons.push((
-            format!("Start {}{}", upe::label(mode), if no_pet { " without pet" } else { "" }),
-            true,
-            r.can_start(mode, no_pet),
-            Ok(ask),
-        ));
+        let label = format!("Start {}{}", upe::label(mode), if no_pet { " without pet" } else { "" });
+        if !r.can_start(mode, no_pet) {
+            tips.push((label.clone(), "It has a pet: a run without a pet cannot start while one follows it".into()));
+        }
+        buttons.push((label, true, r.can_start(mode, no_pet), Ok(ask)));
     }
     if c.alive && r.marked && r.broken.is_none() {
         let on = upe::guild(&r.mode);
         let other = upe::with_guild(&r.mode, !on);
         let label = format!("{}{}", if on { "Guild off: " } else { "Guild on: " }, upe::label(&other));
+        if on && r.guild_locked {
+            tips.push((label.clone(), format!("It equipped or used an item traded from a guild mate: it stays {}", upe::label(&r.mode))));
+        }
         buttons.push((label, false, !(on && r.guild_locked), Ok(Ask::UpeMode(id, other))));
     }
     if c.alive && r.marked && r.broken.is_none() && r.no_pet {
+        tips.push(("Allow a pet".into(), "Ends the no-pet part of the run: it cannot be turned on again".into()));
         buttons.push(("Allow a pet".into(), false, true, Ok(Ask::UpeNoPet(id, false))));
     }
     if c.alive && r.marked && r.broken.is_none() {
@@ -494,6 +522,9 @@ fn card(
         } else {
             crate::inventory::button(ui, p, br, label, false, &format!("mode-{}-{i}", r.char_id))
         };
+        if let Some((_, t)) = tips.iter().find(|(l, _)| l == label) {
+            crate::widgets::tip(ui, br, ("mode-tip", r.char_id, i), t);
+        }
         if clicked {
             match action {
                 Ok(ask) => crate::window::ask_later(ui.ctx(), ask.clone()),

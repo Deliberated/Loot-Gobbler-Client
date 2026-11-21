@@ -11,6 +11,8 @@ pub fn label(ui: &mut Ui, text: &str, font: &FontId, color: Color32) -> egui::Re
     let size = vec2(jtext::width(&p, text, font), jtext::height(&p, font));
     let (r, resp) = ui.allocate_exact_size(size, Sense::click());
     jtext::draw(&p, r.min, Align2::LEFT_TOP, text, font, color);
+    // its words for screen readers (and the tests)
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text));
     resp
 }
 
@@ -415,12 +417,31 @@ pub fn tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, t: &str
     }
     let resp = ui.interact(r, ui.scope_id().with(("tip", id)), Sense::hover());
     let p_ink = ui.visuals().override_text_color.unwrap_or(Color32::WHITE);
-    resp.on_hover_ui(|ui| {
+    show_tip(ui, resp, |ui| {
         let f = text(18.0);
         for line in t.lines() {
             label(ui, line, &f, p_ink);
         }
     });
+}
+
+/// A tooltip over a hover-only area. egui hovers nothing below a clickable widget, so a tip under (registered
+/// before) an item link or a button would never show: it then shows once the pointer rests on the area.
+fn show_tip(ui: &Ui, resp: egui::Response, add: impl FnOnce(&mut Ui)) {
+    if resp.hovered() {
+        resp.on_hover_ui(add);
+        return;
+    }
+    if !resp.contains_pointer() || ui.ctx().dragged_id().is_some() || ui.input(|i| i.pointer.any_down()) {
+        return;
+    }
+    let delay = ui.style().interaction.tooltip_delay;
+    let rest = ui.input(|i| i.pointer.time_since_last_movement());
+    if rest >= delay {
+        egui::Tooltip::for_widget(&resp).show(add);
+    } else {
+        ui.ctx().request_repaint_after_secs(delay - rest);
+    }
 }
 
 /// Java `ItemLinks.link`: an item's icon that opens the item in the Inventory tab when clicked, with a hand cursor;
@@ -551,7 +572,7 @@ pub fn rich_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, li
     }
     let resp = ui.interact(r, ui.scope_id().with(("rich-tip", id)), Sense::hover());
     let ink = ui.visuals().override_text_color.unwrap_or(Color32::WHITE);
-    resp.on_hover_ui(|ui| {
+    show_tip(ui, resp, |ui| {
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
         let f = text(18.0);
         for line in lines {

@@ -379,10 +379,15 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                                 Color32::WHITE,
                             );
                         }
+                        if let Some(n) = data.object_name(id) {
+                            widgets::tip(ui, Rect::from_min_size(pos2(ix, cy - 12.0), vec2(24.0, 24.0)), ("sound-item", k, id), n);
+                        }
                         ix += 24.0 + 2.0;
                     }
                     if let Some(up) = up {
                         arrow(&painter, pos2(ix + 2.0, cy - 9.0), *up);
+                        let t = if *up { "Recharged" } else { "Broken" };
+                        widgets::tip(ui, Rect::from_min_size(pos2(ix + 2.0, cy - 9.0), vec2(14.0, 18.0)), ("sound-arrow", k), t);
                     }
                     let vol = s.volume(props);
                     let lt = format!("{vol}%");
@@ -391,6 +396,12 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     jtext::draw(&painter, pos2(lx, cy), Align2::LEFT_CENTER, &lt, &f, p.ink);
                     let sx = lx - 6.0 - 150.0;
                     slider(&painter, &p, sx, cy, 150.0, vol as f32 / 100.0);
+                    widgets::tip(
+                        ui,
+                        Rect::from_min_size(pos2(sx, cy - 15.0), vec2(150.0, 30.0)),
+                        ("sound-volume", k),
+                        "Volume of this sound",
+                    );
                     zones.borrow_mut().push(Zone::Slider(
                         Rect::from_min_size(pos2(sx, cy - 15.0), vec2(150.0, 30.0)),
                         format!("{}Volume", s.key),
@@ -416,6 +427,10 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     }
                     let cur = s.current(props);
                     let cr = jtext::draw(&painter, pos2(bx, cy), Align2::LEFT_CENTER, &cur, &f, p.ink);
+                    let file = s.setting(props);
+                    if file.contains('/') || file.contains('\\') {
+                        widgets::tip(ui, cr, ("sound-file", k), file);
+                    }
                     bx = cr.right() + 6.0 + 12.0 + 6.0;
                     for b in ["Play", "Choose...", "Default", "Off"] {
                         let (br, clicked) = button(ui, &p, bx, cy, b);
@@ -584,7 +599,15 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                     vec![pos2(ax - 4.0, ay + 2.0), pos2(ax, ay + 6.0), pos2(ax + 4.0, ay + 2.0)],
                     Stroke::new(1.2, p.ink_soft),
                 ));
-                jtext::draw(&painter, pos2(sr.right() + 6.0, cy), Align2::LEFT_CENTER, "days   (0 = keep all logs)", &f, fixed::MUTED);
+                let hr =
+                    jtext::draw(&painter, pos2(sr.right() + 6.0, cy), Align2::LEFT_CENTER, "days   (0 = keep all logs)", &f, fixed::MUTED);
+                // the spinner's arrows: one day more or less (0 to 3650, Java's)
+                let up_r = Rect::from_min_max(ar.min, pos2(ar.right(), ar.center().y));
+                let down_r = Rect::from_min_max(pos2(ar.left(), ar.center().y), ar.max);
+                zones.borrow_mut().push(Zone::Set(up_r, "logKeepDays".into(), (keep + 1).min(3650).to_string()));
+                zones.borrow_mut().push(Zone::Set(down_r, "logKeepDays".into(), (keep - 1).max(0).to_string()));
+                let keep_tip = "Older log files are deleted when the app starts and at midnight. Default: 14 days.";
+                widgets::tip(ui, Rect::from_min_max(lr.min, hr.max), "keep-logs", keep_tip);
                 ty += 32.0 + 8.0;
                 ty - r.top() + 2.0
             },
@@ -605,6 +628,7 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                 ty += hint(&painter, x, ty, "The tour through Loot Gobbler. Info > Newcomer's Guide starts the quick tour at any time.");
                 let next = props.get("guideDoneVersion") != Some("2");
                 let cr = check(&painter, &p, x + 6.0, ty + 4.0 + 13.0, "Show the whole guide on the next start, as if never seen", next);
+                widgets::tip(ui, cr, "guide-next", "Switches off by itself once the guide was finished or skipped");
                 // Java `setOnNextStart`: on, it starts from the beginning
                 zones.borrow_mut().push(Zone::Set(cr, "guideDoneVersion".into(), if next { "2".into() } else { String::new() }));
                 if !next {

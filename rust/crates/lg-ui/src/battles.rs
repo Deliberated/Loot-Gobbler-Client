@@ -288,6 +288,8 @@ impl BattlesView {
                                     ui.scope_id().with(("day", &d)),
                                     Sense::click(),
                                 )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(if open { "Collapse this day" } else { "Show this day's summary and dungeons" })
                                 .clicked()
                             {
                                 toggled = Some(d.clone());
@@ -735,14 +737,10 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Opt
                 if !current {
                     let bw = jtext::width(&painter, "DELETE", &small()) + 32.0;
                     btn_h = 36.0;
-                    if crate::inventory::button(
-                        ui,
-                        &p,
-                        Rect::from_min_size(pos2(r.right() - bw, r.top()), vec2(bw, btn_h)),
-                        "Delete",
-                        true,
-                        "delete-visit",
-                    ) {
+                    let dr = Rect::from_min_size(pos2(r.right() - bw, r.top()), vec2(bw, btn_h));
+                    let clicked = crate::inventory::button(ui, &p, dr, "Delete", true, "delete-visit");
+                    widgets::tip(ui, dr, ("delete-tip", v.start), "Remove this dungeon from the list");
+                    if clicked {
                         c_asks.borrow_mut().push(Ask::Confirm {
                             title: "Delete dungeon".into(),
                             text: format!("Delete {} ({}) from the list?", v.dungeon, when_text(zone, v, false, now)),
@@ -763,7 +761,15 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Opt
                 }
                 let mut ty = r.top() + ((h - th) / 2.0).floor();
                 for (t, font, color) in &lines {
-                    jtext::draw(&painter, pos2(r.left() + 64.0 + 14.0, ty), Align2::LEFT_TOP, t, font, *color);
+                    let lr = jtext::draw(&painter, pos2(r.left() + 64.0 + 14.0, ty), Align2::LEFT_TOP, t, font, *color);
+                    if t.starts_with("Lantern:") {
+                        widgets::tip(
+                            ui,
+                            lr,
+                            ("lantern", v.start),
+                            "While the lantern was there: near = within 3.5 tiles, close = within 1.75 tiles",
+                        );
+                    }
                     ty += jtext::height(&painter, font);
                 }
                 h
@@ -843,7 +849,13 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Opt
                 ty += 8.0;
                 let n = crate::damage_graph::dangerous(v, crate::damage_graph::WINDOW_MS, now);
                 let caption = format!("Per 2 s  \u{00B7}  {n} over 30% / 300").to_uppercase();
-                jtext::draw(&painter, pos2(r.left(), ty), Align2::LEFT_TOP, &caption, &small(), p.ink_soft);
+                let cr = jtext::draw(&painter, pos2(r.left(), ty), Align2::LEFT_TOP, &caption, &small(), p.ink_soft);
+                widgets::tip(
+                    ui,
+                    cr,
+                    ("graph-caption", v.start),
+                    "Damage taken added up per 2 seconds; orange: 30% of your life or 300 damage in one of them",
+                );
                 ty += jtext::height(&painter, &small()) + 2.0;
                 let gh = crate::damage_graph::height(&fights);
                 let gr = Rect::from_min_size(pos2(r.left(), ty), vec2(r.width(), gh));

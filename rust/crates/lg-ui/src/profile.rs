@@ -348,6 +348,12 @@ fn player_card(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, now: i64,
         let line1 = format!("saved you {n} time{}", if n == 1 { "" } else { "s" });
         label(&mut col, &line1, &text(18.0), p.ink_soft);
         label(&mut col, &format!("in the last {AMULET_DAYS} days"), &text(18.0), p.ink_soft);
+        widgets::tip(
+            ui,
+            col.min_rect(),
+            "amulet-saves",
+            &format!("Your Amulet of Restoration kept you alive {n} time{} in the last {AMULET_DAYS} days", if n == 1 { "" } else { "s" }),
+        );
         height = height.max(col.min_rect().height());
     }
     ui.allocate_exact_size(vec2(full, height), Sense::hover());
@@ -395,10 +401,20 @@ fn recent_exalts(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, most: &
     }
     gained.sort_by_key(|(id, got)| (*id != most.class_type, -got.iter().sum::<i32>()));
     let start = ui.cursor().min;
-    caption(ui, p, &format!("EXALTATIONS ({EXALT_DAYS} DAYS)"));
+    let head = caption(ui, p, &format!("EXALTATIONS ({EXALT_DAYS} DAYS)"));
+    if ui
+        .interact(head.rect, ui.scope_id().with("open-classes"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Open the Classes page")
+        .clicked()
+    {
+        crate::window::open_later(ui.ctx(), "Characters:classes");
+    }
     ui.add_space(4.0);
+    // Java `DpsLoggerView.EXALT_STATS`
+    const STAT_NAMES: [&str; 8] = ["DEX", "SPD", "VIT", "WIS", "DEF", "ATT", "MP", "HP"];
     for (id, got) in gained.iter().take(EXALT_CLASSES) {
-        ui.horizontal(|ui| {
+        let row = ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
             let tex = icons.object(ui.ctx(), data, *id, 32);
             widgets::icon(ui, tex.as_ref(), 32.0);
@@ -418,12 +434,25 @@ fn recent_exalts(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, most: &
                 shown += 1;
             }
         });
+        // click: the class in Classes, its progress on hover
+        let name = data.classes.iter().find(|k| k.id == *id).map_or(String::new(), |k| k.name.clone());
+        let mut tip = format!("{name}  ·  exaltation progress in the last {EXALT_DAYS} days:");
+        for stat in ORDER {
+            if got[stat] > 0 {
+                tip += &format!("\n{} +{}", STAT_NAMES[stat], got[stat]);
+            }
+        }
+        tip += "\nclick to open it in Classes";
+        if ui
+            .interact(row.response.rect, ui.scope_id().with(("open-class", *id)), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(tip)
+            .clicked()
+        {
+            crate::window::open_later(ui.ctx(), format!("Characters:class:{id}"));
+        }
     }
-    // click: the Classes page
-    let r = egui::Rect::from_min_max(start, ui.min_rect().max);
-    if ui.interact(r, ui.scope_id().with("open-classes"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-        crate::window::open_later(ui.ctx(), "Characters:classes");
-    }
+    let _ = start;
     true
 }
 
@@ -455,6 +484,7 @@ fn character_block(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, c: &C
     if ui
         .interact(block.response.rect, ui.scope_id().with(("open-char", c.char_id)), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Open in Characters")
         .clicked()
     {
         crate::window::open_later(ui.ctx(), format!("Characters:{}", c.char_id));
@@ -467,17 +497,27 @@ fn fame_gain(ui: &mut Ui, p: &Palette, chars: &Characters, _most: &Char, now: i6
     gainers.sort_by_key(|o| -Characters::gained_today(o, now));
     let gain: i64 = gainers.iter().map(|o| Characters::gained_today(o, now)).sum();
     let color = if gain > 0 { fixed::GREEN } else { fixed::MUTED };
-    widgets::label_right(ui, &format!("+{} fame", num(gain)), &text(20.0), color, 24.0);
+    widgets::label_right(ui, &format!("+{} fame", num(gain)), &text(20.0), color, 24.0)
+        .on_hover_text("Fame gained by all your characters in the last 24 hours");
     let hour: i64 = gainers.iter().flat_map(|o| Characters::sessions(o, now - 3_600_000)).map(|s| s.gained).sum();
     if hour > 0 {
-        widgets::label_right(ui, &format!("+{} last hour", num(hour)), &text(18.0), p.gold, 24.0);
+        widgets::label_right(ui, &format!("+{} last hour", num(hour)), &text(18.0), p.gold, 24.0)
+            .on_hover_text("Fame gained in the last hour");
     }
     if !gainers.is_empty() {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
             for (i, o) in gainers.iter().enumerate() {
                 let t = format!("{}{} +{}", if i == 0 { "" } else { "     " }, o.class_name, num(Characters::gained_today(o, now)));
-                label(ui, &t, &widgets::small(), if i == 0 { p.gold } else { fixed::MUTED });
+                let l = label(ui, &t, &widgets::small(), if i == 0 { p.gold } else { fixed::MUTED });
+                if ui
+                    .interact(l.rect, ui.scope_id().with(("gainer", o.char_id)), Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(format!("Open this {} in Characters", o.class_name))
+                    .clicked()
+                {
+                    crate::window::open_later(ui.ctx(), format!("Characters:{}", o.char_id));
+                }
             }
         });
     }
@@ -697,7 +737,7 @@ fn recent_runs(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, runs: &[&
         let h = 34.0f32.max(crate::jtext::height(&painter, &f));
         let (row_r, row) = ui.allocate_exact_size(vec2(total, h + 8.0), Sense::click());
         // click: the run in Battles
-        if row.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        if row.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Open this run in Battles").clicked() {
             crate::window::open_later(ui.ctx(), format!("Battles:run:{}", r.start));
         }
         let cy = row_r.center().y;

@@ -497,6 +497,11 @@ impl Shell {
             let w = text_width(ui, widest, &label) + 2.0 * s(10.0) + 2.0;
             let r = Rect::from_min_max(pos2(rx - w, bar.top() + 3.0), pos2(rx, bar.bottom() - 3.0));
             let resp = ui.interact(r, ui.scope_id().with(("status", which)), Sense::click());
+            let resp = match which {
+                1 => resp.on_hover_text("Hides the overlays that are on, or shows them again (each is set up under Battles > Overlay)"),
+                2 => resp.on_hover_text("Check for a new Loot Gobbler version"),
+                _ => resp,
+            };
             if *which == 0 {
                 crate::guide::mark(ui, "sniffer", r);
             }
@@ -519,7 +524,7 @@ impl Shell {
             rx -= w;
         }
         let m = fixed::MUTED;
-        text(
+        let vr = text(
             ui,
             pos2(rx - 12.0, bar.center().y),
             Align2::RIGHT_CENTER,
@@ -527,6 +532,8 @@ impl Shell {
             label,
             Color32::from_rgba_unmultiplied(m.r(), m.g(), m.b(), 110),
         );
+        // a build from source until the app is released (Java `stable`)
+        crate::widgets::tip(ui, vr, "version-tip", "Development build (run from source, not a published release)");
 
         let content = Rect::from_min_max(pos2(all.left(), row.bottom() + 1.0), pos2(all.right(), bar.top()));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(content));
