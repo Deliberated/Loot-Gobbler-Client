@@ -52,6 +52,10 @@ pub enum Ask {
     CheckUpdates,
     /// Info > About's "Check for updates": checks now and answers in a message.
     CheckUpdatesAbout,
+    /// Info > Release Notes: every release's notes, loaded from GitHub.
+    ReleaseNotes,
+    /// A web page to open (empty: the releases page).
+    OpenUrl(String),
 }
 
 /// What the Server tab asks of the server (Java `ServerPanel`'s buttons).
@@ -145,6 +149,11 @@ pub struct Window {
     pub social: social::SocialView,
     pub guild: guild::GuildView,
     pub guide: crate::guide::Guide,
+    /// The greeting of the very first start, the release notes window, and what of the start is still to come
+    /// (Java `TomatoGUI`: the release notes after an update, then the greeting, then the Newcomer's Guide).
+    pub welcome: bool,
+    pub release_notes: Option<crate::welcome::ReleaseNotes>,
+    start: StartStep,
     /// The Newcomer's Guide shows a sample dungeon in the menu bar: since when it is "in" it.
     preview_since: Option<i64>,
     themed: bool,
@@ -173,6 +182,14 @@ fn with_new_tabs(saved: &str) -> Vec<String> {
         names.insert(at, shell::TABS[i].to_string());
     }
     names
+}
+
+/// What of the start waits for a window to close.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartStep {
+    Done,
+    Notes,
+    Welcome,
 }
 
 fn now_ms() -> i64 {
@@ -208,6 +225,9 @@ impl Window {
             social: social::SocialView::default(),
             guild: guild::GuildView::default(),
             guide: Default::default(),
+            welcome: false,
+            release_notes: None,
+            start: StartStep::Done,
             preview_since: None,
             themed: false,
             asks: Vec::new(),
@@ -291,6 +311,29 @@ impl Window {
             }
         }
         asks
+    }
+
+    /// Once the window is up (Java `TomatoGUI`): with `notes` the release notes after an update come first (shown
+    /// while they load); then on the very first start the greeting; then the Newcomer's Guide.
+    pub fn begin_start(&mut self, notes: Option<String>) {
+        match notes {
+            Some(from) => {
+                self.release_notes = Some(crate::welcome::ReleaseNotes { from: Some(from), notes: None });
+                self.start = StartStep::Notes;
+            }
+            None => self.after_notes(),
+        }
+    }
+
+    fn after_notes(&mut self) {
+        if self.props.get("welcomeShown") != Some("true") {
+            self.asks.push(Ask::Set("welcomeShown".into(), "true".into()));
+            self.welcome = true;
+            self.start = StartStep::Welcome;
+        } else {
+            self.start = StartStep::Done;
+            self.guide.after_start(&self.props);
+        }
     }
 
     /// Asks as a view would (for parts outside the views, e.g. the overlay windows).
@@ -473,6 +516,7 @@ impl Window {
         }
         match self.shell.clicked_info {
             Some("Quick tour") => self.guide.start_quick(),
+            Some("Release Notes") => self.asks.push(Ask::ReleaseNotes),
             Some(item) => self.info.open(item, &mut self.asks),
             None => {}
         }
@@ -512,6 +556,30 @@ impl Window {
             && !crate::dialogs::show(ui.ctx(), &self.palette, &self.props, d, &mut self.asks)
         {
             self.dialog = None;
+        }
+        // the greeting and the release notes
+        if self.welcome && crate::welcome::welcome(ui.ctx(), &self.palette) {
+            self.welcome = false;
+            if self.start == StartStep::Welcome {
+                self.start = StartStep::Done;
+                self.guide.after_start(&self.props);
+            }
+        }
+        if let Some(n) = &self.release_notes {
+            match n.show(ui.ctx(), &self.palette, &app.zone, env!("CARGO_PKG_VERSION")) {
+                crate::welcome::Out::Keep => {}
+                crate::welcome::Out::Close => {
+                    self.release_notes = None;
+                    if self.start == StartStep::Notes {
+                        self.after_notes();
+                    }
+                }
+                crate::welcome::Out::ShowAll => {
+                    self.release_notes = None;
+                    self.asks.push(Ask::ReleaseNotes);
+                }
+                crate::welcome::Out::Open(url) => self.asks.push(Ask::OpenUrl(url)),
+            }
         }
         self.question(ui.ctx());
         self.grab_card(ui, app);

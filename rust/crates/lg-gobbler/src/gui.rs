@@ -44,6 +44,8 @@ pub struct Gui {
     /// The update checks (none with --offline), and when the restart into a new version began.
     updater: Option<lg_net::updater::Updater>,
     restarting: Option<std::time::Instant>,
+    /// Release notes loading on their thread, for the release notes window.
+    notes: Option<std::sync::mpsc::Receiver<Result<Vec<lg_ui::welcome::Note>, String>>>,
 }
 
 impl Gui {
@@ -68,6 +70,7 @@ impl Gui {
             seen_run: None,
             updater: updates.then(|| lg_net::updater::Updater::new(env!("CARGO_PKG_VERSION"))),
             restarting: None,
+            notes: None,
         };
         g.seen_run = g.app.dps_history.runs.first().map(|r| r.start);
         // Java `GobblerServer.reconnect` on start: the saved server and session
@@ -138,6 +141,50 @@ impl Gui {
     }
 
     /// Info > Logs > Export...: the system's save dialog on a thread of its own, then the file copied there.
+    /// Java `WhatsNewDialog.showAfterUpdate`, then `WelcomeDialog` and the Newcomer's Guide: if this version is
+    /// newer than the one that ran last, its release notes (and those in between) first. The first start ever only
+    /// remembers the version (the greeting covers that).
+    fn start_greeting(&mut self) {
+        let version = env!("CARGO_PKG_VERSION");
+        let last = self.window.props.get("lastRunVersion").map(str::to_string).filter(|v| !v.trim().is_empty());
+        let used_before = self.window.props.get("welcomeShown") == Some("true");
+        self.window.ask(lg_ui::window::Ask::Set("lastRunVersion".into(), version.into()));
+        let due = match &last {
+            Some(l) => lg_net::updater::compare(version, l) == std::cmp::Ordering::Greater,
+            None => used_before,
+        };
+        if !due || self.updater.is_none() {
+            self.window.begin_start(None);
+            return;
+        }
+        let from = last.clone().unwrap_or_else(|| "an older version".into());
+        self.window.begin_start(Some(from));
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.notes = Some(rx);
+        std::thread::spawn(move || {
+            let got = match &last {
+                Some(l) => lg_net::updater::release_notes(l, version, version),
+                // an unknown old version: this release's notes
+                None => lg_net::updater::release_notes("v0", version, version).map(|all| {
+                    all.into_iter().filter(|n| lg_net::updater::compare(&n.version, version) == std::cmp::Ordering::Equal).collect()
+                }),
+            };
+            let _ = tx.send(notes_of(got, "The release notes could not be loaded right now."));
+        });
+    }
+
+    /// Info > Release Notes: every published release, the latest first; open at once, filled in when GitHub answers.
+    fn release_notes(&mut self) {
+        self.window.release_notes = Some(lg_ui::welcome::ReleaseNotes { from: None, notes: None });
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.notes = Some(rx);
+        std::thread::spawn(move || {
+            let got = lg_net::updater::release_notes("v0", "v999999", env!("CARGO_PKG_VERSION"));
+            let _ =
+                tx.send(notes_of(got, "The release notes could not be loaded right now. Check your connection, or open them on GitHub."));
+        });
+    }
+
     /// A message over the window with its OK.
     fn message(&mut self, title: &str, text: &str) {
         self.window.ask(lg_ui::window::Ask::Confirm {
@@ -581,6 +628,13 @@ impl eframe::App for Gui {
                     }
                     None => self.message("Check for updates", "Updates are not checked with --offline."),
                 },
+                lg_ui::window::Ask::ReleaseNotes => self.release_notes(),
+                lg_ui::window::Ask::OpenUrl(url) => {
+                    let url = if url.is_empty() { lg_net::updater::releases_page() } else { url };
+                    if let Err(e) = lg_ui::info::open_url(&url) {
+                        lg_app::applog::err(&format!("cannot open {url}: {e}"));
+                    }
+                }
                 lg_ui::window::Ask::CheckUpdatesAbout => match &self.updater {
                     Some(u) => u.check_and_answer(),
                     None => self.message("Check for updates", "Updates are not checked with --offline."),
@@ -648,8 +702,16 @@ impl eframe::App for Gui {
             u.start();
         }
         if self.frames == 2 {
-            // Java `NewcomerGuide.afterStart`: once the window is up
-            self.window.guide.after_start(&self.window.props);
+            self.start_greeting();
+        }
+        // release notes that came in
+        if let Some(rx) = &self.notes
+            && let Ok(got) = rx.try_recv()
+        {
+            if let Some(n) = &mut self.window.release_notes {
+                n.notes = Some(got);
+            }
+            self.notes = None;
         }
         // LG_TRY=guide-next:<step>: the guide at that step, then Next pressed
         if let Ok(t) = std::env::var("LG_TRY")
@@ -712,4 +774,10 @@ impl eframe::App for Gui {
         // the clocks and the live views move on; packets come in between
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
     }
+}
+
+/// The updater's notes for the release notes window, or the words for when they could not be loaded.
+fn notes_of(got: Result<Vec<lg_net::updater::Notes>, String>, failed: &str) -> Result<Vec<lg_ui::welcome::Note>, String> {
+    got.map(|v| v.into_iter().map(|n| lg_ui::welcome::Note { version: n.version, published: n.published, body: n.body }).collect())
+        .map_err(|_| failed.to_string())
 }

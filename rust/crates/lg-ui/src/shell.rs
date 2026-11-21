@@ -219,7 +219,7 @@ impl Shell {
             // Java's Info menu: Logs, Release Notes, What's New Tour | Newcomer's Guide | About, Net traffic (no Java)
             const ITEMS: [(&str, bool); 8] = [
                 ("Logs", true),
-                ("Release Notes", false),
+                ("Release Notes", true),
                 ("What's New Tour", false),
                 ("-", false),
                 ("Newcomer's Guide", true),

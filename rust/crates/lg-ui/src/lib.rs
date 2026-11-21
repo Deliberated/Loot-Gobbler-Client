@@ -37,5 +37,6 @@ pub mod social;
 pub mod suggested;
 pub mod theme;
 pub mod title_badge;
+pub mod welcome;
 pub mod widgets;
 pub mod window;
