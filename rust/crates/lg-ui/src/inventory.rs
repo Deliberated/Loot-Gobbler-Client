@@ -834,6 +834,24 @@ impl InventoryView {
                                 );
                             }
                             painter.rect_stroke(tr, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
+                            // hover: a gold frame; click: the piece on the Items page with its history (Java `Tile`)
+                            let item = data.items.item(*id);
+                            let tip = format!(
+                                "{}  ({}{})",
+                                item.map_or(format!("Item {id}"), |i| i.name.clone()),
+                                item.map_or("", |i| i.slot_name()),
+                                if have { "" } else { " - missing" }
+                            );
+                            let resp = ui
+                                .interact(tr, ui.scope_id().with(("st-piece", *id, k)), Sense::click())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(tip);
+                            if resp.hovered() {
+                                painter.rect_stroke(tr, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
+                            }
+                            if resp.clicked() && item.is_some() {
+                                crate::window::open_later(ui.ctx(), format!("Inventory:item:{id}"));
+                            }
                         }
                         let token = token_of(s);
                         if token != 0
