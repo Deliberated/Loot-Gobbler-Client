@@ -52,9 +52,7 @@ fn icon(ctx: &egui::Context) -> egui::TextureHandle {
     if let Some(t) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
         return t;
     }
-    let img = image::load_from_memory(include_bytes!("../../../../src/main/resources/icon/lootgobbler-256.png"))
-        .map(|i| i.to_rgba8())
-        .unwrap_or_default();
+    let img = image::load_from_memory(include_bytes!("../../../assets/icon/lootgobbler-256.png")).map(|i| i.to_rgba8()).unwrap_or_default();
     let t = ctx.load_texture(
         "welcome-icon",
         egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw()),

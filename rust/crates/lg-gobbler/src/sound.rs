@@ -9,7 +9,7 @@ macro_rules! bundled {
         /// The bundled sounds by file name (`sound/<name>` in the Java app's resources).
         fn bundled(name: &str) -> Option<&'static [u8]> {
             match name {
-                $($name => Some(include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../src/main/resources/sound/", $name))),)*
+                $($name => Some(include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/sound/", $name))),)*
                 _ => None,
             }
         }

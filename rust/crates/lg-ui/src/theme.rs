@@ -156,8 +156,8 @@ pub fn body(px: f32) -> FontId {
 /// The bundled fonts, Jersey 15 also as egui's own text font.
 pub fn fonts() -> FontDefinitions {
     let mut f = FontDefinitions::default();
-    let head = include_bytes!("../../../../src/main/resources/fonts/Jersey10-Regular.ttf");
-    let body = include_bytes!("../../../../src/main/resources/fonts/Jersey15-Regular.ttf");
+    let head = include_bytes!("../../../assets/fonts/Jersey10-Regular.ttf");
+    let body = include_bytes!("../../../assets/fonts/Jersey15-Regular.ttf");
     f.font_data.insert(HEAD.into(), Arc::new(FontData::from_static(head)));
     f.font_data.insert(BODY.into(), Arc::new(FontData::from_static(body)));
     let fallback = f.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();

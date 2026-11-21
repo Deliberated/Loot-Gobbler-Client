@@ -136,12 +136,12 @@ impl CharactersView {
 
     fn ensure_textures(&mut self, ctx: &egui::Context) {
         if self.grave.is_none() {
-            self.grave = png_texture(ctx, "gravestone", include_bytes!("../../../../src/main/resources/icons/gravestone.png"));
+            self.grave = png_texture(ctx, "gravestone", include_bytes!("../../../assets/icons/gravestone.png"));
             let r: [&[u8]; 4] = [
-                include_bytes!("../../../../src/main/resources/rarity/uncommon.png"),
-                include_bytes!("../../../../src/main/resources/rarity/rare.png"),
-                include_bytes!("../../../../src/main/resources/rarity/legendary.png"),
-                include_bytes!("../../../../src/main/resources/rarity/divine.png"),
+                include_bytes!("../../../assets/rarity/uncommon.png"),
+                include_bytes!("../../../assets/rarity/rare.png"),
+                include_bytes!("../../../assets/rarity/legendary.png"),
+                include_bytes!("../../../assets/rarity/divine.png"),
             ];
             for (i, b) in r.iter().enumerate() {
                 self.rarity[i + 1] = png_texture(ctx, &format!("rarity-{i}"), b);

@@ -176,7 +176,7 @@ impl Info {
         let icon = self
             .icon
             .get_or_insert_with(|| {
-                let bytes = include_bytes!("../../../../src/main/resources/icon/lootgobbler-256.png");
+                let bytes = include_bytes!("../../../assets/icon/lootgobbler-256.png");
                 let img = image::load_from_memory(bytes).map(|i| i.to_rgba8()).unwrap_or_default();
                 let size = [img.width() as usize, img.height() as usize];
                 ctx.load_texture("app-icon", egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()), egui::TextureOptions::NEAREST)

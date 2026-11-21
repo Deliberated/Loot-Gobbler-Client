@@ -146,7 +146,7 @@ impl Shell {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
         }
         let icon = ui.ctx().data_mut(|d| d.get_temp::<egui::TextureHandle>(egui::Id::unique("lg-title-icon"))).unwrap_or_else(|| {
-            let img = image::load_from_memory(include_bytes!("../../../../src/main/resources/icon/lootgobbler-32.png"))
+            let img = image::load_from_memory(include_bytes!("../../../assets/icon/lootgobbler-32.png"))
                 .map(|i| i.to_rgba8())
                 .unwrap_or_default();
             let t = ui.ctx().load_texture(
