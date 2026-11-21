@@ -1,11 +1,9 @@
-# Pushing a version tag (v + the version in build.gradle, e.g. v0.7.33) builds Loot Gobbler for Windows and Linux and
-# publishes them as a release of Deliberated/Loot-Gobbler-Client, where the in-app updater looks for new versions.
+# Pushing a version tag (v + the version in rust/Cargo.toml, e.g. v0.10.0) builds Loot Gobbler for Windows and Linux
+# and publishes them as a release of this repository, where the in-app updater looks for new versions.
 #
-# Release title: the subject of the tagged commit ("v0.7.33: Linux Sniffer"). Release notes: RELEASE_NOTES.md.
+# Release title: the subject of the tagged commit ("v0.10.0: Title"). Release notes: RELEASE_NOTES.md.
 # Run by hand (Actions > Release > Run workflow, or `gh workflow run release.yml`) it only builds both platforms as a
 # test and publishes nothing.
-# Needs the repository secret RELEASE_TOKEN: a fine-grained token with "Contents: read and write" on
-# Deliberated/Loot-Gobbler-Client (this workflow's own token can't write to another repository).
 name: Release
 
 on:
@@ -16,64 +14,74 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    working-directory: rust
+
 jobs:
   windows:
-    # windows-2022 ships WiX 3.14, which the installer (packaging/windows/main.wxs, from JDK 21's jpackage) needs
-    runs-on: windows-2022
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: '21'
-      - name: WiX on PATH
-        shell: pwsh
-        run: |
-          $wix = Get-ChildItem 'C:\Program Files (x86)' -Directory -Filter 'WiX Toolset v3*' | Select-Object -First 1
-          if (-not $wix) { choco install wixtoolset -y --no-progress; $wix = Get-ChildItem 'C:\Program Files (x86)' -Directory -Filter 'WiX Toolset v3*' | Select-Object -First 1 }
-          Add-Content $env:GITHUB_PATH (Join-Path $wix.FullName 'bin')
+      - run: rustup toolchain install stable --profile minimal
       - name: Check the version
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
-        run: grep -q "^version = '${GITHUB_REF_NAME#v}'$" build.gradle || { echo "build.gradle version is not ${GITHUB_REF_NAME#v}"; exit 1; }
-      - name: Build exe and zip
-        run: ./gradlew.bat --no-daemon packageInstaller
+        run: grep -q "^version = \"${GITHUB_REF_NAME#v}\"$" Cargo.toml || { echo "rust/Cargo.toml version is not ${GITHUB_REF_NAME#v}"; exit 1; }
+      - run: cargo build --release -p lg-gobbler
+      - name: exe and portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/LootGobbler | Out-Null
+          Copy-Item target/release/loot-gobbler.exe dist/LootGobbler.exe
+          Copy-Item target/release/loot-gobbler.exe dist/LootGobbler/LootGobbler.exe
+          Copy-Item ../LICENSE, ../THIRD_PARTY_LICENSE-RealmShark.md dist/LootGobbler/
+          Compress-Archive -Path dist/LootGobbler -DestinationPath dist/LootGobbler-portable.zip
+          # the program answers its version (the updater checks a download with it)
+          $v = (& dist/LootGobbler.exe --version | Out-String).Trim()
+          if ($env:GITHUB_REF_NAME -like 'v*' -and "v$v" -ne $env:GITHUB_REF_NAME) { throw "LootGobbler.exe is $v, the tag $env:GITHUB_REF_NAME" }
       - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: |
-            build/dist/LootGobbler.exe
-            build/dist/LootGobbler-portable.zip
+            rust/dist/LootGobbler.exe
+            rust/dist/LootGobbler-portable.zip
           if-no-files-found: error
 
   linux:
-    runs-on: ubuntu-22.04   # older glibc than Fedora, so the launcher runs there and on most other distributions
+    runs-on: ubuntu-22.04   # an older glibc, so it runs on most distributions
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: '21'
-      - name: rpmbuild
-        run: sudo apt-get update && sudo apt-get install -y rpm
-      - name: Build tar.gz and rpm
-        run: bash ./gradlew --no-daemon packageRpm
-      - name: Check the rpm
+      - run: rustup toolchain install stable --profile minimal
+      - run: cargo build --release -p lg-gobbler
+      - name: tar.gz
         run: |
-          rpm -qp --filecaps build/dist-linux/LootGobbler-x86_64.rpm | grep -q 'bin/LootGobbler.*cap_net_raw' \
-            || { echo "the launcher in the rpm has no capture capabilities"; exit 1; }
+          mkdir -p dist/LootGobbler
+          cp target/release/loot-gobbler dist/LootGobbler/LootGobbler
+          cp ../LICENSE ../THIRD_PARTY_LICENSE-RealmShark.md dist/LootGobbler/
+          cat > dist/LootGobbler/README.txt <<'TXT'
+          Loot Gobbler for Linux
+
+          Start it with ./LootGobbler (its records are kept next to it).
+          To capture the game it needs the right to read network traffic, once:
+              sudo setcap cap_net_raw,cap_net_admin=eip ./LootGobbler
+          TXT
+          tar -C dist -czf dist/LootGobbler-linux-x86_64.tar.gz LootGobbler
       - uses: actions/upload-artifact@v7
         with:
           name: linux
-          path: |
-            build/dist-linux/LootGobbler-linux-x86_64.tar.gz
-            build/dist-linux/LootGobbler-x86_64.rpm
+          path: rust/dist/LootGobbler-linux-x86_64.tar.gz
           if-no-files-found: error
 
   release:
     needs: [windows, linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: .
     steps:
       - uses: actions/checkout@v7
         with:
@@ -84,12 +92,11 @@ jobs:
           merge-multiple: true
       - name: Check the release notes
         run: grep -q '[^[:space:]]' RELEASE_NOTES.md || { echo "RELEASE_NOTES.md is empty"; exit 1; }
-      - name: Publish to Loot-Gobbler-Client
+      - name: Publish
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           title="$(git log -1 --format=%s "$GITHUB_REF_NAME")"
-          gh release create "$GITHUB_REF_NAME" --repo Deliberated/Loot-Gobbler-Client \
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --title "$title" --notes-file RELEASE_NOTES.md \
-            dist/LootGobbler.exe dist/LootGobbler-portable.zip \
-            dist/LootGobbler-x86_64.rpm dist/LootGobbler-linux-x86_64.tar.gz
+            dist/LootGobbler.exe dist/LootGobbler-portable.zip dist/LootGobbler-linux-x86_64.tar.gz

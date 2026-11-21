@@ -1,3 +1,5 @@
+// a window app on Windows: no console window beside it
+#![cfg_attr(windows, windows_subsystem = "windows")]
 //! Loot Gobbler: its window over your records, captures the game as the Java app does (while the sniffer runs),
 //! keeps your records and writes them into its own folder (next to the program, or `--data`) in the Java app's
 //! formats. On a first start the Java app's folder (`--java`) is taken over: read only, copied in full.
