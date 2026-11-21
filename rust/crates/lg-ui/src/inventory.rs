@@ -104,8 +104,19 @@ impl InventoryView {
         let all = ui.max_rect().shrink(8.0);
         let painter = ui.painter().clone();
         // the white bag (opens the column of whose finds), then the pages
+        let bag_r = Rect::from_min_size(pos2(all.left() + 8.0, all.top() + 1.0), vec2(34.0, 34.0));
         if let Some(t) = c.icons.object(ui.ctx(), data, WHITE_BAG, 34) {
-            painter.image(t.id(), Rect::from_min_size(pos2(all.left() + 8.0, all.top() + 1.0), vec2(34.0, 34.0)), uv(), Color32::WHITE);
+            painter.image(t.id(), bag_r, uv(), Color32::WHITE);
+        }
+        // click: the column of whose finds are shown, on or off (remembered)
+        let column_on = c.props.get("collectionUpeColumn") == Some("true");
+        if ui
+            .interact(bag_r, ui.scope_id().with("upe-bag"), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("Show the whole collection or a UPE character's own finds")
+            .clicked()
+        {
+            c.asks.push(crate::window::Ask::Set("collectionUpeColumn".into(), (!column_on).to_string()));
         }
         if let Some(i) = widgets::segmented(
             ui,
@@ -142,7 +153,7 @@ impl InventoryView {
         let x = body.left() + 4.0;
         let mut y = body.top() + 4.0;
         let f = small();
-        let mut entry = |y: &mut f32, tex: Option<egui::TextureHandle>, name: &str, id: i32, faded: bool| {
+        let mut entry = |y: &mut f32, tex: Option<egui::TextureHandle>, name: &str, id: i32, faded: bool, tip: &[widgets::TipLine]| {
             let shown = self.upe_char == id;
             let lh = jtext::height(&painter, &f);
             let h = 4.0 + 40.0 + lh + 4.0 + 4.0;
@@ -163,13 +174,18 @@ impl InventoryView {
                 &f,
                 if faded { fixed::MUTED } else { p.ink_soft },
             );
-            if ui.interact(r, ui.scope_id().with(("upe-entry", id)), Sense::click()).clicked() {
+            if ui
+                .interact(r, ui.scope_id().with(("upe-entry", id)), Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
                 self.upe_char = id;
             }
+            widgets::rich_tip(ui, r, ("upe-entry-tip", id), tip);
             *y += h + 6.0;
         };
         let bag = c.icons.object(ui.ctx(), data, WHITE_BAG, 40);
-        entry(&mut y, bag, "All", 0, false);
+        entry(&mut y, bag, "All", 0, false, &[vec![("Your whole collection".to_string(), None, false)]]);
         let mut runs: Vec<&lg_app::upe::Run> = app.upe.runs.values().filter(|r| r.marked).collect();
         runs.sort_by_key(|r| r.char_id);
         for mode in lg_app::upe::MODES {
@@ -186,7 +202,15 @@ impl InventoryView {
                 let ch = app.characters.get(r.char_id).expect("checked");
                 let skin = if ch.skin > 0 { ch.skin } else { ch.class_type };
                 let tex = c.icons.skin(ui.ctx(), data, skin, ch.tex1, ch.tex2, 40);
-                entry(&mut y, tex, &ch.class_name, r.char_id, r.broken.is_some() || !ch.alive);
+                let n = r.gathered.len();
+                let mut tip: Vec<widgets::TipLine> = vec![
+                    vec![(ch.class_name.clone(), None, true), (format!(" ({})", lg_app::upe::label(mode)), None, false)],
+                    vec![(format!("{n} item{} gathered", if n == 1 { "" } else { "s" }), None, false)],
+                ];
+                for l in lg_app::upe::describe(&app.zone, Some(r)).lines() {
+                    tip.push(vec![(l.to_string(), None, false)]);
+                }
+                entry(&mut y, tex, &ch.class_name, r.char_id, r.broken.is_some() || !ch.alive, &tip);
             }
         }
         if runs.is_empty() {
@@ -334,6 +358,18 @@ impl InventoryView {
                 // the search box
                 let sr = Rect::from_min_size(pos2(fx - 8.0 - 220.0, head.top() + 3.0), vec2(220.0, h - 6.0));
                 crate::widgets::search_field(ui, &p, sr, &mut search, "Search items or enchants", "collection-search");
+                widgets::tip(
+                    ui,
+                    sr,
+                    "search-tip",
+                    "Item name, type (e.g. Katana, Ring), UT / ST / T14, or an enchantment on items you own",
+                );
+                widgets::tip(
+                    ui,
+                    Rect::from_min_size(pos2(fx, head.top()), vec2(fw, h)),
+                    "filter-tip",
+                    "Reusable: items used again and again from a quick slot, e.g. the Coral Juice Refinery",
+                );
             },
             |ui, r| {
                 egui::ScrollArea::vertical().id_salt("collection-grid").show(ui, |ui| {
@@ -913,6 +949,12 @@ impl InventoryView {
                             }
                         }
                         let token = token_of(s);
+                        // the set: its name, its bonus, and the token the forge crafts its pieces from
+                        let mut tip: Vec<widgets::TipLine> = vec![vec![(s.name.clone(), None, true)], vec![(s.bonus.clone(), None, false)]];
+                        if let Some(t) = (token != 0).then(|| data.items.item(token)).flatten() {
+                            tip.push(vec![(format!("Craftable in the forge with the {}", t.name), Some(fixed::MUTED), false)]);
+                        }
+                        widgets::rich_tip(ui, cr, ("st-set", &s.name), &tip);
                         if token != 0
                             && let Some(t) = icons.object(ui.ctx(), data, token, 30)
                         {
@@ -1020,6 +1062,13 @@ impl InventoryView {
                         );
                     }
                     jtext::draw(&painter, pos2(x + 30.0, y + row_h / 2.0), Align2::LEFT_CENTER, &s.title, &text(18.0), p.ink);
+                    let name = data.items.item(missing).map_or("?".to_string(), |i| i.name.clone());
+                    widgets::tip(
+                        ui,
+                        Rect::from_min_size(pos2(x, y), vec2(r.width() - 20.0, row_h)),
+                        ("almost", missing),
+                        &format!("Missing: {name}"),
+                    );
                     y += row_h;
                 }
             },

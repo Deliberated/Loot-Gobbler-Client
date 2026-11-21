@@ -562,6 +562,34 @@ fn vault_name(v: &str) -> &'static str {
     if v == crate::holdings::SEASONAL_VAULT { "seasonal vault" } else { "vault" }
 }
 
+/// Java `Upe.describe`: what a run is, in words.
+pub fn describe(zone: &crate::localtime::Zone, run: Option<&Run>) -> String {
+    let Some(run) = run.filter(|r| r.fresh || r.marked) else {
+        return "Not eligible for a game mode: the sniffer did not see this character from its creation".into();
+    };
+    let mut sb = String::new();
+    if let Some(b) = &run.broken {
+        sb += &format!("{} lost {}: {b}", label(&run.mode), date(zone, run.broken_at));
+    } else if run.marked {
+        sb += &format!(
+            "{}{}, followed since the character was created",
+            label(&run.mode),
+            if run.no_pet { " run without a pet" } else { " run" }
+        );
+        if !run.allowed.is_empty() {
+            sb += &format!("\nQuest rewards it may still take from the gift chest: {}", run.allowed.len());
+        }
+    } else if run.t0_start == Some(false) {
+        sb += "Not eligible for a game mode: created with upgrades enabled (its starting gear was not tier 0)";
+    } else {
+        sb += "Can start a game mode: created with the sniffer running and upgrades disabled, nothing against it yet";
+        if run.pet {
+            sb += "\nIt has a pet, so it cannot start a run without one";
+        }
+    }
+    sb
+}
+
 /// Java `Upe.date`: `d MMM HH:mm` (English months: the locale the app runs in here).
 fn date(zone: &crate::localtime::Zone, t: i64) -> String {
     let s = zone.local_date_time(t);

@@ -96,7 +96,11 @@ impl PetsView {
                 let h = head.height();
                 let dw = 10.0 + 30.0;
                 let dr = Rect::from_min_size(pos2(head.right() - dw, head.top()), vec2(dw, h));
-                let hov = ui.interact(dr, ui.scope_id().with("pet-dir"), Sense::click());
+                let hov = ui.interact(dr, ui.scope_id().with("pet-dir"), Sense::click()).on_hover_text(if reverse {
+                    "Reversed order - click for the usual one"
+                } else {
+                    "Click to reverse the order"
+                });
                 painter.rect(dr, 0.0, if hov.hovered() { p.sand } else { p.header }, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
                 // the arrow: down for the usual order, up reversed
                 let (cx, cy) = (dr.center().x, dr.center().y);
@@ -190,6 +194,13 @@ impl PetsView {
                                 Rect::from_min_size(br.min, vec2(br.width() * a.power.min(100) as f32 / 100.0, 5.0)),
                                 0.0,
                                 if full { fixed::GOLD } else { fixed::GREEN },
+                            );
+                            let mp = if pet.max_power > 0 { pet.max_power } else { 100 };
+                            widgets::tip(
+                                ui,
+                                Rect::from_min_max(pos2(bx, y), pos2(bx + bw, y + lh)),
+                                ("pet-ability", pet.instance_id, a.kind),
+                                &format!("{}: level {} / {mp}", ability_name(a.kind), a.power),
                             );
                             y += lh;
                         }
@@ -301,6 +312,12 @@ fn detail(ui: &mut Ui, c: &mut Ctx, pet: &Pet, side: Rect) {
                     Rect::from_min_size(br.min, vec2(bw * a.power.min(100) as f32 / 100.0, 8.0)),
                     0.0,
                     if full { fixed::GOLD } else { fixed::GREEN },
+                );
+                widgets::tip(
+                    ui,
+                    Rect::from_min_size(pos2(r.left(), ty), vec2(row_w, lh)),
+                    ("pet-ability-detail", a.kind),
+                    &format!("{}: level {}, {} feed points", ability_name(a.kind), a.power, crate::profile::num(a.points)),
                 );
                 ty += lh;
             }

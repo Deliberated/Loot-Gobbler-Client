@@ -287,7 +287,8 @@ fn card(ui: &Ui, p: &Palette, icons: &mut Icons, data: &lg_gamedata::GameData, i
     painter.rect_filled(Rect::from_min_size(pos2(bx, y + hh / 2.0 - 4.0), vec2(8.0, 8.0)), 0.0, class_color(&info.name));
     jtext::draw(painter, pos2(bx + 16.0, y + hh / 2.0), Align2::LEFT_CENTER, &info.name, &text(22.0), p.ink);
     let t = if info.progress.is_none() { "-".to_string() } else { format!("{} / {max_class}", info.total) };
-    jtext::draw(painter, pos2(bx + bw, y + hh / 2.0), Align2::RIGHT_CENTER, &t, &text(20.0), if done { p.gold } else { p.ink });
+    let tr = jtext::draw(painter, pos2(bx + bw, y + hh / 2.0), Align2::RIGHT_CENTER, &t, &text(20.0), if done { p.gold } else { p.ink });
+    widgets::tip(ui, tr, ("class-total", info.id), "Exaltations of this class");
     y += hh + 4.0;
     // two rows of four: potion, then five pips
     let cell_w = ICON + 6.0 + 5.0 * PIP_STEP;
@@ -299,7 +300,17 @@ fn card(ui: &Ui, p: &Palette, icons: &mut Icons, data: &lg_gamedata::GameData, i
         if let Some(t) = icons.object(ui.ctx(), data, STAT_POTION[s], ICON as u32) {
             painter.image(t.id(), Rect::from_min_size(pos2(cx, cy), vec2(ICON, ICON)), crate::detail::uv(), Color32::WHITE);
         }
-        let lv = level(info.progress.as_ref().and_then(|v| v.get(STAT_INDEX[s]).copied()).unwrap_or(0));
+        let progress = info.progress.as_ref().and_then(|v| v.get(STAT_INDEX[s]).copied()).unwrap_or(0);
+        let lv = level(progress);
+        // Java `StatCell`'s tip
+        let tip = if info.progress.is_none() {
+            STAT_NAMES[s].to_string()
+        } else if (lv as usize) < THRESHOLDS.len() {
+            format!("{}: {lv} / {}, {progress} / {} to the next", STAT_NAMES[s], THRESHOLDS.len(), THRESHOLDS[lv as usize])
+        } else {
+            format!("{}: {lv} / {}, maxed", STAT_NAMES[s], THRESHOLDS.len())
+        };
+        widgets::tip(ui, Rect::from_min_size(pos2(cx, cy), vec2(cw, ICON)), ("stat-cell", info.id, s), &tip);
         let px0 = cx + ICON + 6.0;
         let step = ((cw - ICON - 6.0) / 5.0).floor().clamp(3.0, PIP_STEP);
         let w = (step - (PIP_STEP - PIP_W)).max(2.0);

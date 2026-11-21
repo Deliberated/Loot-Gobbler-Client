@@ -141,6 +141,10 @@ fn chat(ui: &mut Ui, c: &mut Ctx, r: Rect) {
                         let nr = jtext::draw_bold(&clip, pos2(mx, cy), Align2::LEFT_CENTER, &l.name, &f, p.ink);
                         jtext::draw(&clip, pos2(nr.right(), cy), Align2::LEFT_CENTER, &format!(": {}", l.text), &f, p.ink);
                     }
+                    // the whole line on hover (Java `Line.toString`), for those cut at the edge
+                    let full = if l.name.is_empty() { l.text.clone() } else { format!("{}: {}", l.name, l.text) };
+                    let mr = Rect::from_min_max(pos2(mx, rr.top()), pos2(rr.right() - 10.0, rr.bottom()));
+                    widgets::tip(ui, mr, ("chat-line", i), &full);
                 }
                 ui.allocate_exact_size(vec2(w, (range.end - range.start) as f32 * row_h), Sense::hover());
             });
