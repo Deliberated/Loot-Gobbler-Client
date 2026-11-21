@@ -110,7 +110,11 @@ mod tests {
         let server = std::thread::spawn(move || {
             let mut seen = Vec::new();
             for answer in
-                ["HTTP/1.1 200 OK\r\nContent-Length: 14\r\n\r\n<A>\r\n<B/>\n</A>", "HTTP/1.1 500 No\r\nContent-Length: 2\r\n\r\nno"]
+                // each connection closed after its answer: the client must not reuse it (Windows resets a reused one)
+                [
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 14\r\n\r\n<A>\r\n<B/>\n</A>",
+                    "HTTP/1.1 500 No\r\nConnection: close\r\nContent-Length: 2\r\n\r\nno",
+                ]
             {
                 let (s, _) = l.accept().unwrap();
                 let mut r = BufReader::new(s);
