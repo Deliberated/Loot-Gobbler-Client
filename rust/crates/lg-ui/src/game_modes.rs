@@ -16,16 +16,18 @@ pub struct GameModesView {
     pub variant: String,
     pub guild: bool,
     pub no_pet: bool,
+    /// The wizard for a new run, while open.
+    pub wizard: Option<crate::game_mode_wizard::Wizard>,
 }
 
 impl Default for GameModesView {
     fn default() -> Self {
-        GameModesView { category: "UPE".into(), variant: "UPE".into(), guild: false, no_pet: false }
+        GameModesView { category: "UPE".into(), variant: "UPE".into(), guild: false, no_pet: false, wizard: None }
     }
 }
 
 /// A rule tag (Java `RuleChips.Chip`): words, fill, edge, ink, allowed, and the shiny star.
-struct Chip {
+pub(crate) struct Chip {
     text: &'static str,
     fill: Color32,
     edge: Color32,
@@ -44,7 +46,7 @@ fn chip(text: &'static str, fill: u32, ink: Color32, allowed: bool) -> Chip {
 }
 
 /// What the loadout of a run in this mode may hold (Java `RuleChips.loadout`).
-fn loadout_chips(mode: &str) -> Vec<Chip> {
+pub(crate) fn loadout_chips(mode: &str) -> Vec<Chip> {
     let (ut, st, tiered, divine) = (0x8E4FD0, 0xD9A21B, 0x5F6B7A, 0xF2C232);
     let w = Color32::WHITE;
     let st_ink = rgb(0x3A2604);
@@ -68,7 +70,7 @@ fn loadout_chips(mode: &str) -> Vec<Chip> {
 }
 
 /// Where what it equips may come from (Java `RuleChips.sources`).
-fn source_chips(guild: bool) -> Vec<Chip> {
+pub(crate) fn source_chips(guild: bool) -> Vec<Chip> {
     let w = Color32::WHITE;
     vec![
         chip("Own drops", 0x3C9347, w, true),
@@ -79,7 +81,7 @@ fn source_chips(guild: bool) -> Vec<Chip> {
 }
 
 /// A row of tags after a caption (Java `RuleChips.row`); gives its height.
-fn chip_row(painter: &egui::Painter, at: egui::Pos2, caption: &str, chips: &[Chip]) -> f32 {
+pub(crate) fn chip_row(painter: &egui::Painter, at: egui::Pos2, caption: &str, chips: &[Chip]) -> f32 {
     const H: f32 = 28.0;
     const PAD: f32 = 9.0;
     const MARK: f32 = 16.0;
@@ -154,6 +156,7 @@ impl GameModesView {
         // the categories on the left
         let list = Rect::from_min_size(all.min, vec2(290.0, all.height()));
         let mut picked = None;
+        let mut open_wizard = false;
         widgets::section(
             ui,
             &p,
@@ -161,10 +164,18 @@ impl GameModesView {
             "Game Modes",
             fixed::GOLD,
             |ui, head| {
-                // the plus: a new game mode run (the wizard comes with the window)
-                let painter = ui.painter();
+                // the plus: a new game mode run, in the wizard (Java `GameModeWizard.plusButton`)
                 let r = Rect::from_center_size(pos2(head.right() - 13.0, head.center().y), vec2(26.0, 26.0));
-                painter.rect_filled(r.shrink(3.0), 2.0, fixed::GREEN);
+                let resp = ui
+                    .interact(r, ui.scope_id().with("new-run"), Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text("Start a new game mode run: pick a mode, then create its character");
+                if resp.clicked() {
+                    open_wizard = true;
+                }
+                let painter = ui.painter();
+                let green = if resp.hovered() { crate::theme::mix(fixed::GREEN, Color32::WHITE, 0.25) } else { fixed::GREEN };
+                painter.rect_filled(r.shrink(1.0), 3.0, green);
                 let s = Stroke::new(2.5, Color32::WHITE);
                 painter.line_segment([pos2(r.center().x - 5.0, r.center().y), pos2(r.center().x + 5.0, r.center().y)], s);
                 painter.line_segment([pos2(r.center().x, r.center().y - 5.0), pos2(r.center().x, r.center().y + 5.0)], s);
@@ -219,6 +230,9 @@ impl GameModesView {
         );
         if let Some(m) = picked {
             self.category = m;
+        }
+        if open_wizard && self.wizard.is_none() {
+            self.wizard = Some(crate::game_mode_wizard::Wizard::new());
         }
         // the chosen mode on the right
         let mode = self.mode();

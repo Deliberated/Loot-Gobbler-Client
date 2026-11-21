@@ -85,6 +85,7 @@ fn main() {
                         &rarity,
                         &win.palette,
                         ch,
+                        lg_ui::card::mode_of(&app, ch.char_id),
                         egui::Pos2::ZERO,
                         lg_ui::card::SCALE,
                     ));

@@ -598,6 +598,10 @@ impl eframe::App for Gui {
                     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("lg-copy-card"), id));
                 }
                 None if t.starts_with("open:") => self.window.open(&t[5..]),
+                None if t == "wizard" => {
+                    self.window.open("Game Modes");
+                    self.window.game_modes.wizard = Some(lg_ui::game_mode_wizard::Wizard::new());
+                }
                 None if t.starts_with("guide:") => self.window.guide.start_at(t[6..].parse().unwrap_or(0)),
                 None if t.starts_with("info:") => {
                     let mut asks = Vec::new();

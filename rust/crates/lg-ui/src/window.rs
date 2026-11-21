@@ -296,7 +296,9 @@ impl Window {
         let k = crate::card::SCALE / ppp;
         let rarity = self.characters.rarity(&ctx);
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("lg-card")));
-        let r = crate::card::paint(&painter, &ctx, &mut self.icons, app.world.data(), &rarity, &self.palette, ch, ui.max_rect().min, k);
+        let mode = crate::card::mode_of(app, id);
+        let r =
+            crate::card::paint(&painter, &ctx, &mut self.icons, app.world.data(), &rarity, &self.palette, ch, mode, ui.max_rect().min, k);
         if left == 2 {
             let c2 = ctx.clone();
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::ScreenshotCallback::new(move |frame| {
@@ -452,6 +454,14 @@ impl Window {
             self.asks.push(Ask::CheckUpdates);
         }
         self.info.show(ui.ctx(), &self.palette, &mut self.asks);
+        // the game mode wizard, over whichever tab is open (Java: a window of its own)
+        if let Some(w) = &mut self.game_modes.wizard {
+            match w.show(ui.ctx(), &self.palette, app, &mut self.icons, self.shell.sniffing) {
+                crate::game_mode_wizard::Out::Keep => {}
+                crate::game_mode_wizard::Out::Close => self.game_modes.wizard = None,
+                crate::game_mode_wizard::Out::Asks(a) => self.asks.extend(a),
+            }
+        }
         // the bell: opening it takes the dot away; an entry opens where it is dealt with (the approval queue)
         if self.shell.clicked_bell {
             self.asks.push(Ask::Server(ServerAsk::MarkRead));

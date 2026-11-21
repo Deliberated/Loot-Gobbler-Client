@@ -65,8 +65,8 @@ fn shown(im: &lg_gamedata::sprites::Image) -> Option<(u32, u32, u32, u32)> {
 }
 
 /// The card's size in card pixels (before SCALE).
-pub fn size(painter: &egui::Painter, icons: &mut Icons, data: &GameData, c: &Char) -> egui::Vec2 {
-    layout(painter, icons, data, c).size
+pub fn size(painter: &egui::Painter, icons: &mut Icons, data: &GameData, c: &Char, mode: Option<(String, bool)>) -> egui::Vec2 {
+    layout(painter, icons, data, c, mode).size
 }
 
 struct Layout {
@@ -84,9 +84,16 @@ struct Layout {
     char_right: f32,
     row_x: f32,
     bag: i32,
+    /// The game mode it plays, and without a pet: its badge under the fame.
+    mode: Option<(String, bool)>,
 }
 
-fn layout(painter: &egui::Painter, icons: &mut Icons, data: &GameData, c: &Char) -> Layout {
+/// The game mode the character plays while the run stands (Java `render(Char)`).
+pub fn mode_of(app: &lg_app::App, char_id: i32) -> Option<(String, bool)> {
+    app.upe.runs.get(&char_id).filter(|r| r.marked && r.broken.is_none()).map(|r| (r.mode.clone(), r.no_pet))
+}
+
+fn layout(painter: &egui::Painter, icons: &mut Icons, data: &GameData, c: &Char, mode: Option<(String, bool)>) -> Layout {
     let name = if c.class_name.trim().is_empty() { "Character".to_string() } else { c.class_name.clone() };
     let fame = format!("{} Fame", crate::profile::num(c.fame));
     let quick: Vec<i32> =
@@ -101,7 +108,9 @@ fn layout(painter: &egui::Painter, icons: &mut Icons, data: &GameData, c: &Char)
     let quick_h = QUICK_ROWS * QUICK + (QUICK_ROWS - 1.0) * QUICK_GAP;
     let name_font = fit(painter, crate::widgets::head_px(30.0), &name, TEXT_W);
     let fame_font = fit(painter, crate::widgets::text(20.0), &fame, TEXT_W);
-    let header_h = SKIN.max(quick_h).max(jtext::height(painter, &name_font) + jtext::height(painter, &fame_font));
+    // the mode's plate under the fame, a little apart
+    let badge_h = if mode.is_some() { crate::mode_badge::H + 8.0 } else { 0.0 };
+    let header_h = SKIN.max(quick_h).max(jtext::height(painter, &name_font) + jtext::height(painter, &fame_font) + badge_h);
     let small = crate::widgets::text(16.0);
     let mut quick_w: f32 = 0.0;
     for id in &quick {
@@ -128,7 +137,9 @@ fn layout(painter: &egui::Painter, icons: &mut Icons, data: &GameData, c: &Char)
     let sx = EDGE + (char_px * left_px).round() - shown_left;
     let char_right = sx + shown_right + (char_px * 2.5).round();
     let row_x = if big { char_right } else { sx + shown_left };
-    let text_w = jtext::width(painter, &name, &name_font).max(jtext::width(painter, &fame, &fame_font));
+    let text_w = jtext::width(painter, &name, &name_font)
+        .max(jtext::width(painter, &fame, &fame_font))
+        .max(mode.as_ref().map_or(0.0, |(m, np)| crate::mode_badge::width(painter, m, *np) + 6.0));
     let header_right = char_right + text_w + if quick_w > 0.0 { 32.0 + quick_w } else { 0.0 };
     let row_right = row_x + 4.0 * TILE + 3.0 * TILE_GAP + if bag > 0 { BAG_GAP + BAG } else { 0.0 };
     let w = header_right.max(row_right) + PAD + CUT / 2.0;
@@ -148,6 +159,7 @@ fn layout(painter: &egui::Painter, icons: &mut Icons, data: &GameData, c: &Char)
         char_right,
         row_x,
         bag,
+        mode,
     }
 }
 
@@ -186,10 +198,11 @@ pub fn paint(
     rarity: &Rarity,
     p: &Palette,
     c: &Char,
+    mode: Option<(String, bool)>,
     at: Pos2,
     k: f32,
 ) -> Rect {
-    let l = layout(painter, icons, data, c);
+    let l = layout(painter, icons, data, c, mode);
     let (w, h) = (l.size.x, l.size.y);
     let dark = luminance(p.paper) < 0.5;
     let gold_light = p.gold_hover;
@@ -220,10 +233,15 @@ pub fn paint(
         painter.image(t.id(), r, uv(), Color32::WHITE);
     }
     let (nf, ff) = (sc(&l.name_font), sc(&l.fame_font));
-    let text_h = jtext::height(painter, &l.name_font) + jtext::height(painter, &l.fame_font);
+    let badge_h = if l.mode.is_some() { crate::mode_badge::H + 8.0 } else { 0.0 };
+    let text_h = jtext::height(painter, &l.name_font) + jtext::height(painter, &l.fame_font) + badge_h;
     let ty = y + ((l.header_h - text_h) / 2.0).max(0.0);
     shadowed(painter, at + vec2(l.char_right, ty) * k, &l.name, &nf, p.ink, dark, k);
     shadowed(painter, at + vec2(l.char_right, ty + jtext::height(painter, &l.name_font)) * k, &l.fame, &ff, p.gold, dark, k);
+    if let Some((m, np)) = &l.mode {
+        let by = ty + jtext::height(painter, &l.name_font) + jtext::height(painter, &l.fame_font) + 6.0;
+        crate::mode_badge::draw(painter, at + vec2(l.char_right + 2.0, by) * k, m, *np, k);
+    }
     // the reusable quick-slot items, top right
     let rx = w - PAD - CUT / 2.0 - l.quick_w;
     let quick_h = QUICK_ROWS * QUICK + (QUICK_ROWS - 1.0) * QUICK_GAP;
