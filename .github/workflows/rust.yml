@@ -1,10 +1,10 @@
 name: Rust
 
-# The Rust rebuild (branch "rust"): tests on Linux and Windows, then the comparison with the Java client's sniffer on
+# The Rust client: tests on Linux and Windows, then the comparison with the Java client's sniffer on
 # made-up sessions. Never publishes anything.
 on:
   push:
-    branches: [rust]
+    branches: [main]
     paths: ["rust/**", "vendor/**", ".github/workflows/rust.yml"]
   pull_request:
     paths: ["rust/**"]
