@@ -230,7 +230,7 @@ pub fn caravan_of(j: &Json) -> Caravan {
     }
 }
 
-// --- the guild's game mode runs (server `/guild/upe`), to compare them ---
+// --- the guild's game mode runs (server `/guild/upe/runs`), to compare them ---
 
 /// One item a game mode run gathered.
 #[derive(Debug, Clone, Default, PartialEq)]

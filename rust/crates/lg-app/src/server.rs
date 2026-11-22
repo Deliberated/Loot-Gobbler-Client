@@ -1148,7 +1148,7 @@ impl Connection {
             return;
         }
         self.guild.upe_loading = true;
-        self.call("GET", "/guild/upe", None, "upe");
+        self.call("GET", "/guild/upe/runs", None, "upe");
     }
 
     fn upe_done(&mut self, b: Result<crate::guild::UpeBoard, Error>) {
