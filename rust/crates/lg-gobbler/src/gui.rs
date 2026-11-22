@@ -647,6 +647,7 @@ impl eframe::App for Gui {
                     Some(u) => u.check_and_answer(),
                     None => self.message("Check for updates", "Updates are not checked with --offline."),
                 },
+                lg_ui::window::Ask::RefreshMissions => self.app.refresh_missions(now_ms()),
                 lg_ui::window::Ask::RefreshCharacters => {
                     let status = self.app.refresh_characters(self.capture.is_some(), now_ms());
                     self.window.characters.refresh_status = status;

@@ -1456,19 +1456,20 @@ impl InventoryView {
 
 /// A forge resource's look: its name, and how it is drawn (an item's sprite, or a gem in its colour).
 enum Look {
-    Sprite(i32),
-    Gem(Color32),
+    /// A sprite of a sheet, and whether an item's green "+" is cut from it.
+    Sheet(&'static str, i32, bool),
     Flame,
     Unknown,
 }
 
-/// Materials by kind (decoded 2026-11-22: 1 silver, 2 gold, 3 red, 4 purple crystal).
+/// Materials by kind (decoded 2026-11-22; named as the game's Material Cap Extenders, whose sprites show them):
+/// 1 Common (silver), 2 Rare (gold), 3 Legendary (red), 4 Mythical (crystal).
 fn material(kind: i32) -> (String, Look) {
     match kind {
-        1 => ("Silver material".into(), Look::Gem(Color32::from_rgb(0xC9, 0xCC, 0xD6))),
-        2 => ("Gold material".into(), Look::Gem(Color32::from_rgb(0xE8, 0xB5, 0x3C))),
-        3 => ("Red material".into(), Look::Gem(Color32::from_rgb(0xD0, 0x3C, 0x3C))),
-        4 => ("Purple crystal".into(), Look::Gem(Color32::from_rgb(0x9C, 0x5C, 0xE8))),
+        1 => ("Common material".into(), Look::Sheet("enchantments8x8", 58, true)),
+        2 => ("Rare material".into(), Look::Sheet("enchantments8x8", 59, true)),
+        3 => ("Legendary material".into(), Look::Sheet("enchantments8x8", 60, true)),
+        4 => ("Mythical material".into(), Look::Sheet("enchantments8x8", 61, true)),
         k => (format!("Material {k}"), Look::Unknown),
     }
 }
@@ -1477,7 +1478,7 @@ fn material(kind: i32) -> (String, Look) {
 /// known yet which is which (both were full when seen).
 fn dust(kind: i32) -> (String, Look) {
     match kind {
-        4 => ("Purple dust".into(), Look::Sprite(1120)), // the Purple Dust Charm's sprite
+        4 => ("Purple dust".into(), Look::Sheet("enchantments16x16", 38, false)), // the Purple Dust Charm's sprite
         1 | 5 => (format!("Green or red dust (kind {kind}: which one shows once it changes)"), Look::Unknown),
         k => (format!("Dust kind {k}"), Look::Unknown),
     }
@@ -1485,7 +1486,7 @@ fn dust(kind: i32) -> (String, Look) {
 
 /// A material's name (for the game mode run's bank).
 pub fn material_name(kind: i32) -> String {
-    material(kind).0
+    material(kind).0.to_lowercase()
 }
 
 /// A dust kind's short name (for the game mode run's bank).
@@ -1499,7 +1500,6 @@ pub fn dust_name(kind: i32) -> String {
 /// The forge resources of both sides (as last seen), right to left from `right`, not past `left_limit`.
 fn resource_row(ui: &Ui, p: &Palette, icons: &mut crate::icons::Icons, app: &lg_app::App, right: egui::Pos2, h: f32, left_limit: f32) {
     let painter = ui.painter().clone();
-    let data = app.world.data();
     let f = text(18.0);
     let small_f = widgets::small();
     const ICON: f32 = 22.0;
@@ -1532,20 +1532,15 @@ fn resource_row(ui: &Ui, p: &Palette, icons: &mut crate::icons::Icons, app: &lg_
             x -= w;
             let r = Rect::from_min_size(pos2(x, cy - ICON / 2.0), vec2(ICON, ICON));
             match &e.1 {
-                Look::Sprite(id) => {
-                    if let Some(t) = icons.object(ui.ctx(), data, *id, ICON as u32) {
+                Look::Sheet(sheet, index, cut) => {
+                    let t = if *cut {
+                        icons.sheet_without_plus(ui.ctx(), sheet, *index, ICON as u32)
+                    } else {
+                        icons.sheet(ui.ctx(), sheet, *index, ICON as u32)
+                    };
+                    if let Some(t) = t {
                         painter.image(t.id(), r, uv(), Color32::WHITE);
                     }
-                }
-                Look::Gem(col) => {
-                    let c = r.center();
-                    let pts =
-                        vec![pos2(c.x, r.top() + 2.0), pos2(r.right() - 3.0, c.y), pos2(c.x, r.bottom() - 2.0), pos2(r.left() + 3.0, c.y)];
-                    painter.add(egui::Shape::convex_polygon(pts, *col, Stroke::new(1.5, Color32::BLACK)));
-                    painter.line_segment(
-                        [pos2(c.x - 3.0, c.y - 3.0), pos2(c.x, r.top() + 5.0)],
-                        Stroke::new(1.5, Color32::from_white_alpha(170)),
-                    );
                 }
                 Look::Flame => {
                     let c = r.center();

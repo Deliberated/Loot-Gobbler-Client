@@ -46,6 +46,8 @@ pub enum Ask {
     Server(ServerAsk),
     /// Characters: REFRESH (the whole character list from the game servers).
     RefreshCharacters,
+    /// The Quests page's Refresh: the battle pass missions asked from the game again.
+    RefreshMissions,
     /// Info > Logs: a log file saved elsewhere (its path).
     ExportLog(String),
     /// CHECK UPDATES (the status bar, About).
@@ -202,6 +204,9 @@ const GUILD_PAGES: [&str; 7] = crate::guild::PAGES;
 impl Window {
     /// With the game data in `assets` and the settings (`realmShark.properties`).
     pub fn new(assets: &Path, props: Properties) -> Window {
+        if let Some(folder) = assets.parent() {
+            crate::quests::set_folder(folder);
+        }
         let loadout = lg_app::loadout::Settings::from(&props);
         let palette = theme::palette(props.get("theme"));
         // the saved tab order (Java `restoreOrder`); the app opens on the tab dragged to the far left

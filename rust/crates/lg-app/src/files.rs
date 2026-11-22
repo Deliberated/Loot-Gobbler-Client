@@ -204,6 +204,21 @@ impl App {
         self.characters.saved_list_dirty |= has("char-list.xml");
     }
 
+    /// The battle passes' pictures the Java app downloaded (`season-art`), copied into the app's own folder.
+    pub fn copy_season_art(java_dir: &Path, own: &Path) {
+        let Ok(files) = std::fs::read_dir(java_dir.join("season-art")) else { return };
+        let to = own.join("season-art");
+        if std::fs::create_dir_all(&to).is_err() {
+            return;
+        }
+        for f in files.flatten() {
+            let target = to.join(f.file_name());
+            if !target.exists() {
+                let _ = std::fs::copy(f.path(), target);
+            }
+        }
+    }
+
     /// The holdings journal's new lines, appended as Java appends each (the file moved aside past 2 MB).
     fn append_journal(&mut self, dir: &Path) -> std::io::Result<()> {
         use std::io::Write as _;
@@ -606,6 +621,10 @@ impl App {
     /// The app on starting: its own folder's data; on a first start (nothing there yet) the Java app's folder taken
     /// over (read only) and written into its own at once. Nothing at all: a new app.
     pub fn start(world: lg_world::World, now: i64, own: &Path, java: Option<&Path>) -> std::io::Result<App> {
+        // the battle passes' pictures the Java app has and this one not yet
+        if let Some(j) = java {
+            App::copy_season_art(j, own);
+        }
         if holds_data(own) {
             return Ok(App::importing(world, now, Some(own)));
         }

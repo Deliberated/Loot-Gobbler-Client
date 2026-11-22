@@ -169,6 +169,11 @@ impl App {
         self.friends.answered(&xml);
     }
 
+    /// The Quests page's Refresh (Java `Missions.fetch` from its button): asked again now, if the game's login is known.
+    pub fn refresh_missions(&mut self, now: i64) {
+        self.fetch_missions(now);
+    }
+
     /// Java `Missions.fetch`: the missions and your progress.
     pub(crate) fn fetch_missions(&mut self, now: i64) {
         let Some(t) = self.missions.token.clone() else { return };

@@ -308,6 +308,33 @@ impl Icons {
     }
 
     /// A sprite by sheet and index scaled to a size, pixel-sharp, no outline (Java `EnchantIcons.icon`).
+    /// A sheet's sprite without the green "+" an item puts in its top right corner (the Material Cap Extenders show
+    /// the materials that way: without it, the material itself).
+    pub fn sheet_without_plus(&mut self, ctx: &egui::Context, sheet: &str, index: i32, size: u32) -> Option<TextureHandle> {
+        let key = format!("sheet-noplus-{sheet}-{index}-{size}");
+        if let Some(t) = self.skins.get(&key) {
+            return Some(t.clone());
+        }
+        let mut im = self.sprites.sprite(sheet, index)?;
+        for y in 0..im.h / 2 {
+            for x in im.w / 2..im.w {
+                let o = ((y * im.w + x) * 4) as usize;
+                let (r, g, b) = (im.rgba[o], im.rgba[o + 1], im.rgba[o + 2]);
+                if g > 140 && r < 120 && b < 120 {
+                    im.rgba[o + 3] = 0;
+                }
+            }
+        }
+        let out = scale(&im, size, size);
+        let tex = ctx.load_texture(
+            key.clone(),
+            ColorImage::from_rgba_unmultiplied([out.w as usize, out.h as usize], &out.rgba),
+            TextureOptions::NEAREST,
+        );
+        self.skins.insert(key, tex.clone());
+        Some(tex)
+    }
+
     pub fn sheet(&mut self, ctx: &egui::Context, sheet: &str, index: i32, size: u32) -> Option<TextureHandle> {
         let key = format!("sheet-{sheet}-{index}-{size}");
         if let Some(t) = self.skins.get(&key) {
