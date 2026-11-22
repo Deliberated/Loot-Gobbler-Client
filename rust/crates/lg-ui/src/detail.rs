@@ -325,8 +325,10 @@ pub fn inventory(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, rarity:
     let living: std::collections::HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
     let now_text = app.zone.local_date_time(app.world.now());
     let hctx = lg_app::holdings::Ctx { data, now: app.world.now(), time: &now_text };
+    // one tally of everything held (each `count` would tally all of it again, for every item: ~20 ms a frame)
+    let counts = if app.holdings.known() { app.holdings.counts(&hctx, &living) } else { std::collections::HashMap::new() };
     let held = |id: i32| -> i32 {
-        if app.holdings.known() { app.holdings.count(&hctx, &living, id) } else { app.collection.entry(id).map_or(0, |e| e.held()) }
+        if app.holdings.known() { counts.get(&id).copied().unwrap_or(0) } else { app.collection.entry(id).map_or(0, |e| e.held()) }
     };
     let mut facts: Vec<(String, Measure, Shown)> = vec![
         (

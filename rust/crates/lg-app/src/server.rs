@@ -59,6 +59,8 @@ pub struct User {
     pub root: bool,
     pub created_at: i64,
     pub last_login_at: Option<i64>,
+    /// In the admins' user list: the app of the session used last, e.g. "Rust v0.0.1" ("" if not known).
+    pub client: String,
 }
 
 impl User {
@@ -131,6 +133,7 @@ pub fn user_of(j: &Json) -> User {
         root: boolean(j.get("root")),
         created_at: long(j.get("createdAt")),
         last_login_at: j.get("lastLoginAt").filter(|v| !matches!(v, Json::Null)).map(|v| long(Some(v))),
+        client: text(j.get("client")),
     }
 }
 
@@ -939,6 +942,7 @@ impl Connection {
                         self.guild_loaded();
                     }
                     "caravan" => self.caravan_done(Err(e)),
+                    "upe" => self.upe_done(Err(e)),
                     t if t.starts_with("gupe:") => self.gupe_done(t[5..].parse().unwrap_or(0), None),
                     "pg-caravan" | "pg-maps" | "pg-facts" => self.profile_guild_done(tag, Err(e)),
                     t if t.starts_with("looks:") => self.looks_done(t, None),
@@ -1040,6 +1044,7 @@ impl Connection {
                 self.guild_loaded();
             }
             "caravan" => self.caravan_done(Ok(crate::guild::caravan_of(&j))),
+            "upe" => self.upe_done(Ok(crate::guild::upe_board_of(&j))),
             t if t.starts_with("gupe:") => self.gupe_done(t[5..].parse().unwrap_or(0), Some(crate::guild::guild_upe_of(&j))),
             "pg-caravan" | "pg-maps" | "pg-facts" => self.profile_guild_done(tag, Ok(j)),
             "mates" => {
@@ -1104,6 +1109,7 @@ impl Connection {
         }
         self.call("GET", "/scoring", None, "scoring");
         self.caravan_load();
+        self.upe_load();
         self.maps_load();
         if self.guild.loading > 0 {
             return;
@@ -1128,6 +1134,30 @@ impl Connection {
         }
         self.guild.caravan_loading = true;
         self.call("GET", "/guild/caravan?range=all", None, "caravan");
+    }
+
+    /// The guild's game mode runs, to compare them; asked while loading: once more afterwards.
+    pub fn upe_load(&mut self) {
+        if self.guild.upe_loading {
+            self.guild.upe_again = true;
+            return;
+        }
+        if self.user.is_none() || self.state != State::Online {
+            self.guild.upe = None;
+            self.guild.version += 1;
+            return;
+        }
+        self.guild.upe_loading = true;
+        self.call("GET", "/guild/upe", None, "upe");
+    }
+
+    fn upe_done(&mut self, b: Result<crate::guild::UpeBoard, Error>) {
+        self.guild.upe_loading = false;
+        self.guild.upe = Some(b);
+        self.guild.version += 1;
+        if std::mem::take(&mut self.guild.upe_again) {
+            self.upe_load();
+        }
     }
 
     fn caravan_done(&mut self, c: Result<crate::guild::Caravan, Error>) {

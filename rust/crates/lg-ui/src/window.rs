@@ -197,7 +197,7 @@ fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
 
-const GUILD_PAGES: [&str; 6] = ["Loot Caravan", "Quest Map", "Leaderboard", "Recent Drops", "Member", "Quests"];
+const GUILD_PAGES: [&str; 7] = crate::guild::PAGES;
 
 impl Window {
     /// With the game data in `assets` and the settings (`realmShark.properties`).

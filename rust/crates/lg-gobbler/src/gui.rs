@@ -12,7 +12,7 @@ pub fn viewport(props: &lg_app::properties::Properties) -> egui::ViewportBuilder
         .with_app_id("lootgobbler")
         .with_decorations(false)
         .with_min_inner_size([640.0, 420.0]);
-    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon/lootgobbler-256.png")) {
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon/lootgobbler-32.png")) {
         v = v.with_icon(std::sync::Arc::new(icon));
     }
     let bounds: Option<Vec<f32>> = props.get("windowBounds").and_then(|b| b.split(',').map(|x| x.trim().parse::<f32>().ok()).collect());
@@ -566,6 +566,11 @@ impl eframe::App for Gui {
         if let Err(e) = self.app.save_changed(&self.own) {
             lg_app::applog::err(&format!("cannot save into {}: {e}", self.own.display()));
         }
+    }
+
+    /// The mouse wheel scrolls as in the Java app (see `widgets::java_wheel`).
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        lg_ui::widgets::java_wheel(raw_input);
     }
 
     /// See-through where nothing is painted: the overlays show only their boxes.

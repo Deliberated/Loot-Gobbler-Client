@@ -131,7 +131,21 @@ fn main() -> ExitCode {
     {
         return ExitCode::FAILURE;
     }
-    let options = eframe::NativeOptions { viewport: gui::viewport(&lg_app::properties::Properties::load(&own)), ..Default::default() };
+    // frames shown as soon as they are drawn: no waiting for the screen's refresh (vsync) and one frame in flight at
+    // most, so hover and clicks show at once, as in the Java app. The window only redraws on input and while
+    // something moves, so this costs nothing at rest
+    let wgpu_options = eframe::egui_wgpu::WgpuConfiguration {
+        surface: eframe::egui_wgpu::SurfaceConfig {
+            present_mode: eframe::wgpu::PresentMode::AutoNoVsync,
+            desired_maximum_frame_latency: Some(1),
+        },
+        ..Default::default()
+    };
+    let options = eframe::NativeOptions {
+        viewport: gui::viewport(&lg_app::properties::Properties::load(&own)),
+        wgpu_options,
+        ..Default::default()
+    };
     // Linux: X11 (XWayland under Wayland), as Java's Swing: only there can the overlays be placed and kept on top
     #[cfg(target_os = "linux")]
     if std::env::var_os("DISPLAY").is_some() && std::env::var_os("LG_WAYLAND").is_none() {
@@ -199,6 +213,14 @@ impl Feeder {
         self.session.get_or_insert_with(|| Session::new(link_type)).frame(0, data, &mut self.items);
         for item in self.items.drain(..) {
             let Item::Packet { packet, .. } = item else { continue };
+            // the mission packets (claim 163, and 164 and 165 from the game), raw with the character playing: to
+            // learn how they tell progress and claims apart before each game mode run gets its missions
+            if matches!(packet.id, 163..=165) {
+                let who = app.world.me().map_or("no character".to_string(), |m| format!("character {}", m.char_id));
+                let hex: String = packet.body.iter().take(512).map(|b| format!("{b:02x}")).collect();
+                let more = if packet.body.len() > 512 { format!(" (+{} bytes)", packet.body.len() - 512) } else { String::new() };
+                lg_app::applog::line("missions", &format!("packet {} ({who}, {} bytes): {hex}{more}", packet.id, packet.body.len()));
+            }
             if lg_app::RAW.contains(&packet.id) {
                 app.raw(packet.id, &packet.body, now);
             } else if lg_app::FED.contains(&packet.id) || packet.id == lg_app::HELLO {

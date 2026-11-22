@@ -506,7 +506,9 @@ impl Items {
             }
             "EnchantmentSlots" => item.enchant_slots = Some(enchant_slots(e)),
             "OnPlayerHitActivate" => {
-                let low_life = e.attr("hpMinThresholdRelative").is_some();
+                // a proc that needs another item worn too (a set bonus, `mustWear`, e.g. Hallowed Hide's heal with
+                // Ruthven's Rosary) is no second chance on its own
+                let low_life = e.attr("hpMinThresholdRelative").is_some() && e.attr("mustWear").is_none();
                 let effect = e.attr("effect");
                 let what = text_or_stop!();
                 let what = what.trim();

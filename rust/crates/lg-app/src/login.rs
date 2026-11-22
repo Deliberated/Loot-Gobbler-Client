@@ -170,7 +170,7 @@ impl App {
     }
 
     /// Java `Missions.fetch`: the missions and your progress.
-    fn fetch_missions(&mut self, now: i64) {
+    pub(crate) fn fetch_missions(&mut self, now: i64) {
         let Some(t) = self.missions.token.clone() else { return };
         if self.missions.fetching {
             return;

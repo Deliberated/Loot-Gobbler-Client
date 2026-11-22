@@ -426,14 +426,8 @@ fn card(
         "Seen from its creation, nothing against the rules yet".to_string()
     };
     let n = r.gathered.len();
-    let mut more = format!("{n} item{} gathered", if n == 1 { "" } else { "s" });
-    if !r.allowed.is_empty() {
-        more += &format!(
-            "  ·  {} quest/mission reward{} it may take from the gift chest",
-            r.allowed.len(),
-            if r.allowed.len() == 1 { "" } else { "s" }
-        );
-    }
+    let more = format!("{n} item{} gathered", if n == 1 { "" } else { "s" });
+
     // the buttons, right to left at the card's right edge
     use crate::window::Ask;
     let id = r.char_id;
@@ -469,11 +463,71 @@ fn card(
         buttons.push(("Finds".into(), false, true, Err(format!("Inventory:upe:{id}"))));
     }
     buttons.push(("Open".into(), false, true, Err(format!("Characters:{id}"))));
+    // what it gathered that this class can equip (each item once, first found first)
+    let class_slots = data.classes.iter().find(|k| k.id == c.class_type).and_then(|k| k.slot_types);
+    let mut usable: Vec<i32> = Vec::new();
+    for g in &r.gathered {
+        if usable.contains(&g.item) {
+            continue;
+        }
+        if let (Some(it), Some(slots)) = (data.items.item(g.item), class_slots)
+            && it.slot_type != 0
+            && slots.contains(&it.slot_type)
+        {
+            usable.push(g.item);
+        }
+    }
+    const USABLE_ICON: f32 = 32.0;
+    let usable_h = if usable.is_empty() { 0.0 } else { jtext::height(&painter, &text(13.0)) + 4.0 + USABLE_ICON + 4.0 };
+    // while the run stands: the missions it is solving alone, those still at 0% it could, and what it may take from
+    // the gift chest (rewards of missions and quests it solved alone that fit its mode)
+    let standing = r.marked && r.broken.is_none() && c.alive;
+    let mut mission_lines: Vec<(String, Vec<crate::widgets::TipLine>)> = Vec::new();
+    if standing {
+        let name_of = |k: &str| app.missions.by_key(k).and_then(|m| m.name.clone()).unwrap_or_else(|| format!("mission {k}"));
+        let working: Vec<String> = app
+            .upe
+            .missions
+            .iter()
+            .filter(|(_, m)| m.char_id == r.char_id && m.clean && m.from_zero)
+            .map(|(k, _)| name_of(k))
+            .collect();
+        if !working.is_empty() {
+            let tip = working.iter().map(|n| vec![(n.clone(), None, false)]).collect();
+            mission_lines.push((format!("Solving alone: {}", working.join(", ")), tip));
+        }
+        let now_s = app.world.now() / 1000;
+        let untouched = app.missions.untouched(now_s);
+        if app.missions.defs.is_some() {
+            let mut tip: Vec<crate::widgets::TipLine> =
+                vec![vec![("Still at 0%: done from the start by this character alone, their rewards are its own".into(), None, true)]];
+            for (_, m) in untouched.iter().take(20) {
+                let n = m.name.clone().unwrap_or_default();
+                let d = m.desc.clone().unwrap_or_default();
+                tip.push(vec![(n, None, false), (if d.is_empty() { String::new() } else { format!(": {d}") }, Some(fixed::MUTED), false)]);
+            }
+            if untouched.len() > 20 {
+                tip.push(vec![(format!("and {} more", untouched.len() - 20), Some(fixed::MUTED), false)]);
+            }
+            mission_lines.push((
+                format!("Missions it can still do alone: {} (hover for the list)", untouched.len()),
+                tip,
+            ));
+        } else {
+            mission_lines.push(("Missions: not loaded yet (they come with the game's login)".into(), Vec::new()));
+        }
+    }
+    let gift: Vec<i32> = r.allowed.iter().filter_map(|g| g.first().copied()).collect();
+    let gift_h = if gift.is_empty() { 0.0 } else { jtext::height(&painter, &text(13.0)) + 4.0 + USABLE_ICON + 4.0 };
+    let mission_h = mission_lines.len() as f32 * (jtext::height(&painter, &text(13.0)) + 4.0);
     let lines = 3 + r.notes.len();
     let text_h = jtext::height(&painter, &text(22.0))
         + jtext::height(&painter, &text(15.0))
         + 4.0
-        + (lines - 2) as f32 * (jtext::height(&painter, &text(13.0)) + 4.0);
+        + (lines - 2) as f32 * (jtext::height(&painter, &text(13.0)) + 4.0)
+        + usable_h
+        + mission_h
+        + gift_h;
     let h = 8.0 + text_h.max(56.0) + 8.0;
     let rect = Rect::from_min_size(at.min, vec2(at.width(), h));
     painter.rect_filled(rect, 0.0, p.paper);
@@ -503,6 +557,66 @@ fn card(
     for line in std::iter::once(more).chain(r.notes.iter().map(|n| format!("Worth a look: {n}"))) {
         let t = jtext::draw(&painter, pos2(tx, ty + 2.0), Align2::LEFT_TOP, &line, &text(13.0), fixed::MUTED);
         ty = t.bottom() + 2.0;
+    }
+    if !usable.is_empty() {
+        let t = jtext::draw(
+            &painter,
+            pos2(tx, ty + 2.0),
+            Align2::LEFT_TOP,
+            &format!("Usable by this {} ({})", c.class_name, usable.len()),
+            &text(13.0),
+            p.ink,
+        );
+        ty = t.bottom() + 4.0;
+        // as many as fit before the buttons; the rest counted
+        let room = (rect.right() - 10.0 - 6.0 * 108.0 - tx).max(USABLE_ICON * 4.0);
+        let fit = ((room / (USABLE_ICON + 4.0)) as usize).max(1);
+        let shown = if usable.len() > fit { fit - 1 } else { usable.len() };
+        for (k, id) in usable.iter().take(shown).enumerate() {
+            let ir = Rect::from_min_size(pos2(tx + k as f32 * (USABLE_ICON + 4.0), ty), vec2(USABLE_ICON, USABLE_ICON));
+            if let Some(t) = icons.object(ui.ctx(), data, *id, USABLE_ICON as u32) {
+                painter.image(t.id(), ir, crate::detail::uv(), Color32::WHITE);
+            }
+            let slot = data.items.item(*id).map_or("", |it| it.slot_name());
+            crate::widgets::item_tip(ui, ir, data, *id, None, slot);
+        }
+        if shown < usable.len() {
+            jtext::draw(
+                &painter,
+                pos2(tx + shown as f32 * (USABLE_ICON + 4.0) + 4.0, ty + USABLE_ICON / 2.0),
+                Align2::LEFT_CENTER,
+                &format!("+{}", usable.len() - shown),
+                &text(15.0),
+                fixed::MUTED,
+            );
+        }
+        ty += USABLE_ICON + 4.0;
+    }
+    for (k, (line, tip)) in mission_lines.iter().enumerate() {
+        let t = jtext::draw(&painter, pos2(tx, ty + 2.0), Align2::LEFT_TOP, line, &text(13.0), p.ink);
+        if !tip.is_empty() {
+            crate::widgets::rich_tip(ui, t, ("mission-tip", r.char_id, k), tip);
+        }
+        ty = t.bottom() + 2.0;
+    }
+    if !gift.is_empty() {
+        let t = jtext::draw(
+            &painter,
+            pos2(tx, ty + 2.0),
+            Align2::LEFT_TOP,
+            &format!("May take from the gift chest ({}): rewards it earned alone", gift.len()),
+            &text(13.0),
+            p.ink,
+        );
+        ty = t.bottom() + 4.0;
+        for (k, id) in gift.iter().enumerate() {
+            let ir = Rect::from_min_size(pos2(tx + k as f32 * (USABLE_ICON + 4.0), ty), vec2(USABLE_ICON, USABLE_ICON));
+            if let Some(t) = icons.object(ui.ctx(), data, *id, USABLE_ICON as u32) {
+                painter.image(t.id(), ir, crate::detail::uv(), Color32::WHITE);
+            }
+            let slot = data.items.item(*id).map_or("", |it| it.slot_name());
+            crate::widgets::item_tip(ui, ir, data, *id, None, slot);
+        }
     }
     let mut bx = rect.right() - 10.0;
     for (i, (label, primary, enabled, action)) in buttons.iter().enumerate().rev() {

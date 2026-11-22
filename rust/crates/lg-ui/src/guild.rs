@@ -1,13 +1,16 @@
-//! The Guild tab (Java `GuildPanel`): Loot Caravan, Quest Map, Leaderboard, Recent Drops, Member, Quests. All of it
+//! The Guild tab (Java `GuildPanel`): Loot Caravan, Quest Map, Leaderboard, UPE (the guild's game mode runs
+//! compared), Recent Drops, Member, Quests. All of it
 //! comes from the Loot Gobbler server, loaded when the tab is opened (and after logging in or out).
 
 use crate::jtext;
 use crate::profile::Ctx;
-use crate::theme::{Palette, fixed};
+use crate::theme::{Palette, fixed, mix};
 use crate::widgets::{self, small, text};
 use egui::{Align2, Color32, Rect, Stroke, StrokeKind, Ui, pos2, vec2};
 
-const PAGES: [&str; 6] = ["Loot Caravan", "Quest Map", "Leaderboard", "Recent Drops", "Member", "Quests"];
+pub const PAGES: [&str; 7] = ["Loot Caravan", "Quest Map", "Leaderboard", "UPE", "Recent Drops", "Member", "Quests"];
+/// The Member page's place in `PAGES` (opened from the leaderboard, the drops and the UPE chart).
+const MEMBER_PAGE: usize = 5;
 const LOGGED_OUT: &str = "Log in to a server in the Server tab to see your guild.";
 
 #[derive(Default)]
@@ -50,8 +53,9 @@ impl GuildView {
             }
             1 => self.quest_map.show(ui, c, body),
             2 => self.leaderboard(ui, c, body),
-            3 => drops(ui, c, body, rarity, &mut self.page),
-            4 => member(ui, c, body),
+            3 => upe(ui, c, body, &mut self.page),
+            4 => drops(ui, c, body, rarity, &mut self.page),
+            MEMBER_PAGE => member(ui, c, body),
             _ => {
                 // under construction: the notice, the empty section greyed out
                 let painter = ui.painter().clone();
@@ -257,9 +261,173 @@ impl GuildView {
             c.asks.push(crate::window::Ask::Server(crate::window::ServerAsk::GuildRefresh));
         }
         if let Some(id) = open.get() {
-            self.page = 4;
+            self.page = MEMBER_PAGE;
             c.asks.push(crate::window::Ask::Server(crate::window::ServerAsk::OpenMember(id)));
         }
+    }
+}
+
+/// The guild's game mode runs compared: one row per marked run, the most points first, a bar for its points (gold
+/// while it stands, grey once lost or dead), who plays it and what. Points: each collectible item the run gathered
+/// once (its first copy), scored without rarity (`lg_app::guild::upe_points`). A click opens the player's profile.
+fn upe(ui: &mut Ui, c: &mut Ctx, body: Rect, page: &mut usize) {
+    let p = *c.p;
+    let app = c.app;
+    let data = app.world.data();
+    let w8 = app.server.weights;
+    let refresh = std::cell::Cell::new(false);
+    let mut open = None;
+    let is_online = online(c);
+    let failed = match &app.server.guild.upe {
+        Some(Err(e)) => load_error(c, e),
+        _ => String::new(),
+    };
+    let title = match &app.server.guild.upe {
+        Some(Ok(b)) if is_online => format!("UPE Comparison - {}", b.guild),
+        _ => "UPE Comparison".into(),
+    };
+    let me = app.profile.ign.to_lowercase();
+    let icons = &mut *c.icons;
+    widgets::section(
+        ui,
+        &p,
+        body,
+        &title,
+        fixed::GOLD,
+        |ui, head| refresh.set(refresh_button(ui, &p, head, "upe-refresh")),
+        |ui, r| {
+            let f = text(18.0);
+            // the player and the points above, what they play and how many items below in a smaller size
+            let big = text(22.0);
+            let sm = text(15.0);
+            let painter = ui.painter().clone();
+            let x0 = r.left() + 14.0;
+            let board = match &app.server.guild.upe {
+                _ if !is_online => return note(&painter, x0, r.top() + 12.0, LOGGED_OUT, &f),
+                None => return,
+                Some(Err(_)) => return note(&painter, x0, r.top() + 12.0, &failed, &f),
+                Some(Ok(b)) => b,
+            };
+            // every marked run with its points, the most first; ties by player
+            let mut rows: Vec<(&lg_app::guild::UpeMember, &lg_app::guild::UpeRun, f64, Vec<(i32, String, f64)>)> = board
+                .members
+                .iter()
+                .flat_map(|m| m.runs.iter().map(move |r| (m, r)))
+                .map(|(m, r)| {
+                    let (points, counted) = lg_app::guild::upe_points(data, &w8, r);
+                    (m, r, points, counted)
+                })
+                .collect();
+            rows.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.ign.to_lowercase().cmp(&b.0.ign.to_lowercase())));
+            if rows.is_empty() {
+                return note(&painter, x0, r.top() + 12.0, "No game mode runs in your guild yet (they come with each member's sync).", &f);
+            }
+            let max = rows.iter().map(|r| r.2).fold(0.0f64, f64::max).max(1.0);
+            let w = r.width() - 28.0;
+            let row_h = 56.0;
+            let name_w = 260.0;
+            let value_w = 150.0;
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(r.left(), r.top() + 12.0), r.max)));
+            egui::ScrollArea::vertical().id_salt("upe-chart").show(&mut child, |ui| {
+                let top = ui.cursor().min.y;
+                let painter = ui.painter().clone();
+                let mut y = top;
+                for (k, (m, run, points, counted)) in rows.iter().enumerate() {
+                    let rr = Rect::from_min_size(pos2(x0, y), vec2(w, row_h));
+                    let resp = ui.interact(rr, ui.scope_id().with(("upe-row", m.id, run.char_id)), egui::Sense::click());
+                    painter.rect_filled(rr, 0.0, if resp.hovered() { p.header } else if k % 2 == 1 { mix(p.header, p.paper, 0.5) } else { p.paper });
+                    let standing = !run.lost && run.alive;
+                    let ink = if !standing {
+                        fixed::MUTED
+                    } else if m.ign.to_lowercase() == me {
+                        fixed::GOLD
+                    } else {
+                        p.ink
+                    };
+                    let cy = rr.center().y;
+                    jtext::draw(&painter, pos2(rr.left() + 30.0, cy), Align2::RIGHT_CENTER, &format!("{}", k + 1), &big, ink);
+                    // the character, greyed out once its run is over
+                    if let Some(ch) = &run.character {
+                        let skin = if ch.skin > 0 { ch.skin } else { ch.class_type };
+                        let tex = if standing {
+                            icons.skin(ui.ctx(), data, skin, ch.tex1, ch.tex2, 40)
+                        } else {
+                            icons.skin_faded(ui.ctx(), data, skin, ch.tex1, ch.tex2, 40)
+                        };
+                        if let Some(t) = tex {
+                            painter.image(t.id(), Rect::from_center_size(pos2(rr.left() + 62.0, cy), vec2(40.0, 40.0)), crate::detail::uv(), Color32::WHITE);
+                        }
+                    }
+                    let nx = rr.left() + 92.0;
+                    jtext::draw(&painter.with_clip_rect(rr), pos2(nx, cy - 2.0), Align2::LEFT_BOTTOM, &m.ign, &big, ink);
+                    let class = run.character.as_ref().map_or("Unknown character".to_string(), |ch| ch.class_name.clone());
+                    let state = if run.lost {
+                        " · lost"
+                    } else if !run.alive {
+                        " · dead"
+                    } else {
+                        ""
+                    };
+                    let sub = format!("{class} · {}{state}", lg_app::upe::label(&run.mode));
+                    jtext::draw(&painter.with_clip_rect(rr), pos2(nx, cy + 2.0), Align2::LEFT_TOP, &sub, &sm, fixed::MUTED);
+                    // the bar
+                    let bx = nx + name_w;
+                    let bw = (rr.right() - value_w - 12.0 - bx).max(40.0);
+                    let track = Rect::from_min_size(pos2(bx, cy - 10.0), vec2(bw, 20.0));
+                    painter.rect_filled(track, 0.0, Color32::from_black_alpha(60));
+                    let fill = Rect::from_min_size(track.min, vec2((bw * (*points / max) as f32).max(if *points > 0.0 { 2.0 } else { 0.0 }), 20.0));
+                    let bar = if standing { p.gold } else { mix(fixed::MUTED, p.paper, 0.6) };
+                    painter.rect_filled(fill, 0.0, bar);
+                    painter.rect_stroke(track, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
+                    let vx = rr.right() - 8.0;
+                    jtext::draw(&painter, pos2(vx, cy - 2.0), Align2::RIGHT_BOTTOM, &lg_app::guild::format(*points), &big, ink);
+                    let n = counted.len();
+                    jtext::draw(&painter, pos2(vx, cy + 2.0), Align2::RIGHT_TOP, &format!("{n} item{}", if n == 1 { "" } else { "s" }), &sm, fixed::MUTED);
+                    // the items that counted, the most points first
+                    let mut tip: Vec<widgets::TipLine> = vec![vec![
+                        (format!("{} ", m.ign), None, true),
+                        (format!("({class}, {}{state})", lg_app::upe::label(&run.mode)), None, false),
+                    ]];
+                    let mut best: Vec<&(i32, String, f64)> = counted.iter().collect();
+                    best.sort_by(|a, b| b.2.total_cmp(&a.2));
+                    for (id, place, pts) in best.iter().take(10) {
+                        let name = data.items.item(*id).map_or(format!("Item {id}"), |i| i.name.clone());
+                        let place = if place.is_empty() { String::new() } else { format!(" ({place})") };
+                        tip.push(vec![(format!("{name}{place}: "), None, false), (lg_app::guild::format(*pts), Some(fixed::GOLD), false)]);
+                    }
+                    if n > 10 {
+                        tip.push(vec![(format!("and {} more", n - 10), Some(fixed::MUTED), false)]);
+                    }
+                    tip.push(vec![("Click to open their profile".into(), Some(fixed::MUTED), false)]);
+                    widgets::rich_tip(ui, rr, ("upe-row-tip", m.id, run.char_id), &tip);
+                    if resp.clicked() {
+                        open = Some(m.id);
+                    }
+                    if resp.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    y += row_h + 2.0;
+                }
+                y += 8.0;
+                jtext::draw(
+                    &painter,
+                    pos2(x0, y),
+                    Align2::LEFT_TOP,
+                    "Points: every UT/ST item a run gathered counts once (its first copy), scored like the leaderboard but without rarity. Grey: lost or dead.",
+                    &f,
+                    fixed::MUTED,
+                );
+                y += jtext::height(&painter, &f) + 14.0;
+                ui.allocate_exact_size(vec2(w, y - top), egui::Sense::hover());
+            });
+        },
+    );
+    if refresh.get() {
+        c.asks.push(crate::window::Ask::Server(crate::window::ServerAsk::GuildRefresh));
+    }
+    if let Some(id) = open {
+        *page = MEMBER_PAGE;
+        c.asks.push(crate::window::Ask::Server(crate::window::ServerAsk::OpenMember(id)));
     }
 }
 
@@ -355,7 +523,7 @@ fn drops(ui: &mut Ui, c: &mut Ctx, body: Rect, rarity: &crate::detail::Rarity, p
         c.asks.push(crate::window::Ask::Server(crate::window::ServerAsk::GuildRefresh));
     }
     if let Some(id) = open {
-        *page = 4;
+        *page = MEMBER_PAGE;
         c.asks.push(crate::window::Ask::Server(crate::window::ServerAsk::OpenMember(id)));
     }
 }

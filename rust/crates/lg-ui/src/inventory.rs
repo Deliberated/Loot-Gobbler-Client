@@ -153,18 +153,37 @@ impl InventoryView {
         let x = body.left() + 4.0;
         let mut y = body.top() + 4.0;
         let f = small();
+        // the newest run first (Java `markedRuns`); a dead character's only when it gathered at least 5 items for
+        // the grid, so short-lived runs do not crowd the column
+        let mut runs: Vec<&lg_app::upe::Run> = app
+            .upe
+            .runs
+            .values()
+            .filter(|r| r.marked)
+            .filter(|r| {
+                app.characters.get(r.char_id).is_some_and(|ch| {
+                    ch.alive || r.gathered.iter().filter(|g| data.items.collectible.contains(&g.item)).count() >= 5
+                })
+            })
+            .collect();
+        runs.sort_by_key(|r| std::cmp::Reverse(r.char_id));
+        if self.upe_char != 0 && !runs.iter().any(|r| r.char_id == self.upe_char) {
+            self.upe_char = 0;   // its run is not in the column (any more)
+        }
+        // the gold frame of the entry shown: drawn under the entries once their places are known, gliding from the
+        // one shown before to the one clicked
+        let frame_slot = painter.add(egui::Shape::Noop);
+        let target = std::cell::Cell::new(None::<Rect>);
         let mut entry = |y: &mut f32, tex: Option<egui::TextureHandle>, name: &str, id: i32, faded: bool, tip: &[widgets::TipLine]| {
             let shown = self.upe_char == id;
             let lh = jtext::height(&painter, &f);
             let h = 4.0 + 40.0 + lh + 4.0 + 4.0;
             let r = Rect::from_min_size(pos2(x + (w - 8.0 - 96.0) / 2.0, *y + 3.0), vec2(96.0, h));
             if shown {
-                painter.rect_filled(r, 0.0, mix(p.gold, p.paper, 0.25));
-                painter.rect_stroke(r, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
+                target.set(Some(r));
             }
             if let Some(t) = tex {
-                let tint = if faded { Color32::from_white_alpha(110) } else { Color32::WHITE };
-                painter.image(t.id(), Rect::from_min_size(pos2(r.center().x - 20.0, r.top() + 6.0), vec2(40.0, 40.0)), uv(), tint);
+                painter.image(t.id(), Rect::from_min_size(pos2(r.center().x - 20.0, r.top() + 6.0), vec2(40.0, 40.0)), uv(), Color32::WHITE);
             }
             jtext::draw(
                 &painter,
@@ -186,10 +205,8 @@ impl InventoryView {
         };
         let bag = c.icons.object(ui.ctx(), data, WHITE_BAG, 40);
         entry(&mut y, bag, "All", 0, false, &[vec![("Your whole collection".to_string(), None, false)]]);
-        let mut runs: Vec<&lg_app::upe::Run> = app.upe.runs.values().filter(|r| r.marked).collect();
-        runs.sort_by_key(|r| r.char_id);
         for mode in lg_app::upe::MODES {
-            let in_mode: Vec<_> = runs.iter().filter(|r| r.mode == mode && app.characters.get(r.char_id).is_some()).collect();
+            let in_mode: Vec<_> = runs.iter().filter(|r| r.mode == mode).collect();
             if in_mode.is_empty() {
                 continue;
             }
@@ -201,7 +218,12 @@ impl InventoryView {
             for r in in_mode {
                 let ch = app.characters.get(r.char_id).expect("checked");
                 let skin = if ch.skin > 0 { ch.skin } else { ch.class_type };
-                let tex = c.icons.skin(ui.ctx(), data, skin, ch.tex1, ch.tex2, 40);
+                let faded = r.broken.is_some() || !ch.alive;
+                let tex = if faded {
+                    c.icons.skin_faded(ui.ctx(), data, skin, ch.tex1, ch.tex2, 40)
+                } else {
+                    c.icons.skin(ui.ctx(), data, skin, ch.tex1, ch.tex2, 40)
+                };
                 let n = r.gathered.len();
                 let mut tip: Vec<widgets::TipLine> = vec![
                     vec![(ch.class_name.clone(), None, true), (format!(" ({})", lg_app::upe::label(mode)), None, false)],
@@ -210,11 +232,33 @@ impl InventoryView {
                 for l in lg_app::upe::describe(&app.zone, Some(r)).lines() {
                     tip.push(vec![(l.to_string(), None, false)]);
                 }
-                entry(&mut y, tex, &ch.class_name, r.char_id, r.broken.is_some() || !ch.alive, &tip);
+                entry(&mut y, tex, &ch.class_name, r.char_id, faded, &tip);
             }
         }
         if runs.is_empty() {
             jtext::draw(&painter, pos2(x + w / 2.0, y + 8.0), Align2::CENTER_TOP, "No game mode runs yet", &f, fixed::MUTED);
+        }
+        if let Some(to) = target.get() {
+            // a third of the way every 15 ms, however long the frame took
+            let id = egui::Id::unique("lg-upe-column-frame");
+            let now = ui.input(|i| i.time);
+            let (from, at) = ui.ctx().data(|d| d.get_temp::<(Rect, f64)>(id)).unwrap_or((to, now));
+            let k = (1.0 - 0.67f64.powf(((now - at).clamp(0.0, 1.0)) / 0.015)) as f32;
+            let lerp = |a: f32, b: f32| a + (b - a) * k;
+            let mut shown = Rect::from_min_max(pos2(lerp(from.left(), to.left()), lerp(from.top(), to.top())), pos2(lerp(from.right(), to.right()), lerp(from.bottom(), to.bottom())));
+            if (shown.top() - to.top()).abs() < 0.5 && (shown.bottom() - to.bottom()).abs() < 0.5 {
+                shown = to;
+            } else {
+                ui.ctx().request_repaint();
+            }
+            ui.ctx().data_mut(|d| d.insert_temp(id, (shown, now)));
+            painter.set(
+                frame_slot,
+                egui::Shape::Vec(vec![
+                    egui::epaint::RectShape::filled(shown, 0.0, mix(p.gold, p.paper, 0.25)).with_round_to_pixels(false).into(),
+                    egui::epaint::RectShape::stroke(shown, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside).with_round_to_pixels(false).into(),
+                ]),
+            );
         }
         w
     }
@@ -450,10 +494,53 @@ impl InventoryView {
                         }
                     }
                     if let Some(i) = resp.hover_pos().and_then(at) {
-                        // the cell under the mouse: a light gold frame; its name and count beside the mouse
+                        // the cell under the mouse: a light gold frame
                         let light_gold = crate::theme::mix(p.gold, Color32::WHITE, 0.5);
                         painter.rect_stroke(cell_rect(i).shrink(1.0), 0.0, Stroke::new(2.0, light_gold), StrokeKind::Inside);
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        if resp.clicked() {
+                            clicked_cell.set(Some(cells[i].id));
+                        }
+                    }
+                    // the item's name and count beside the mouse (Java `CollectionGrid` tip): every move hides it, it
+                    // shows once the mouse rests on an item for 200 ms and fades in over 150 ms
+                    let tid = egui::Id::unique("lg-grid-tip");
+                    // (where the mouse rests, since when, when the tip showed)
+                    let (mut rest, mut since, mut shown) =
+                        ui.ctx().data(|d| d.get_temp::<(egui::Pos2, f64, Option<f64>)>(tid)).unwrap_or((egui::Pos2::ZERO, time_s, None));
+                    match resp.hover_pos() {
+                        Some(q) if ui.input(|i| i.pointer.any_down()) => {
+                            rest = q;
+                            since = f64::INFINITY;   // pressed: no tip until the mouse moves again
+                            shown = None;
+                        }
+                        Some(q) if q != rest => {
+                            rest = q;
+                            since = time_s;
+                            shown = None;
+                        }
+                        Some(_) => {}
+                        None => {
+                            since = f64::INFINITY;
+                            shown = None;
+                        }
+                    }
+                    if shown.is_none() && since.is_finite() {
+                        let wait = since + 0.2 - time_s;
+                        if wait <= 0.0 {
+                            shown = Some(time_s);
+                        } else {
+                            ui.ctx().request_repaint_after_secs(wait as f32);
+                        }
+                    }
+                    ui.ctx().data_mut(|d| d.insert_temp(tid, (rest, since, shown)));
+                    if let Some(at_s) = shown
+                        && let Some(i) = at(rest)
+                    {
+                        let alpha = ((time_s - at_s) / 0.15).clamp(0.0, 1.0) as f32;
+                        if alpha < 1.0 {
+                            ui.ctx().request_repaint();
+                        }
                         let it = data.items.item(cells[i].id);
                         let name = it.map_or(String::new(), |it| {
                             if it.is_shiny() && !it.name.contains("Shiny") { format!("{} (Shiny)", it.name) } else { it.name.clone() }
@@ -463,13 +550,28 @@ impl InventoryView {
                         } else {
                             (format!("Count: {}", cells[i].held), Color32::from_rgb(0xF5, 0xC5, 0x42))
                         };
-                        resp.clone().on_hover_ui_at_pointer(|ui| {
-                            ui.label(egui::RichText::new(&name).font(text(18.0)));
-                            ui.label(egui::RichText::new(&sub).font(text(18.0)).color(sub_c));
-                        });
-                        if resp.clicked() {
-                            clicked_cell.set(Some(cells[i].id));
+                        let f = text(18.0);
+                        let tip_painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, tid)).with_clip_rect(painter.clip_rect());
+                        let lh = jtext::height(&tip_painter, &f);
+                        let (pad_x, pad_y, gap) = (8.0, 5.0, 1.0);
+                        let w = jtext::width(&tip_painter, &name, &f).max(jtext::width(&tip_painter, &sub, &f)) + 2.0 * pad_x;
+                        let h = 2.0 * lh + gap + 2.0 * pad_y;
+                        // below-right of the mouse, flipped to stay inside the visible part of the grid
+                        let vis = painter.clip_rect();
+                        let mut x = rest.x + 14.0;
+                        let mut y = rest.y + 18.0;
+                        if x + w > vis.right() - 2.0 {
+                            x = rest.x - w - 8.0;
                         }
+                        if y + h > vis.bottom() - 2.0 {
+                            y = rest.y - h - 8.0;
+                        }
+                        let b = Rect::from_min_size(pos2(x.max(vis.left() + 2.0), y.max(vis.top() + 2.0)), vec2(w, h));
+                        let fade = |c: Color32| c.gamma_multiply(alpha);
+                        tip_painter.rect_filled(b, 0.0, fade(p.paper));
+                        tip_painter.rect_stroke(b, 0.0, Stroke::new(1.0, fade(p.line)), StrokeKind::Inside);
+                        jtext::draw(&tip_painter, pos2(b.left() + pad_x, b.top() + pad_y), Align2::LEFT_TOP, &name, &f, fade(p.ink));
+                        jtext::draw(&tip_painter, pos2(b.left() + pad_x, b.top() + pad_y + lh + gap), Align2::LEFT_TOP, &sub, &f, fade(sub_c));
                     }
                     if let Some((id, start, dur)) = pulse
                         && let Some(i) = cells.iter().position(|c| c.id == id)
@@ -477,7 +579,7 @@ impl InventoryView {
                         let t = ((time_s - start) / dur).clamp(0.0, 1.0) as f32;
                         let eased = 1.0 - (1.0 - t) * (1.0 - t);
                         let gold = Color32::from_rgb(0xF5, 0xC5, 0x42).gamma_multiply(1.0 - t);
-                        painter.rect_stroke(cell_rect(i).expand(eased * PULSE_GROW), 0.0, Stroke::new(5.0, gold), StrokeKind::Middle);
+                        widgets::smooth_stroke(&painter, cell_rect(i).expand(eased * PULSE_GROW), 0.0, Stroke::new(5.0, gold), StrokeKind::Middle);
                         if scroll_to == Some(id) {
                             ui.scroll_to_rect(cell_rect(i), Some(egui::Align::Center));
                         }

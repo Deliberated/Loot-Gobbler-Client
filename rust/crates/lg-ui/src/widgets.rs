@@ -219,11 +219,14 @@ pub fn banner_size(painter: &egui::Painter, text: &str) -> egui::Vec2 {
     vec2(jtext::width(painter, &text.to_uppercase(), &f) + 2.0 * u + 12.0, h)
 }
 
-pub fn banner(painter: &egui::Painter, r: Rect, text: &str, bg: Color32, alpha: f32) {
+/// `under`: the colour it lies on. A faded banner (alpha below 1) is drawn in solid colours mixed with it, like Java
+/// fading the finished banner as a whole: fading each part on its own let the overlapping parts (the text's outline
+/// copies) show through each other.
+pub fn banner(painter: &egui::Painter, r: Rect, text: &str, bg: Color32, alpha: f32, under: Color32) {
     let f = head_px(24.0);
     let (w, h) = (r.width(), r.height());
     let u = (h / 5.6).round().max(3.0);
-    let fade = |c: Color32| c.gamma_multiply(alpha);
+    let fade = |c: Color32| if alpha >= 1.0 { c } else { crate::theme::mix(c, under, f64::from(alpha.max(0.0))) };
     let rect = |x: f32, y: f32, ww: f32, hh: f32, c: Color32| {
         painter.rect_filled(Rect::from_min_size(pos2(r.left() + x, r.top() + y), vec2(ww, hh)), 0.0, fade(c))
     };
@@ -516,15 +519,13 @@ pub fn side_split(
         m.max(0.0)
     };
     let target = target_of(st.side);
-    // glide: about a third of the way every 8 ms
+    // glide: about a third of the way every 8 ms, for however long the frame took (counted in whole 8 ms steps,
+    // short frames moved nothing)
     if st.shown < 0.0 {
         st.shown = target;
     } else {
-        let steps = ((now - st.at) / 0.008).clamp(0.0, 60.0) as i32;
-        let mut shown = st.shown;
-        for _ in 0..steps {
-            shown += (target - shown) * 0.35;
-        }
+        let dt = (now - st.at).clamp(0.0, 1.0);
+        let shown = st.shown + (target - st.shown) * (1.0 - 0.65f64.powf(dt / 0.008)) as f32;
         st.shown = if (target - shown).abs() < 0.5 { target } else { shown };
     }
     if (st.shown - target).abs() > 0.0 {
@@ -622,4 +623,99 @@ pub fn item_tip(ui: &Ui, r: Rect, data: &lg_gamedata::GameData, id: i32, enchant
     if id > 0 {
         rich_tip(ui, r, ("item-tip", id, r.min.x as i32, r.min.y as i32), &item_tip_lines(data, id, enchants, slot));
     }
+}
+
+/// A rectangle's outline at its exact, fractional position: egui snaps rectangles to whole pixels, which makes a
+/// frame that grows or moves a little each frame jump in steps. For animations only.
+pub fn smooth_stroke(painter: &egui::Painter, r: Rect, radius: f32, stroke: Stroke, kind: StrokeKind) {
+    painter.add(egui::epaint::RectShape::stroke(r, radius, stroke, kind).with_round_to_pixels(false));
+}
+
+/// A filled rectangle at its exact, fractional position (see [`smooth_stroke`]).
+pub fn smooth_fill(painter: &egui::Painter, r: Rect, radius: f32, color: Color32) {
+    painter.add(egui::epaint::RectShape::filled(r, radius, color).with_round_to_pixels(false));
+}
+
+/// Mouse wheel as in Java's scroll panes: one notch scrolls 3 lines of 16 px (Swing's unit increment, Windows'
+/// 3 lines per notch) at once. egui would scroll 40 px and ease it in over about a tenth of a second, which feels
+/// sluggish next to the Java app; it applies small steps (under 8 px) at once, so a notch is handed on in such steps.
+pub fn java_wheel(raw: &mut egui::RawInput) {
+    const PER_LINE: f32 = 3.0 * 16.0;
+    let events = std::mem::take(&mut raw.events);
+    for e in events {
+        match e {
+            egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Line, delta, modifiers, phase: egui::TouchPhase::Move, source } => {
+                let d = delta * PER_LINE;
+                let n = (d.length() / 7.0).ceil().max(1.0);
+                for _ in 0..n as usize {
+                    raw.events.push(egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: d / n,
+                        modifiers,
+                        phase: egui::TouchPhase::Move,
+                        source,
+                    });
+                }
+            }
+            e => raw.events.push(e),
+        }
+    }
+}
+
+/// A window of the app's own (Logs, Net Traffic, the new run wizard), drawn like the main window and its dialogs:
+/// a title bar in the title colour with a close cross (dragged by it to move the window), the paper below, a 1 px
+/// line around. It keeps its size (no growing as its content comes), centred on the screen at first. `add` fills
+/// the body; false once closed.
+pub fn app_window(ctx: &egui::Context, p: &Palette, id: &str, title: &str, size: egui::Vec2, add: impl FnOnce(&mut Ui)) -> bool {
+    const HEAD: f32 = 38.0;
+    let screen = ctx.content_rect();
+    let size = vec2(size.x.min(screen.width() - 24.0), size.y.min(screen.height() - 24.0));
+    let pos_id = egui::Id::unique(("lg-window-pos", id));
+    let mut pos = ctx.data(|d| d.get_temp::<egui::Pos2>(pos_id)).unwrap_or_else(|| screen.center() - size / 2.0);
+    // kept on the screen, its title bar at least
+    pos.x = pos.x.clamp(screen.left() - size.x + 80.0, screen.right() - 80.0);
+    pos.y = pos.y.clamp(screen.top(), screen.bottom() - HEAD);
+    let mut open = true;
+    egui::Window::new(title)
+        .id(egui::Id::unique(("lg-window", id)))
+        .title_bar(false)
+        .frame(egui::Frame::NONE)
+        .resizable(false)
+        .collapsible(false)
+        .movable(false)
+        .fixed_size(size)
+        .current_pos(pos)
+        .show(ctx, |ui| {
+            let (r, _) = ui.allocate_exact_size(size, Sense::hover());
+            let painter = ui.painter().clone();
+            painter.rect(r, 0.0, p.paper, Stroke::new(1.0, p.line), StrokeKind::Inside);
+            let head = Rect::from_min_size(r.min, vec2(r.width(), HEAD));
+            painter.rect_filled(head.shrink(1.0), 0.0, p.title);
+            jtext::draw(&painter, pos2(head.left() + 14.0, head.center().y), Align2::LEFT_CENTER, title, &theme::head(19.0), p.title_fg);
+            // the close cross, as the main window's
+            let close = Rect::from_min_max(pos2(head.right() - 46.0, head.top() + 1.0), pos2(head.right() - 1.0, head.bottom()));
+            let x = ui.interact(close, ui.scope_id().with("close"), Sense::click());
+            if x.hovered() {
+                painter.rect_filled(close, 0.0, Color32::from_rgb(0xC4, 0x2B, 0x1C));
+            }
+            let ink = if x.hovered() { Color32::WHITE } else { p.title_fg };
+            let c = close.center();
+            painter.line_segment([pos2(c.x - 7.0, c.y - 7.0), pos2(c.x + 7.0, c.y + 7.0)], Stroke::new(1.0, ink));
+            painter.line_segment([pos2(c.x - 7.0, c.y + 7.0), pos2(c.x + 7.0, c.y - 7.0)], Stroke::new(1.0, ink));
+            if x.clicked() {
+                open = false;
+            }
+            // dragged by its title bar
+            let bar = Rect::from_min_max(head.min, pos2(close.left(), head.bottom()));
+            let drag = ui.interact(bar, ui.scope_id().with("drag"), Sense::drag());
+            if drag.dragged() {
+                pos += drag.drag_delta();
+            }
+            let body = Rect::from_min_max(pos2(r.left() + 12.0, head.bottom() + 10.0), r.max - vec2(12.0, 10.0));
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body));
+            child.set_clip_rect(body.expand(2.0));
+            add(&mut child);
+        });
+    ctx.data_mut(|d| d.insert_temp(pos_id, pos));
+    open
 }

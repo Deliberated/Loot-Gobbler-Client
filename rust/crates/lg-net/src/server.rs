@@ -46,6 +46,8 @@ impl Server {
         if !self.token.is_empty() {
             req = req.set("Authorization", &format!("Bearer {}", self.token));
         }
+        // which app this is, for the admins' user list (the server notes it on the session)
+        req = req.set("X-LootGobbler-Client", concat!("rust/", env!("CARGO_PKG_VERSION")));
         let start = std::time::Instant::now();
         let res = match body {
             Some(b) => req.send_string(b),

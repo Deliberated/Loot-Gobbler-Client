@@ -106,19 +106,17 @@ impl Info {
         self.logs(ctx, p, asks);
         self.about(ctx, p, asks);
         if self.net {
-            let mut open = true;
-            egui::Window::new("Net Traffic").open(&mut open).default_size(vec2(350.0, 450.0)).resizable(true).show(ctx, |ui| {
+            self.net = crate::widgets::app_window(ctx, p, "net", "Net Traffic", vec2(350.0, 450.0), |ui| {
                 ui.allocate_space(ui.available_size());
             });
-            self.net = open;
         }
     }
 
     fn logs(&mut self, ctx: &egui::Context, p: &Palette, asks: &mut Vec<Ask>) {
         let Some(logs) = &mut self.logs else { return };
-        let mut open = true;
         let mut reload = false;
-        egui::Window::new("Logs").open(&mut open).default_size(vec2(960.0, 640.0)).resizable(true).collapsible(false).show(ctx, |ui| {
+        // its own size from the start: it does not grow (or slide open) as the day's lines come in
+        let open = crate::widgets::app_window(ctx, p, "logs", "Logs", vec2(960.0, 640.0), |ui| {
             ui.horizontal(|ui| {
                 ui.label("Day");
                 let name = |f: &std::path::PathBuf| f.file_name().map_or(String::new(), |n| n.to_string_lossy().to_string());
@@ -165,7 +163,6 @@ impl Info {
         if !open {
             self.logs = None;
         }
-        let _ = p;
     }
 
     /// Java `AboutDialog`: the app icon (poke it: the goblin cackles), name, author, version, tagline and credits.

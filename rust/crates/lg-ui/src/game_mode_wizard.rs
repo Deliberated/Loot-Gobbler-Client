@@ -147,22 +147,18 @@ impl Wizard {
         if self.step == 2 {
             self.look_for_new_character(app);
         }
-        let mut open = true;
         let mut out = Out::Keep;
-        egui::Window::new("New game mode run").open(&mut open).default_size(vec2(860.0, 760.0)).resizable(true).collapsible(false).show(
-            ctx,
-            |ui| {
-                ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.add_space(8.0);
-                    out = match self.step {
-                        1 => self.choose(ui, p),
-                        2 => self.create(ui, p, sniffing),
-                        _ => self.done(ui, p, app, icons),
-                    };
-                });
-            },
-        );
+        let open = crate::widgets::app_window(ctx, p, "mode-wizard", "New game mode run", vec2(860.0, 760.0), |ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.add_space(8.0);
+                out = match self.step {
+                    1 => self.choose(ui, p),
+                    2 => self.create(ui, p, sniffing),
+                    _ => self.done(ui, p, app, icons),
+                };
+            });
+        });
         if !open {
             return Out::Close;
         }

@@ -632,6 +632,127 @@ fn break_run(run: &mut Run, why: String, now: i64) -> bool {
     true
 }
 
+impl Upe {
+    /// Java `missionStep`: progress on a battle pass mission while playing this character. was_zero: the mission's
+    /// progress was at 0 before this step (never started, or reset after a claim).
+    pub fn mission_step(&mut self, mission: &str, char_id: i32, was_zero: bool, now: i64) {
+        let standing = self.runs.get(&char_id).is_some_and(Run::standing);
+        let known = self.missions.contains_key(mission);
+        if was_zero || !known {
+            self.missions.insert(mission.to_string(), MissionRun { char_id, from_zero: was_zero, clean: standing && was_zero, started_at: now });
+            if !self.mission_keys.iter().any(|k| k == mission) {
+                self.mission_keys.push(mission.to_string());
+            }
+            self.dirty = true;
+        } else if let Some(m) = self.missions.get_mut(mission)
+            && m.clean
+            && (m.char_id != char_id || !standing)
+        {
+            m.clean = false; // partly solved by another character, or outside a standing run
+            self.dirty = true;
+        }
+    }
+
+    /// Java `missionClaimed`: a battle pass mission claimed while playing this character. Its rewards are clean if
+    /// the mission began at 0 with this character and every step was its own, during its run: what turns up now is
+    /// clean, and the items may be taken from the gift chest once each (`allowed`). Otherwise they count as a reward
+    /// (not allowed). reward_groups: per group the item ids, one of which is given. Only items the run's mode allows
+    /// in its loadout (e.g. UT or ST for a UPE) are added: the others stay out of its reach.
+    pub fn mission_claimed(&mut self, data: &GameData, mission: Option<&str>, char_id: i32, reward_groups: &[Vec<i32>], now: i64) {
+        let m = mission.and_then(|k| {
+            self.mission_keys.retain(|x| x != k);
+            self.missions.remove(k)
+        });
+        let standing = self.runs.get(&char_id).is_some_and(Run::standing);
+        let clean = m.as_ref().is_some_and(|m| m.from_zero && m.clean && m.char_id == char_id) && standing;
+        self.quest_origin = if clean { CRAFTED.into() } else { REWARD.into() }; // the same as a quest's reward from here on
+        self.quest_at = now;
+        self.last_quest = -1;
+        if clean && let Some(run) = self.runs.get_mut(&char_id) {
+            repair(run);
+            let items = Items(data);
+            for g in reward_groups {
+                let fits: Vec<i32> = g.iter().copied().filter(|id| Self::misfit(&items, &run.mode, *id, None).is_none()).collect();
+                if fits.len() < g.len() {
+                    crate::applog::line("upe", &format!("Mission reward items {:?} do not fit a {} loadout: left out", g, run.mode));
+                }
+                if !fits.is_empty() {
+                    run.allowed.push(fits);
+                }
+            }
+            self.soon = true;
+        }
+        let why = if clean {
+            "clean (begun at 0 and solved by this character in its run)".to_string()
+        } else {
+            match &m {
+                None => "not clean (its progress was not followed)".into(),
+                Some(m) if !m.from_zero => "not clean (it had progress before)".into(),
+                Some(m) if m.char_id != char_id => "not clean (begun by another character)".into(),
+                Some(_) => "not clean (partly made elsewhere)".into(),
+            }
+        };
+        crate::applog::line(
+            "upe",
+            &format!("Mission {} claimed by character {char_id}: its reward is {why}", mission.unwrap_or("null")),
+        );
+        self.dirty = true;
+    }
+}
+
+#[cfg(test)]
+mod mission_tests {
+    use super::*;
+
+    /// A standing run in a mode; PPE takes any item, so the rewards' items need no game data.
+    fn with_run(char_id: i32, mode: &str) -> Upe {
+        let mut u = Upe::default();
+        let mut r = Run::new(char_id);
+        r.marked = true;
+        r.mode = mode.into();
+        u.runs.insert(char_id, r);
+        u
+    }
+
+    #[test]
+    fn a_reward_outside_the_modes_loadout_is_left_out() {
+        let data = GameData::default(); // item 23624 not known: not UT or ST
+        let mut u = with_run(7, "UPE");
+        u.mission_step("57:1001", 7, true, 1);
+        u.mission_claimed(&data, Some("57:1001"), 7, &[vec![23624]], 2);
+        assert!(u.runs[&7].allowed.is_empty());
+    }
+
+    #[test]
+    fn a_mission_solved_alone_from_zero_allows_its_reward() {
+        let mut u = with_run(7, PPE);
+        u.mission_step("57:1001", 7, true, 1);
+        u.mission_step("57:1001", 7, false, 2);
+        u.mission_claimed(&GameData::default(), Some("57:1001"), 7, &[vec![23624]], 3);
+        assert_eq!(u.runs[&7].allowed, vec![vec![23624]]);
+        assert!(u.missions.is_empty() && u.mission_keys.is_empty());
+    }
+
+    #[test]
+    fn a_step_by_another_character_or_earlier_progress_spoils_it() {
+        let mut u = with_run(7, PPE);
+        u.mission_step("57:1001", 7, true, 1);
+        u.mission_step("57:1001", 8, false, 2); // another character helped
+        u.mission_claimed(&GameData::default(), Some("57:1001"), 7, &[vec![23624]], 3);
+        assert!(u.runs[&7].allowed.is_empty());
+
+        let mut u = with_run(7, PPE);
+        u.mission_step("57:1002", 7, false, 1); // it had progress before
+        u.mission_claimed(&GameData::default(), Some("57:1002"), 7, &[vec![23624]], 2);
+        assert!(u.runs[&7].allowed.is_empty());
+    }
+}
+
+/// Whether an item may be in the loadout of a run in this mode (UT or ST for a UPE, UT only for a pure UPE...).
+pub fn fits_mode(data: &GameData, mode: &str, item: i32) -> bool {
+    Upe::misfit(&Items(data), mode, item, None).is_none()
+}
+
 fn use_allowance(run: &mut Run, item: i32) -> bool {
     if let Some(i) = run.allowed.iter().position(|a| a.contains(&item)) {
         run.allowed.remove(i);

@@ -384,7 +384,7 @@ impl CharactersView {
     }
 
     fn paint_card_frame(&self, painter: &egui::Painter, p: &Palette, r: Rect, sel: bool) {
-        painter.rect_filled(r, 0.0, if sel { mix(p.gold, p.header, 0.3) } else { p.header });
+        painter.rect_filled(r, 0.0, if sel { mix(p.gold, p.header, 0.3) } else { p.header });   // also the banners' `under`
         if sel {
             painter.rect_stroke(r, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
         } else {
@@ -554,10 +554,12 @@ impl CharactersView {
         let row1 = Rect::from_min_max(pos2(r.left(), r.top() + 8.0 + (h - right_h) / 2.0), pos2(rx, 0.0));
         let mut x = rx - 6.0;
         let banners = self.banner_texts(c, app);
+        let card_fill = if self.selected == c.char_id { mix(p.gold, p.header, 0.3) } else { p.header };
         for (t, bg, alpha) in banners.iter().rev() {
             let s = widgets::banner_size(&painter, t);
             x -= s.x;
-            widgets::banner(&painter, Rect::from_min_size(pos2(x, row1.top() + (right_row - s.y) / 2.0), s), t, *bg, *alpha);
+            let at = Rect::from_min_size(pos2(x, row1.top() + (right_row - s.y) / 2.0), s);
+            widgets::banner(&painter, at, t, *bg, *alpha, card_fill);
             x -= 6.0;
         }
         let row2_top = row1.top() + right_row + 4.0;
@@ -712,14 +714,15 @@ impl CharactersView {
             mark(ui, "characters.loadout", y0, y);
             // the suggestion, worked out again only when the character or the settings change
             let key = format!(
-                "{}|{:?}|{}|{}|{}|{}|{}",
+                "{}|{:?}|{}|{}|{}|{}|{}|{}",
                 ch.char_id,
                 c.loadout.chosen,
                 c.loadout.scope,
                 c.loadout.enemy_def,
                 c.loadout.second_chance,
                 c.loadout.item_locks,
-                c.loadout.enchant_locks
+                c.loadout.enchant_locks,
+                c.loadout.suggest_enchants
             );
             if self.suggestion.as_ref().is_none_or(|s| s.0 != key)
                 && let Some(picks) = lg_app::loadout::suggestion(app, c.en, ch, c.loadout)
@@ -795,6 +798,7 @@ impl CharactersView {
                     Some(crate::suggested::Change::Scope) => c.loadout.scope = (c.loadout.scope + 1) % 3,
                     Some(crate::suggested::Change::SecondChance) => c.loadout.second_chance = (c.loadout.second_chance + 1) % 3,
                     Some(crate::suggested::Change::ShowReplaced) => c.loadout.show_replaced = !c.loadout.show_replaced,
+                    Some(crate::suggested::Change::SuggestEnchants) => c.loadout.suggest_enchants = !c.loadout.suggest_enchants,
                     Some(crate::suggested::Change::EnemyDef(v)) => c.loadout.enemy_def = v,
                     Some(crate::suggested::Change::ItemLock(slot, item)) => c.loadout.toggle_item_lock(ch.char_id, slot, item),
                     Some(crate::suggested::Change::EnchantLock(slot, kind)) => c.loadout.toggle_enchant_lock(ch.char_id, slot, kind),

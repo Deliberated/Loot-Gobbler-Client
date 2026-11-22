@@ -230,6 +230,93 @@ pub fn caravan_of(j: &Json) -> Caravan {
     }
 }
 
+// --- the guild's game mode runs (server `/guild/upe`), to compare them ---
+
+/// One item a game mode run gathered.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UpeFind {
+    pub item_id: i32,
+    /// -1 if unknown.
+    pub enchants: i32,
+    pub r#where: String,
+    pub at: i64,
+}
+
+/// A guild member's marked game mode run.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UpeRun {
+    pub char_id: i64,
+    pub mode: String,
+    pub marked_at: i64,
+    /// A rule was broken.
+    pub lost: bool,
+    pub alive: bool,
+    pub character: Option<CaravanCharacter>,
+    pub gathered: Vec<UpeFind>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UpeMember {
+    pub id: i64,
+    pub ign: String,
+    pub guild_rank: i32,
+    pub runs: Vec<UpeRun>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UpeBoard {
+    pub guild: String,
+    pub members: Vec<UpeMember>,
+}
+
+pub fn upe_board_of(j: &Json) -> UpeBoard {
+    UpeBoard {
+        guild: text(j.get("guild")),
+        members: list(j.get("members"), |m| UpeMember {
+            id: long(m.get("id")),
+            ign: text(m.get("ign")),
+            guild_rank: int(m.get("guildRank"), 0),
+            runs: list(m.get("runs"), |r| UpeRun {
+                char_id: long(r.get("charId")),
+                mode: text(r.get("mode")),
+                marked_at: long(r.get("markedAt")),
+                lost: matches!(r.get("lost"), Some(Json::Bool(true))),
+                alive: matches!(r.get("alive"), Some(Json::Bool(true))),
+                character: r.get("character").filter(|c| matches!(c, Json::Object(_))).map(|c| CaravanCharacter {
+                    class_type: int(c.get("classType"), 0),
+                    class_name: text(c.get("className")),
+                    skin: int(c.get("skin"), 0),
+                    tex1: int(c.get("tex1"), 0),
+                    tex2: int(c.get("tex2"), 0),
+                    fame: long(c.get("fame")),
+                }),
+                gathered: list(r.get("gathered"), |g| UpeFind {
+                    item_id: int(g.get("itemId"), 0),
+                    enchants: int(g.get("enchants"), -1),
+                    r#where: text(g.get("where")),
+                    at: long(g.get("at")),
+                }),
+            }),
+        }),
+    }
+}
+
+/// A game mode run's points: the item score without its rarity part (the guild's feed power and difficulty
+/// weights), each collectible item counted once, by its first copy, however often and with whatever enchantments
+/// it came again. Gives the points and the items that counted (item, where, points), first found first.
+pub fn upe_points(data: &lg_gamedata::GameData, w: &crate::server::ScoreWeights, run: &UpeRun) -> (f64, Vec<(i32, String, f64)>) {
+    let no_rarity = crate::server::ScoreWeights { rarity: 0.0, ..*w };
+    let mut finds: Vec<&UpeFind> = run.gathered.iter().filter(|g| data.items.collectible.contains(&g.item_id)).collect();
+    finds.sort_by_key(|g| g.at);
+    let mut seen = std::collections::HashSet::new();
+    let counted: Vec<(i32, String, f64)> = finds
+        .into_iter()
+        .filter(|g| seen.insert(g.item_id))
+        .map(|g| (g.item_id, g.r#where.clone(), score(data, &no_rarity, g.item_id, &g.r#where, -1)))
+        .collect();
+    (tenths(counted.iter().map(|c| c.2).sum()), counted)
+}
+
 /// Java's `PlayerProfile.rankName`.
 pub fn rank_name(rank: i32) -> &'static str {
     match rank {
@@ -718,6 +805,10 @@ pub struct GuildState {
     pub maps_stale: bool,
     pub skew: i64,
     pub pending: Option<PendingClear>,
+    /// The guild's game mode runs: None until loaded; loading, asked again meanwhile.
+    pub upe: Option<Result<UpeBoard, crate::server::Error>>,
+    pub(crate) upe_loading: bool,
+    pub(crate) upe_again: bool,
 }
 
 fn add_clear(m: &mut QuestMap, c: QuestMapClear) {

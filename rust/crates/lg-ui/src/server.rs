@@ -631,10 +631,13 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                             buttons.push(("Reset password", Style::Plain, 2));
                             buttons.push(("Remove", Style::Danger, 3));
                         }
-                        let sub = match u.last_login_at {
+                        let mut sub = match u.last_login_at {
                             Some(l) => format!("{} - last login {}", u.role_name(), date(zone, l)),
                             None => format!("{} - never logged in", u.role_name()),
                         };
+                        if !u.client.is_empty() {
+                            sub.push_str(&format!(" - {}", u.client));
+                        }
                         let title = if u.id == me.id { format!("{} (you)", u.ign) } else { u.ign.clone() };
                         let shown: Vec<(&str, Style)> = buttons.iter().map(|b| (b.0, b.1)).collect();
                         if let Some(i) = list_row(ui, &mut rw, rw_w, &title, &sub, &shown, &format!("member-{}", u.id)) {

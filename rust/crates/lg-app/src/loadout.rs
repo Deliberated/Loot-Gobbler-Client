@@ -895,6 +895,7 @@ pub fn best_pick(
     scope: usize,
     locked_item: i32,
     prefer: Option<&dyn Fn(&Item) -> bool>,
+    plan_enchants: bool,
 ) -> Pick {
     let data = input.data;
     let en = input.en;
@@ -973,7 +974,13 @@ pub fn best_pick(
             let mut total = own;
             let mut plan = Plan::default();
             let n = p.slots(data);
-            if n > 0 {
+            if n > 0 && !plan_enchants {
+                // as the copy is: its own enchantments, no rerolls planned
+                let g = en.gains(&en.of(p.enchants.as_deref()), gear);
+                for i in 0..8 {
+                    total[i] += g[i];
+                }
+            } else if n > 0 {
                 let key = format!("{id}/{n}");
                 plan = match planned.get(&key) {
                     Some(pl) => pl.clone(),
@@ -1099,6 +1106,7 @@ pub fn suggest(
     locked_items: &[i32; 4],
     locked_enchants: &dyn Fn(usize, &Pick) -> Vec<usize>,
     second_chance: usize,
+    plan_enchants: bool,
 ) -> [Pick; 4] {
     let data = input.data;
     let en = input.en;
@@ -1134,7 +1142,7 @@ pub fn suggest(
         } else {
             None
         };
-        let pk = best_pick(input, s, types[s], pool, chosen, &now, &a, scope, locked_items[s], prefer);
+        let pk = best_pick(input, s, types[s], pool, chosen, &now, &a, scope, locked_items[s], prefer, plan_enchants);
         let b = bonuses(data.items.item(pk.id));
         for i in 0..8 {
             suggested[i] += b[i];
@@ -1155,10 +1163,11 @@ pub fn suggest(
     for s in 0..4 {
         let a = aim_for(en, max, &sug_items, &sug_ench, &sug_lists, s, pick0, &sug_weapon_ench, def);
         let pk = picks[s].clone();
-        let locked = if scope == 0 && pk.equipped() { locked_enchants(s, &pk) } else { Vec::new() };
+        // locked enchantments the suggested copy has stay on it, in any scope: kept, counted, never suggested again
+        let locked = locked_enchants(s, &pk);
         let n = pk.slots(data);
         let plan = match data.items.item(pk.id) {
-            Some(it) if n > 0 => {
+            Some(it) if n > 0 && plan_enchants => {
                 let a = if s == 0 { a.on_weapon(pk.id) } else { a };
                 en.best(data, it, n, chosen, &suggested, Some(&a), &locked)
             }
@@ -1181,6 +1190,9 @@ pub struct Settings {
     pub enchant_locks: String,
     /// Java `idealShowReplaced`: the enchantments a suggestion replaces are listed (struck through).
     pub show_replaced: bool,
+    /// Rerolls planned for the suggested items (`idealSuggestEnchants`). Off: the items are chosen and rated with
+    /// the enchantments each copy already has.
+    pub suggest_enchants: bool,
 }
 
 /// The scopes' names as saved (Java `SCOPES`).
@@ -1213,6 +1225,7 @@ impl Settings {
             item_locks: get("idealItemLocks").unwrap_or("").to_string(),
             enchant_locks: get("idealLocks").unwrap_or("").to_string(),
             show_replaced: get("idealShowReplaced") == Some("true"),
+            suggest_enchants: get("idealSuggestEnchants") == Some("true"),
         }
     }
 
@@ -1225,6 +1238,7 @@ impl Settings {
             ("idealEnemyDef", def),
             ("idealSecondChance", self.second_chance.to_string()),
             ("idealShowReplaced", self.show_replaced.to_string()),
+            ("idealSuggestEnchants", self.suggest_enchants.to_string()),
             ("idealItemLocks", self.item_locks.clone()),
             ("idealLocks", self.enchant_locks.clone()),
         ]
@@ -1330,6 +1344,21 @@ pub fn held_counts(app: &crate::App, living: &HashMap<i32, bool>) -> impl Fn(i32
 /// Java `pool`: the items to choose from: what the character carries, everything you have on its side, and the
 /// finds of items you hold on its side.
 pub fn pool(app: &crate::App, c: &crate::characters::Char) -> Vec<i32> {
+    // a game mode run that stands: only what it may use, the items it carries, gathered itself (wherever they are now,
+    // e.g. put in the vault) or earned as rewards, each only if its mode allows it in the loadout
+    if let Some(run) = app.upe.runs.get(&c.char_id).filter(|r| r.marked && r.standing()) {
+        let data = app.world.data();
+        let mut ids: Vec<i32> = Vec::new();
+        let own = c.slots.iter().flatten().copied();
+        let gathered = run.gathered.iter().map(|g| g.item);
+        let rewards = run.allowed.iter().flatten().copied();
+        for id in own.chain(gathered).chain(rewards) {
+            if id > 0 && !ids.contains(&id) && crate::upe::fits_mode(data, &run.mode, id) {
+                ids.push(id);
+            }
+        }
+        return ids;
+    }
     let living = living(app);
     let mut ids: Vec<i32> = Vec::new();
     let add = |id: i32, ids: &mut Vec<i32>| {
@@ -1402,7 +1431,7 @@ pub fn suggestion(app: &crate::App, en: &Enchantments, c: &crate::characters::Ch
         let set = settings.locked_enchants(c.char_id, slot);
         en.of(pk.enchants.as_deref()).into_iter().filter(|e| set.contains(&en.get(*e).kind)).collect()
     };
-    Some(suggest(&input, class, &pool, &chosen, settings.scope, settings.enemy_def, &items, &locked, settings.second_chance))
+    Some(suggest(&input, class, &pool, &chosen, settings.scope, settings.enemy_def, &items, &locked, settings.second_chance, settings.suggest_enchants))
 }
 
 /// What the stat boxes show (the second half of Java `ideal`): per stat the class maximum, what the suggested and the
@@ -1427,6 +1456,10 @@ pub struct Summary {
     pub regen_now: [f64; 2],
     /// The enchantments each pick ends up with.
     pub finals: [Vec<usize>; 4],
+    /// Per slot, its share of the suggestion's DPS and life per second: the suggestion's minus the suggestion's
+    /// without that slot's item and its enchantments.
+    pub share_dps: [f64; 4],
+    pub share_hp_regen: [f64; 4],
 }
 
 /// Java `ideal`'s numbers for the picks.
@@ -1488,6 +1521,37 @@ pub fn summary(app: &crate::App, en: &Enchantments, c: &crate::characters::Char,
     }
     s.loot_now = others + en.loot(&now_all);
     s.loot = others + en.loot(&sug_all);
+    // each slot's share: the suggestion's DPS and life per second, with every slot and without that one
+    let numbers = |skip: Option<usize>| -> (f64, f64) {
+        let mut gear = sug_d;
+        if let Some(k) = skip {
+            let b = bonuses(data.items.item(picks[k].id));
+            for i in 0..8 {
+                gear[i] -= b[i];
+            }
+        }
+        let mut ench = [0.0; 8];
+        let mut all: Vec<usize> = Vec::new();
+        for (j, fin) in s.finals.iter().enumerate() {
+            if Some(j) == skip {
+                continue;
+            }
+            let g = en.gains(fin, &gear);
+            for i in 0..8 {
+                ench[i] += g[i];
+            }
+            all.extend(fin.iter().copied());
+        }
+        let stat = |i: usize| f64::from(max[i]) + gear[i] + ench[i];
+        let (w, w_ench) = if skip == Some(0) { (None, Vec::new()) } else { (weapon, s.finals[0].clone()) };
+        (dps(en, data, w, &w_ench, stat(2), stat(5), def), en.regen("HP", stat(0), stat(6), &all))
+    };
+    let with_all = numbers(None);
+    for k in 0..4 {
+        let without = numbers(Some(k));
+        s.share_dps[k] = with_all.0 - without.0;
+        s.share_hp_regen[k] = with_all.1 - without.1;
+    }
     for (k, (stat, imax, iattr)) in [("HP", 0usize, 6usize), ("MP", 1, 7)].into_iter().enumerate() {
         s.regen_now[k] = en.regen(stat, total_now(imax), total_now(iattr), &now_all);
         s.regen[k] = en.regen(

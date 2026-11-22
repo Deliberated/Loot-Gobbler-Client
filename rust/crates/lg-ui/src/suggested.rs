@@ -8,7 +8,7 @@ use crate::jtext;
 use crate::profile::num;
 use crate::theme::{Palette, fixed};
 use crate::widgets::{self, small, text};
-use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Align2, Color32, Rect, Sense, Stroke, Ui, pos2, vec2};
 use lg_app::App;
 use lg_app::characters::Char;
 use lg_app::loadout::{Enchantments, Pick, STATS, Settings, Summary};
@@ -28,6 +28,7 @@ pub enum Change {
     Scope,
     ShowReplaced,
     SecondChance,
+    SuggestEnchants,
     EnemyDef(f64),
     /// The item locked in a slot (or unlocked), and an enchantment kept on a slot (or no longer).
     ItemLock(usize, i32),
@@ -88,33 +89,135 @@ fn signed(n: i64) -> String {
     format!("{}{n}", if n >= 0 { "+" } else { "" })
 }
 
-/// Java `ThreeWaySwitch`: a recessed pill, gold as the knob moves on, dots for the stops, a metal knob.
-fn switch(painter: &egui::Painter, r: Rect, stops: usize, stop: usize, p: &Palette) {
-    let h = r.height() - 1.0;
-    let track = r.shrink2(vec2(0.5, 0.5));
-    painter.rect_filled(track, h / 2.0, Color32::from_rgb(0x42, 0x3D, 0x35));
-    if stop > 0 {
-        let level = (stop as f32 / (stops - 1) as f32).min(1.0);
+/// Java `ThreeWaySwitch`'s slide: 160 ms, easing out.
+const SLIDE_S: f64 = 0.16;
+
+/// The outline of a pill (a rectangle with half-round ends), clockwise from the top right.
+fn pill_outline(r: Rect) -> Vec<egui::Pos2> {
+    let rad = r.height() / 2.0;
+    let mut pts = Vec::with_capacity(50);
+    for (cx, from) in [(r.right() - rad, -90.0f32), (r.left() + rad, 90.0f32)] {
+        for k in 0..=24 {
+            let a = (from + 180.0 * k as f32 / 24.0).to_radians();
+            pts.push(pos2(cx + rad * a.cos(), r.center().y + rad * a.sin()));
+        }
+    }
+    pts
+}
+
+/// A convex shape filled from `center` out to its outline in `rings` steps, each point coloured by `color`. Its
+/// edge is smoothed as egui smooths its own shapes: a ring 1 px (of the screen) outside fading to nothing, so the
+/// gradients do not show stair-stepped edges.
+fn fan(painter: &egui::Painter, center: egui::Pos2, outline: &[egui::Pos2], rings: usize, color: impl Fn(egui::Pos2) -> Color32) {
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(center, color(center));
+    let n = outline.len() as u32;
+    for k in 1..=rings {
+        let t = k as f32 / rings as f32;
+        for q in outline {
+            let v = center + (*q - center) * t;
+            mesh.colored_vertex(v, color(v));
+        }
+    }
+    // the feather: each outline point moved outwards (along the outline's normal there) to transparent
+    let px = 1.0 / painter.pixels_per_point();
+    for i in 0..outline.len() {
+        let prev = outline[(i + outline.len() - 1) % outline.len()];
+        let next = outline[(i + 1) % outline.len()];
+        let tangent = (next - prev).normalized();
+        let mut normal = egui::vec2(tangent.y, -tangent.x);
+        if normal.dot(outline[i] - center) < 0.0 {
+            normal = -normal;
+        }
+        mesh.colored_vertex(outline[i] + normal * px, Color32::TRANSPARENT);
+    }
+    for i in 0..n {
+        let j = (i + 1) % n;
+        mesh.add_triangle(0, 1 + i, 1 + j);
+        for k in 1..rings as u32 {
+            let (a, b) = (1 + (k - 1) * n, 1 + k * n);
+            mesh.add_triangle(a + i, b + i, b + j);
+            mesh.add_triangle(a + i, b + j, a + j);
+        }
+        let (a, b) = (1 + (rings as u32 - 1) * n, 1 + rings as u32 * n);
+        mesh.add_triangle(a + i, b + i, b + j);
+        mesh.add_triangle(a + i, b + j, a + j);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+fn circle_outline(c: egui::Pos2, r: f32) -> Vec<egui::Pos2> {
+    (0..64).map(|k| c + egui::Vec2::angled(k as f32 / 64.0 * std::f32::consts::TAU) * r).collect()
+}
+
+fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let m = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
+    let (a, b) = (a.to_srgba_unmultiplied(), b.to_srgba_unmultiplied());
+    Color32::from_rgba_unmultiplied(m(a[0], b[0]), m(a[1], b[1]), m(a[2], b[2]), m(a[3], b[3]))
+}
+
+/// Java `ThreeWaySwitch`: a recessed pill (darker at the top), gold as the knob moves on, dots for the stops, a
+/// brushed metal knob with a soft shadow. `knob`: where the knob is, in stops (between two while it slides).
+fn switch(painter: &egui::Painter, r: Rect, stops: usize, stop: usize, knob: f32, p: &Palette) {
+    let (w, h) = (r.width() - 1.0, r.height() - 1.0);
+    let o = r.min;
+    let at = |x: f32, y: f32| o + vec2(x, y);
+    let track = Rect::from_min_size(at(0.5, 0.5), vec2(w, h));
+    let outline = pill_outline(track);
+    let (top, bottom) = (Color32::from_rgb(0x2A, 0x26, 0x20), Color32::from_rgb(0x5A, 0x54, 0x4A));
+    fan(painter, track.center(), &outline, 1, |q| lerp_color(top, bottom, (q.y - o.y) / h));
+    if knob > 0.0 {
+        let level = (knob / (stops - 1) as f32).min(1.0);
         let g = p.gold;
         painter.rect_filled(track, h / 2.0, Color32::from_rgba_unmultiplied(g.r(), g.g(), g.b(), (150.0 * level) as u8));
     }
-    painter.rect_stroke(track, h / 2.0, Stroke::new(1.2, Color32::from_black_alpha(120)), StrokeKind::Inside);
+    // the inner shadow at the top
+    let inner = Rect::from_min_size(at(1.5, 1.5), vec2(w - 2.0, h - 2.0));
+    let shade = Color32::from_rgba_unmultiplied(0, 0, 0, 120);
+    let clear = Color32::from_rgba_unmultiplied(0, 0, 0, 0);
+    fan(painter, inner.center(), &pill_outline(inner), 2, |q| lerp_color(shade, clear, (q.y - o.y) / (h / 2.0)));
+    // the rim: dark at the top, light at the bottom
+    let (rim_top, rim_bottom) = (Color32::from_rgba_unmultiplied(0, 0, 0, 160), Color32::from_rgba_unmultiplied(255, 255, 255, 90));
+    let rim = egui::epaint::PathStroke::new_uv(1.2, move |r: Rect, q: egui::Pos2| lerp_color(rim_top, rim_bottom, (q.y - r.top()) / r.height()));
+    painter.add(egui::epaint::PathShape::closed_line(outline.clone(), rim));
     let pad = 3.0;
     let d = h - 2.0 * pad;
-    let span = r.width() - 1.0 - 2.0 * pad - d;
+    let span = w - 2.0 * pad - d;
+    let gaps = (stops - 1) as f32;
     for i in 0..stops {
-        let cx = r.left() + pad + span * i as f32 / (stops - 1) as f32 + d / 2.0;
-        painter.circle_filled(pos2(cx, r.center().y), 2.0, if i == stop { p.gold } else { Color32::from_white_alpha(70) });
+        let c = at(pad + span * i as f32 / gaps + d / 2.0, h / 2.0 + 0.5);
+        let on = i == stop && (knob - stop as f32).abs() < 1e-4;
+        painter.circle_filled(c, 2.0, if on { p.gold } else { Color32::from_white_alpha(70) });
     }
-    let x = r.left() + pad + span * stop as f32 / (stops - 1) as f32;
-    let c = pos2(x + d / 2.0, r.top() + pad + 0.5 + d / 2.0);
+    // the knob
+    let (x, y) = (pad + span * knob / gaps, pad + 0.5);
+    let c = at(x + d / 2.0, y + d / 2.0);
     painter.circle_filled(c + vec2(1.0, 2.0), d / 2.0, Color32::from_black_alpha(90));
-    painter.circle_filled(c, d / 2.0, Color32::from_rgb(0xCF, 0xCF, 0xCF));
-    painter.circle_filled(c - vec2(d * 0.12, d * 0.18), d * 0.28, Color32::from_rgb(0xF2, 0xF2, 0xF2));
+    let disc = circle_outline(c, d / 2.0);
+    let focus = at(x + d * 0.38, y + d * 0.32);
+    let (c0, c1, c2) = (Color32::from_rgb(0xFB, 0xFB, 0xFB), Color32::from_rgb(0xCF, 0xCF, 0xCF), Color32::from_rgb(0x8C, 0x8C, 0x8C));
+    fan(painter, focus, &disc, 8, |q| {
+        let t = (q - focus).length() / (d * 0.75);
+        if t < 0.45 { lerp_color(c0, c1, t / 0.45) } else { lerp_color(c1, c2, (t - 0.45) / 0.55) }
+    });
+    // brushed: fine rings around the centre
+    let mut rr = 2.0f32;
+    while rr < d / 2.0 {
+        let a = (25.0 + 20.0 * rr.sin()) as u8;
+        painter.circle_stroke(c, rr, Stroke::new(0.6, Color32::from_rgba_unmultiplied(255, 255, 255, a)));
+        rr += 1.6;
+    }
+    // light across the top left, darker to the bottom right, as on turned metal
+    let (lit, dark) = (Color32::from_rgba_unmultiplied(255, 255, 255, 110), Color32::from_rgba_unmultiplied(0, 0, 0, 70));
+    let start = at(x, y);
+    fan(painter, c, &disc, 1, |q| lerp_color(lit, dark, ((q.x - start.x) + (q.y - start.y)) / (2.0 * d)));
     painter.circle_stroke(c, d / 2.0, Stroke::new(1.2, Color32::from_rgb(0x6E, 0x6E, 0x6E)));
+    painter.circle_stroke(c, d / 2.0 - 1.2, Stroke::new(1.2, Color32::from_rgba_unmultiplied(255, 255, 255, 150)));
 }
 
-/// A label with a switch at the right end of the column; true when clicked.
+/// A label with a switch at the right end of the column. A click slides the knob on to the next stop (Java
+/// `ThreeWaySwitch.advance`); true once it got there, so the change follows the slide as in Java.
 fn switch_row(
     ui: &Ui,
     p: &Palette,
@@ -131,11 +234,32 @@ fn switch_row(
     let h = 30.0;
     let r = Rect::from_min_size(at, vec2(w, h));
     jtext::draw(painter, pos2(at.x, r.center().y), Align2::LEFT_CENTER, label, &text(18.0), p.ink);
-    switch(painter, Rect::from_min_size(pos2(r.right() - sw, r.top()), vec2(sw, h)), stops, stop, p);
     let clicked =
         ui.interact(r, ui.scope_id().with(("switch", id)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked();
+    let slide_id = egui::Id::unique(("lg-switch-slide", id));
+    let now = ui.input(|i| i.time);
+    let mut slide = ui.ctx().data(|d| d.get_temp::<(f32, usize, f64)>(slide_id));
+    if clicked && slide.is_none() {
+        let s = (stop as f32, (stop + 1) % stops, now);
+        ui.ctx().data_mut(|d| d.insert_temp(slide_id, s));
+        slide = Some(s);
+    }
+    let mut knob = stop as f32;
+    let mut arrived = false;
+    if let Some((from, to, start)) = slide {
+        let t = ((now - start) / SLIDE_S).clamp(0.0, 1.0) as f32;
+        let eased = 1.0 - (1.0 - t).powi(3);
+        knob = from + (to as f32 - from) * eased;
+        if t >= 1.0 {
+            ui.ctx().data_mut(|d| d.remove_temp::<(f32, usize, f64)>(slide_id));
+            arrived = true;
+        } else {
+            ui.ctx().request_repaint();
+        }
+    }
+    switch(painter, Rect::from_min_size(pos2(r.right() - sw, r.top()), vec2(sw, h)), stops, stop, knob, p);
     widgets::rich_tip(ui, r, ("switch-tip", id), tip);
-    (h, clicked)
+    (h, arrived)
 }
 
 /// Java `StatBox`: a dark framed box (gold-tinted when aimed for), the name above "x (+y)" (green up, orange down).
@@ -256,6 +380,24 @@ pub fn suggested(
     );
     if clicked {
         change = Some(Change::SecondChance);
+    }
+    y += h + 4.0;
+    let (h, clicked) = switch_row(
+        ui,
+        p,
+        pos2(x, y),
+        col_w,
+        "Suggest enchants",
+        2,
+        usize::from(settings.suggest_enchants),
+        "suggest-enchants",
+        &plain(&[
+            "On: rerolls are planned for the suggested items (gold: reroll for it, green: the copy has it)",
+            "Off: the items are chosen and rated with the enchantments each copy already has",
+        ]),
+    );
+    if clicked {
+        change = Some(Change::SuggestEnchants);
     }
     y += h;
     if s.has_weapon {
@@ -480,6 +622,19 @@ pub fn suggested(
             if !wanted.is_empty() || !other.is_empty() {
                 lines.push(vec![(wanted.concat(), fixed::GREEN, Some(-1)), (other.concat(), OTHER_STAT, Some(-1))]);
             }
+            // its share: the suggestion's DPS and life per second, less what they are without this item; each only
+            // while you aim for it (its stat box clicked)
+            let (dps, hp) = (s.share_dps[slot], s.share_hp_regen[slot]);
+            let mut share = Vec::new();
+            if chosen(lg_app::loadout::DPS) && s.has_weapon && dps.abs() >= 0.5 {
+                share.push(format!("{}{} DPS", if dps > 0.0 { "+" } else { "" }, num(dps.round() as i64)));
+            }
+            if chosen(lg_app::loadout::HP_REGEN) && hp.abs() >= 0.05 {
+                share.push(format!("{}{:.1} HP/s", if hp > 0.0 { "+" } else { "" }, hp));
+            }
+            if !share.is_empty() {
+                lines.push(vec![(share.join("  ·  "), p.gold, Some(-1))]);
+            }
         }
         // the enchantments: planned (green: it has it, gold: reroll for it), then what it keeps, then free slots;
         // in scope current those of the worn copy can be locked, and what the suggestion replaces shows struck
@@ -493,13 +648,14 @@ pub fn suggested(
             lockable: bool,
             hover_only: bool,
         }
-        let lockable_here = settings.scope == 0 && pk.equipped();
+        // any suggested copy's enchantments can be locked (kept by the suggestion, in every scope)
+        let lockable_here = pk.id > 0 && pk.enchants.is_some();
         let locked_now: Vec<i32> = if lockable_here { settings.locked_enchants(c.char_id, slot) } else { Vec::new() };
         let lock_hint = |tip: &mut Vec<widgets::TipLine>, locked: bool| {
             tip.push(if locked {
                 vec![("Locked:".to_string(), None, true), (" kept whatever you aim for. Click to unlock".to_string(), None, false)]
             } else {
-                vec![("Click to lock it: the suggestion keeps it".to_string(), Some(fixed::MUTED), false)]
+                vec![("Click to lock it: the suggestion keeps it and counts it, and suggests nothing that clashes with it".to_string(), Some(fixed::MUTED), false)]
             });
         };
         let mut chips: Vec<Chip> = Vec::new();
@@ -516,25 +672,27 @@ pub fn suggested(
                     chips.push(note("Common: no enchantment slots".into()));
                 }
             } else {
+                // rerolls are suggested only with stats chosen and "Suggest enchants" on; else the copy as it is
+                let planning = !settings.chosen.is_empty() && settings.suggest_enchants;
                 let has: Vec<i32> = pk.enchants.clone().unwrap_or_default();
-                let shown = if settings.chosen.is_empty() { en.of(pk.enchants.as_deref()) } else { pk.plan.picks.clone() };
+                let shown = if !planning { en.of(pk.enchants.as_deref()) } else { pk.plan.picks.clone() };
                 for e in &shown {
                     let owned = has.contains(&en.get(*e).kind);
-                    let color = if settings.chosen.is_empty() {
+                    let color = if !planning {
                         fixed::MUTED
                     } else if owned {
                         HAS_IT
                     } else {
                         p.gold
                     };
-                    let mut tip = enchant_tip(en, item, *e, (!settings.chosen.is_empty()).then_some(owned));
+                    let mut tip = enchant_tip(en, item, *e, (planning).then_some(owned));
                     let lockable = lockable_here && owned;
                     if lockable {
                         lock_hint(&mut tip, locked_now.contains(&en.get(*e).kind));
                     }
                     chips.push(Chip { e: Some(*e), text: en.get(*e).name.clone(), color, tip, struck: false, lockable, hover_only: false });
                 }
-                if !settings.chosen.is_empty() {
+                if planning {
                     // what the copy has and keeps in the slots left free
                     for e in &s.finals[slot] {
                         if shown.contains(e) {
@@ -582,8 +740,8 @@ pub fn suggested(
                         }
                     }
                 }
-                let free = n as i64 - if settings.chosen.is_empty() { shown.len() } else { s.finals[slot].len() } as i64;
-                if !settings.chosen.is_empty() && free > 0 {
+                let free = n as i64 - if !planning { shown.len() } else { s.finals[slot].len() } as i64;
+                if planning && free > 0 {
                     let rarity_name = ["common", "uncommon", "rare", "legendary", "divine"][n.min(4)];
                     let mut c = note(format!("{free} free slot{}", if free == 1 { "" } else { "s" }));
                     c.tip = plain(&[&format!(

@@ -197,10 +197,26 @@ pub fn apply(ctx: &egui::Context, p: &Palette) {
         sc.bar_inner_margin = 0.0;
         sc.bar_outer_margin = 0.0;
         st.spacing.scroll = sc;
+        // no fading: popups, tooltips and other areas are there at once, as in Swing (egui fades them in over 1/12 s)
+        st.animation_time = 0.0;
         v.extreme_bg_color = p.paper;
         v.widgets.inactive.bg_fill = p.line;
         v.widgets.hovered.bg_fill = p.ink_soft;
         v.widgets.active.bg_fill = p.ink;
+        // egui's own buttons and drop-downs (in the app's windows) as the app's buttons: the header colour with a
+        // black frame, the sand colour under the pointer (their fill is `weak_bg_fill`, the scroll bars' `bg_fill`)
+        for (w, fill) in [
+            (&mut v.widgets.inactive, p.header),
+            (&mut v.widgets.hovered, p.sand),
+            (&mut v.widgets.active, p.sand),
+            (&mut v.widgets.open, p.sand),
+        ] {
+            w.weak_bg_fill = fill;
+            w.bg_stroke = egui::Stroke::new(1.5, Color32::BLACK);
+            w.fg_stroke = egui::Stroke::new(1.0, p.ink);
+            w.expansion = 0.0;
+        }
+        st.spacing.button_padding = egui::vec2(12.0, 5.0);
         v.menu_corner_radius = egui::CornerRadius::ZERO;
         // tooltips as Java's: paper, a 1 px line, 4/6 px inside, after Swing's 750 ms
         v.window_stroke = egui::Stroke::new(1.0, p.line);

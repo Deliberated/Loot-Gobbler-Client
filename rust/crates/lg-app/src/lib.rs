@@ -36,6 +36,7 @@ pub mod pet_store;
 pub mod profile;
 pub mod properties;
 pub mod realm_character;
+pub mod resources;
 pub mod server;
 pub mod sync;
 pub mod tinkerer;
@@ -49,7 +50,7 @@ use lg_world::{Abort, Event, World};
 /// `ItemUse.install`): forging, pets, drops, purchases, rewards, trades, quests.
 pub const FED: &[u8] = &[
     101, 25, 30, 75, 90, 35, 103, 64, 62, 13, 46, 12, 42, 10, 92, 166, 44, 67, 114, 117, 55, 95, 6, 34, 88, 183, 118, 119, 16, 19, 22, 93,
-    172, 149, 150, 115, 86, 36, 14, 58, 96,
+    172, 149, 150, 115, 86, 36, 14, 58, 96, 163, 165,
 ];
 
 /// HELLO: your login token. The app is handed it only where its web answers come from files (replays), or from the
@@ -90,6 +91,8 @@ pub struct App {
     pub exalts: exalt_store::ExaltStore,
     pub moonlight: moonlight::Moonlight,
     pub amulet_saves: amulet_saves::AmuletSaves,
+    /// Forge resources, logged for now (see `resources`).
+    pub resources: resources::Resources,
     pub cooldowns: item_cooldowns::ItemCooldowns,
     pub vitals: item_cooldowns::Vitals,
     pub pets: pet_store::PetStore,
@@ -179,6 +182,7 @@ impl App {
             exalts,
             moonlight: moonlight::Moonlight::default(),
             amulet_saves,
+            resources: resources::Resources::default(),
             cooldowns: item_cooldowns::ItemCooldowns::new(),
             vitals: item_cooldowns::Vitals::default(),
             pets: java_data.map(pet_store::PetStore::import).unwrap_or_default(),
@@ -269,6 +273,10 @@ impl App {
             self.heard.drain(..self.heard.len() - 1000);
         }
         self.vault_changes();
+        if self.missions.refetch_at > 0 && now >= self.missions.refetch_at {
+            self.missions.refetch_at = 0;
+            self.fetch_missions(now);
+        }
         if std::mem::take(&mut self.collection.changed) {
             let sets = &self.world.data().st_sets;
             self.profile.count_st_sets(sets, &self.collection, &self.zone, now);
@@ -296,6 +304,7 @@ impl App {
                 self.dungeon_visits.hits(&f, &self.characters, false, now);
                 self.moonlight.tick(&self.world, &mut self.dungeon_visits, now);
                 self.amulet_saves.tick(&self.world, &mut self.dungeon_visits, now);
+                self.resources.tick(&self.world);
                 self.cooldowns.armor_tick(&self.world, now);
                 self.vitals.tick(&self.world, now);
                 let me = self.world.me().cloned();
@@ -367,10 +376,33 @@ impl App {
             }
             // the world, DungeonVisits.died, then CharacterStore's listener
             Decoded::Death(d) => {
+                // logged while the world still knows you: your last life, and an amulet Invulnerable still waiting
+                self.amulet_saves.died(&self.world, now);
                 self.world.packet(p)?;
                 self.events(now);
                 self.dungeon_visits.died(&self.world.fight(), &self.characters, &d.killed_by, now);
                 self.characters.died(d.char_id, now);
+            }
+            // mission progress steps, for each game mode run whose character made them (Java `Missions.progressPacket`)
+            Decoded::MissionProgress(m) => {
+                let (started, going) = self.missions.progress_packet(&m.unknown_string);
+                let playing = self.playing();
+                if playing != 0 {
+                    for k in &started {
+                        self.upe.mission_step(k, playing, true, now);
+                    }
+                    for k in &going {
+                        self.upe.mission_step(k, playing, false, now);
+                    }
+                }
+            }
+            // a mission claimed: its reward for the game mode run, then the missions fetched again
+            Decoded::ClaimMission(c) => {
+                let (key, rewards) = self.missions.claimed_mission(c.season_id, i32::from(c.mission_positional_idx));
+                let playing = self.playing();
+                self.upe.mission_claimed(self.world.data(), key.as_deref(), playing, &rewards, now);
+                self.missions.asked = 0;
+                self.missions.refetch_at = now + 3000;
             }
             Decoded::QuestFetchResponse(q) => {
                 self.world.packet(p)?;

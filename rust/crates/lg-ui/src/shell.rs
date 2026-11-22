@@ -9,7 +9,7 @@ use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, p
 pub const TABS: [&str; 9] = ["Profile", "Inventory", "Characters", "Game Modes", "Battles", "Social", "Guild", "Server", "Settings"];
 
 /// Height of the menu bar, the tab row (without its bottom line) and the status bar.
-const MENU_H: f32 = 30.0;
+const MENU_H: f32 = 44.0;   // as tall as Java's FlatLaf title bar
 const TAB_H: f32 = 46.0;
 const STATUS_H: f32 = 43.0;
 
@@ -53,7 +53,7 @@ pub struct Shell {
     /// Where the menus end in the menu bar (the dungeon you are in shows after them), and the bar.
     pub menu_end: f32,
     pub menu_rect: Rect,
-    /// E.g. "build v0.0.1" (Java: "stable" for a released app).
+    /// E.g. "rust build v0.0.1" (Java: "stable" for a released app).
     pub version: String,
     pub overlays_on: bool,
     /// Clicks this frame.
@@ -92,7 +92,7 @@ impl Default for Shell {
             guide_menu_open: false,
             menu_end: 0.0,
             menu_rect: Rect::NOTHING,
-            version: concat!("build v", env!("CARGO_PKG_VERSION")).into(),
+            version: concat!("rust build v", env!("CARGO_PKG_VERSION")).into(),
             overlays_on: false,
             clicked_sniffer: false,
             clicked_overlay: false,
@@ -135,8 +135,8 @@ impl Shell {
         // the title bar with the menus in it (FlatLaf's: icon, menus, the title in the middle, the window's buttons);
         // dragged it moves the window, a double click maximizes it
         let menu = Rect::from_min_size(all.min, vec2(all.width(), MENU_H));
-        painter.rect_filled(menu, 0.0, p.title);
-        painter.rect_filled(Rect::from_min_max(pos2(menu.left(), menu.bottom() - 1.5), menu.max), 0.0, p.line);
+        // the tab row's colour and no line under it: Java's title bar runs straight into the tabs
+        painter.rect_filled(menu, 0.0, p.sand);
         let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
         let bar = ui.interact(menu, ui.scope_id().with("title-bar"), Sense::click_and_drag());
         if bar.drag_started() {
@@ -159,16 +159,17 @@ impl Shell {
         });
         painter.image(
             icon.id(),
-            Rect::from_center_size(pos2(menu.left() + 8.0 + 8.0, menu.center().y), vec2(16.0, 16.0)),
+            Rect::from_center_size(pos2(menu.left() + 8.0 + 11.0, menu.center().y), vec2(22.0, 22.0)),
             Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             Color32::WHITE,
         );
-        jtext::draw(&painter, menu.center(), Align2::CENTER_CENTER, "Loot Gobbler by Gunshit", &theme::head(19.0), p.title_fg);
+        jtext::draw(&painter, menu.center(), Align2::CENTER_CENTER, "Loot Gobbler by Gunshit", &theme::head(22.0), p.title_fg);
         // minimize, maximize / restore, close
         let mut bx = menu.right();
         for which in [2, 1, 0] {
-            let r = Rect::from_min_max(pos2(bx - 44.0, menu.top()), pos2(bx, menu.bottom() - 1.5));
-            bx -= 44.0;
+            // as wide as Java's (FlatLaf's) window buttons
+            let r = Rect::from_min_max(pos2(bx - 66.0, menu.top()), pos2(bx, menu.bottom()));
+            bx -= 66.0;
             let resp = ui.interact(r, ui.scope_id().with(("window-button", which)), Sense::click());
             if resp.hovered() {
                 let bg = if which == 2 { Color32::from_rgb(0xC4, 0x2B, 0x1C) } else { p.title_fg.gamma_multiply(0.15) };
@@ -179,19 +180,19 @@ impl Shell {
             let st = Stroke::new(1.0, ink);
             match which {
                 0 => {
-                    painter.line_segment([pos2(c.x - 5.0, c.y), pos2(c.x + 5.0, c.y)], st);
+                    painter.line_segment([pos2(c.x - 8.0, c.y), pos2(c.x + 8.0, c.y)], st);
                 }
                 1 if maximized => {
-                    painter.rect_stroke(Rect::from_min_size(pos2(c.x - 5.0, c.y - 3.0), vec2(8.0, 8.0)), 0.0, st, StrokeKind::Middle);
-                    painter.line_segment([pos2(c.x - 3.0, c.y - 5.0), pos2(c.x + 5.0, c.y - 5.0)], st);
-                    painter.line_segment([pos2(c.x + 5.0, c.y - 5.0), pos2(c.x + 5.0, c.y + 3.0)], st);
+                    painter.rect_stroke(Rect::from_min_size(pos2(c.x - 8.0, c.y - 4.0), vec2(12.0, 12.0)), 0.0, st, StrokeKind::Middle);
+                    painter.line_segment([pos2(c.x - 4.0, c.y - 8.0), pos2(c.x + 8.0, c.y - 8.0)], st);
+                    painter.line_segment([pos2(c.x + 8.0, c.y - 8.0), pos2(c.x + 8.0, c.y + 4.0)], st);
                 }
                 1 => {
-                    painter.rect_stroke(Rect::from_center_size(c, vec2(10.0, 10.0)), 0.0, st, StrokeKind::Middle);
+                    painter.rect_stroke(Rect::from_center_size(c, vec2(16.0, 16.0)), 0.0, st, StrokeKind::Middle);
                 }
                 _ => {
-                    painter.line_segment([pos2(c.x - 5.0, c.y - 5.0), pos2(c.x + 5.0, c.y + 5.0)], st);
-                    painter.line_segment([pos2(c.x - 5.0, c.y + 5.0), pos2(c.x + 5.0, c.y - 5.0)], st);
+                    painter.line_segment([pos2(c.x - 8.0, c.y - 8.0), pos2(c.x + 8.0, c.y + 8.0)], st);
+                    painter.line_segment([pos2(c.x - 8.0, c.y + 8.0), pos2(c.x + 8.0, c.y - 8.0)], st);
                 }
             }
             if resp.clicked() {
@@ -202,9 +203,20 @@ impl Shell {
                 });
             }
         }
-        let info_r =
-            text(ui, pos2(menu.left() + 32.0 + 8.0, menu.center().y - 0.75), Align2::LEFT_CENTER, "Info", theme::body(18.0), p.title_fg);
-        let info_zone = Rect::from_min_max(pos2(menu.left(), menu.top()), pos2(info_r.right() + 12.0, menu.bottom()));
+        // the Info menu's button (Java's JMenu): gold while its menu is open, lighter while the pointer is on it
+        let info_font = theme::body(20.0);
+        let info_x = menu.left() + 8.0 + 22.0 + 6.0;
+        let info_zone = Rect::from_min_max(
+            pos2(info_x, menu.top()),
+            pos2(info_x + 10.0 + jtext::width(&painter, "Info", &info_font) + 10.0, menu.bottom()),
+        );
+        let info_hover = ui.rect_contains_pointer(info_zone);
+        if self.info_open {
+            painter.rect_filled(info_zone, 0.0, p.gold_dark);
+        } else if info_hover {
+            painter.rect_filled(info_zone, 0.0, p.title_fg.gamma_multiply(0.15));
+        }
+        text(ui, pos2(info_x + 10.0, menu.center().y - 0.75), Align2::LEFT_CENTER, "Info", info_font, p.title_fg);
         self.menu_rect = menu;
         self.menu_end = info_zone.right();
         crate::guide::mark(ui, "menu.info", info_zone);
@@ -228,75 +240,57 @@ impl Shell {
                 ("Net traffic", true),
             ];
             let mut guide_item = Rect::NOTHING;
+            let mut guide_hovered = false;
+            let mut others_hovered = false;
+            // right under the Info button, at once (no fade-in), like Java's popup menu
             let area = egui::Area::new(egui::Id::unique("info-popup"))
                 .order(egui::Order::Foreground)
-                .fixed_pos(pos2(menu.left(), menu.bottom()))
+                .fade_in(false)
+                .fixed_pos(pos2(info_zone.left(), menu.bottom()))
                 .show(ui.ctx(), |ui| {
-                    egui::Frame::NONE.fill(p.paper).stroke(Stroke::new(1.0, p.line)).inner_margin(4.0).show(ui, |ui| {
-                        ui.set_min_width(200.0);
-                        let f = theme::body(18.0);
+                    menu_frame(p).show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                         for (label, on) in ITEMS {
                             if label == "-" {
-                                ui.separator();
+                                menu_separator(ui, p, MENU_W);
                                 continue;
                             }
-                            let color = if on { p.ink } else { fixed::MUTED };
-                            let resp = ui.add_enabled(
-                                on,
-                                egui::Button::new(egui::RichText::new(label).font(f.clone()).color(color))
-                                    .frame(false)
-                                    .min_size(vec2(192.0, 26.0)),
-                            );
-                            let resp = if on { resp } else { resp.on_disabled_hover_text("Not in the Rust app yet") };
-                            if label == "Newcomer's Guide" {
-                                // a menu of its own: it opens as the pointer comes on it, its arrow at the right
+                            let sub = label == "Newcomer's Guide";
+                            let lit = sub && self.guide_menu_open;
+                            let resp = menu_row(ui, p, MENU_W, label, on, sub, lit);
+                            let resp = if on { resp } else { resp.on_hover_text("Not in the Rust app yet") };
+                            if sub {
+                                // a menu of its own: it opens as the pointer comes on it
                                 guide_item = resp.rect;
-                                if resp.hovered() || resp.clicked() {
-                                    self.guide_menu_open = true;
-                                }
-                                if self.guide_menu_open {
-                                    ui.painter().rect_filled(resp.rect, 0.0, p.sand.gamma_multiply(0.35));
-                                }
-                                let c = pos2(resp.rect.right() - 10.0, resp.rect.center().y);
-                                ui.painter().add(egui::Shape::convex_polygon(
-                                    vec![pos2(c.x - 4.0, c.y - 5.0), pos2(c.x + 1.0, c.y), pos2(c.x - 4.0, c.y + 5.0)],
-                                    p.ink,
-                                    Stroke::NONE,
-                                ));
+                                guide_hovered = resp.hovered() || resp.clicked();
                             } else if resp.hovered() {
-                                self.guide_menu_open = false;
+                                others_hovered = true;
                             }
-                            if resp.clicked() && label != "Newcomer's Guide" {
+                            if on && resp.clicked() && !sub {
                                 self.clicked_info = Some(label);
                             }
                         }
                     });
                 });
+            if guide_hovered {
+                self.guide_menu_open = true;
+            } else if others_hovered {
+                self.guide_menu_open = false;
+            }
             crate::guide::mark(ui, "menu.info.popup", area.response.rect);
             let mut sub = Rect::NOTHING;
             if self.guide_menu_open {
                 let a = egui::Area::new(egui::Id::unique("guide-popup"))
                     .order(egui::Order::Foreground)
-                    .fixed_pos(pos2(area.response.rect.right() - 2.0, guide_item.top() - 4.0))
+                    .fade_in(false)
+                    .fixed_pos(pos2(area.response.rect.right() - 2.0, guide_item.top() - MENU_PAD))
                     .show(ui.ctx(), |ui| {
-                        egui::Frame::NONE.fill(p.paper).stroke(Stroke::new(1.0, p.line)).inner_margin(4.0).show(ui, |ui| {
-                            ui.set_min_width(170.0);
-                            let f = theme::body(18.0);
-                            let quick = ui.add(
-                                egui::Button::new(egui::RichText::new("Quick tour").font(f.clone()).color(p.ink))
-                                    .frame(false)
-                                    .min_size(vec2(162.0, 26.0)),
-                            );
-                            if quick.clicked() {
+                        menu_frame(p).show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                            if menu_row(ui, p, 180.0, "Quick tour", true, false, false).clicked() {
                                 self.clicked_info = Some("Quick tour");
                             }
-                            ui.add_enabled(
-                                false,
-                                egui::Button::new(egui::RichText::new("Extensive tour").font(f).color(fixed::MUTED))
-                                    .frame(false)
-                                    .min_size(vec2(162.0, 26.0)),
-                            )
-                            .on_disabled_hover_text("Coming soon");
+                            menu_row(ui, p, 180.0, "Extensive tour", false, false, false).on_hover_text("Coming soon");
                         });
                     });
                 sub = a.response.rect;
@@ -317,7 +311,10 @@ impl Shell {
         let widths: Vec<f32> = self.order.iter().map(|t| text_width(ui, &t.to_uppercase(), &font) + s(26.0)).collect();
         let strip_w: f32 = widths.iter().sum();
         let now = ui.input(|i| i.time);
-        let frames = ((now - self.tab_time) / 0.015).clamp(0.0, 60.0) as i32;
+        // the glide: 28 % of the way every 15 ms (Java's timer), for however long the frame took; counted in whole
+        // 15 ms steps, frames shorter than that (fast screens) moved nothing and left tabs halfway
+        let dt = (now - self.tab_time).clamp(0.0, 1.0);
+        let step = (1.0 - 0.72f64.powf(dt / 0.015)) as f32;
         self.tab_time = now;
         let mut target = 0.0;
         let mut moving = false;
@@ -326,9 +323,7 @@ impl Shell {
             if self.dragged.as_ref().is_some_and(|d| d.0 == *t) {
                 *x = self.dragged.as_ref().map_or(target, |d| d.2);
             } else {
-                for _ in 0..frames {
-                    *x += (target - *x) * 0.28;
-                }
+                *x += (target - *x) * step;
                 if (target - *x).abs() < 0.5 {
                     *x = target;
                 } else {
@@ -679,4 +674,49 @@ fn paint_bell(painter: &egui::Painter, c: Pos2, color: Color32) {
     painter.rect_filled(Rect::from_min_size(pt(-8.5, 3.5), vec2(17.0, 2.5)), 1.0, color);
     painter.add(egui::Shape::ellipse_filled(pt(0.0, 8.5), vec2(2.5, 2.0), color));
     painter.circle_filled(pt(0.0, -9.5), 1.5, color);
+}
+
+/// A popup menu's width (the Info menu), its rows' height and the space around them (Java's FlatLaf menus).
+const MENU_W: f32 = 200.0;
+const MENU_ROW_H: f32 = 36.0;
+const MENU_PAD: f32 = 5.0;
+
+fn menu_frame(p: &Palette) -> egui::Frame {
+    egui::Frame::NONE
+        .fill(p.paper)
+        .stroke(Stroke::new(1.0, p.line))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(0, MENU_PAD as i8))
+}
+
+/// One row of a popup menu: gold under the pointer (or while its submenu is open), the label inset from the left,
+/// a thin chevron for a submenu; greyed out when not available.
+fn menu_row(ui: &mut Ui, p: &Palette, w: f32, label: &str, on: bool, sub: bool, lit: bool) -> egui::Response {
+    let (r, resp) = ui.allocate_exact_size(vec2(w, MENU_ROW_H), if on { Sense::click() } else { Sense::hover() });
+    let painter = ui.painter();
+    let gold = on && (lit || resp.hovered());
+    if gold {
+        painter.rect_filled(r.shrink2(vec2(MENU_PAD, 0.0)), 3.0, p.gold);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let ink = if !on {
+        fixed::MUTED
+    } else if gold {
+        p.on_accent
+    } else {
+        p.ink
+    };
+    jtext::draw(painter, pos2(r.left() + 28.0, r.center().y), Align2::LEFT_CENTER, label, &theme::body(18.0), ink);
+    if sub {
+        let c = pos2(r.right() - 18.0, r.center().y);
+        let st = Stroke::new(1.5, ink);
+        painter.line_segment([pos2(c.x - 3.0, c.y - 6.0), pos2(c.x + 3.0, c.y)], st);
+        painter.line_segment([pos2(c.x + 3.0, c.y), pos2(c.x - 3.0, c.y + 6.0)], st);
+    }
+    resp
+}
+
+fn menu_separator(ui: &mut Ui, p: &Palette, w: f32) {
+    let (r, _) = ui.allocate_exact_size(vec2(w, 11.0), Sense::hover());
+    ui.painter().line_segment([pos2(r.left(), r.center().y), pos2(r.right(), r.center().y)], Stroke::new(1.0, p.line));
 }

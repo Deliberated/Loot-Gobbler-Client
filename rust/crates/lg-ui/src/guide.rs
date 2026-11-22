@@ -10,6 +10,7 @@
 //! The views mark the parts it points at as they draw them ([`mark`], [`mark_item`]); the guide draws last.
 
 use crate::jtext;
+use crate::widgets;
 use crate::theme::{self, Palette, fixed};
 use crate::window::Ask;
 use egui::{Align2, Color32, Id, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
@@ -658,8 +659,8 @@ impl Guide {
             Some(Press::Skip) => self.end(),
             None => {}
         }
-        // the glow pulses
-        ctx.request_repaint_after(std::time::Duration::from_millis(40));
+        // the glow pulses: about 165 times a second, smooth without vsync's cap
+        ctx.request_repaint_after(std::time::Duration::from_millis(6));
     }
 }
 
@@ -708,18 +709,24 @@ fn paint_layer(painter: &egui::Painter, p: &Palette, screen: Rect, v: &View, tim
     }
     let pulse = (0.5 + 0.5 * (time * 1000.0 / 1100.0 * std::f64::consts::TAU).sin()) as f32;
     for r in &v.clicks {
-        let size = 4 + (10.0 * pulse).round() as i32;
-        for i in (1..=size).rev() {
-            let falloff = 1.0 - (i - 1) as f32 / size as f32;
-            let a = (255.0 * (0.25 + 0.4 * pulse) * falloff * falloff).round().min(255.0) as u8;
+        // the glow reaches out 4 to 14 px; its rings fade by their distance from the edge against that reach, so it
+        // grows and shrinks smoothly instead of a ring at a time
+        let reach = 4.0 + 10.0 * pulse;
+        for i in (1..=14).rev() {
+            let falloff = (1.0 - (i - 1) as f32 / reach).max(0.0);
+            if falloff <= 0.0 {
+                continue;
+            }
+            let a = (255.0 * (0.25 + 0.4 * pulse) * falloff * falloff).min(255.0) as u8;
             let c = Color32::from_rgba_unmultiplied(GLOW.r(), GLOW.g(), GLOW.b(), a);
-            painter.rect_stroke(r.expand(i as f32), (8.0 + i as f32) / 2.0, Stroke::new(2.0, c), StrokeKind::Middle);
+            widgets::smooth_stroke(painter, r.expand(i as f32), (8.0 + i as f32) / 2.0, Stroke::new(2.0, c), StrokeKind::Middle);
         }
         painter.rect_stroke(r.expand(1.0), 4.0, Stroke::new(2.0, GLOW), StrokeKind::Middle);
     }
     if let Some(r) = v.clicks.first() {
-        // "CLICK ME" under it (above it at the bottom edge), pulsing with the glow
-        let f = theme::head((20.0 + 3.0 * pulse).round());
+        // "CLICK ME" under it (above it at the bottom edge), breathing with the glow: the text keeps its size (a
+        // font only comes in whole sizes, which made it jump), the box around it grows and shrinks smoothly
+        let f = theme::head(21.0);
         let w = jtext::width(painter, "CLICK ME", &f) + 16.0;
         let h = jtext::height(painter, &f) + 2.0;
         let mut y = r.bottom() + 16.0;
@@ -728,7 +735,7 @@ fn paint_layer(painter: &egui::Painter, p: &Palette, screen: Rect, v: &View, tim
         }
         let x = (r.center().x - w / 2.0).clamp(screen.left() + 4.0, (screen.right() - w - 4.0).max(screen.left() + 4.0));
         let b = Rect::from_min_size(pos2(x, y), vec2(w, h));
-        painter.rect_filled(b, 4.0, GLOW);
+        widgets::smooth_fill(painter, b.expand2(vec2(3.0 * pulse, 1.5 * pulse)), 4.0, GLOW);
         jtext::draw(painter, b.center(), Align2::CENTER_CENTER, "CLICK ME", &f, Color32::from_rgb(0x1F, 0x1A, 0x14));
     }
 }
@@ -1053,7 +1060,7 @@ impl FeatureTour {
                 }
                 _ => {}
             }
-            ctx.request_repaint_after(std::time::Duration::from_millis(40));
+            ctx.request_repaint_after(std::time::Duration::from_millis(6));
         }
         for (k, v) in self.sets.drain(..) {
             asks.push(Ask::Set(k.into(), v));

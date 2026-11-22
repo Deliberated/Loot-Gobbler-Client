@@ -156,6 +156,8 @@ pub struct Missions {
     pub unlocked: BTreeSet<String>,
     pub token: Option<String>,
     pub asked: i64,
+    /// A mission was claimed: fetch the missions again at this time (Java waits 3 s), 0 = not.
+    pub refetch_at: i64,
     pub fetched: i64,
     pub problem: Option<String>,
     pub fetching: bool,
@@ -449,6 +451,124 @@ impl Missions {
         self.problem = None;
     }
 
+    /// The missions nobody has made progress on (all at 0, not done, not locked) in the seasons still running at
+    /// `now_s` (seconds): what a game mode run could still do alone from the start. Key ("season:mission") and the
+    /// mission, by season and the season's order.
+    pub fn untouched(&self, now_s: i64) -> Vec<(String, &Mission)> {
+        let mut out = Vec::new();
+        for season in self.defs.iter().flatten() {
+            if season.end_date > 0 && season.end_date < now_s {
+                continue;
+            }
+            for m in season.missions.iter().flatten() {
+                let key = format!("{}:{}", season.id, m.id);
+                if self.locked.contains(&key) {
+                    continue;
+                }
+                let fresh = self.progs.get(&key).is_none_or(|p| p.state == 0 && p.progress.iter().all(|v| *v == 0));
+                if fresh {
+                    out.push((key, m));
+                }
+            }
+        }
+        out
+    }
+
+    /// A mission by its key ("season:mission").
+    pub fn by_key(&self, key: &str) -> Option<&Mission> {
+        let (s, m) = key.split_once(':')?;
+        self.def(s.parse().ok()?, m.parse().ok()?)
+    }
+
+    /// A season's mission by its id (Java `mission`).
+    fn def(&self, season: i32, id: i32) -> Option<&Mission> {
+        self.defs.as_ref()?.iter().find(|s| s.id == season)?.missions.iter().flatten().find(|m| m.id == id)
+    }
+
+    /// Finished and not claimed yet (Java `ready`).
+    fn ready(&self, season: i32, m: &Mission) -> bool {
+        self.progs
+            .get(&format!("{season}:{}", m.id))
+            .is_some_and(|p| p.state == 1 || (p.state == 0 && m.complete(&p.progress).unwrap_or(false)))
+    }
+
+    /// Java `progressPacket`: progress steps from the game connection (packet 165), "prog/season,mission,a:b:c|..."
+    /// after an optional "pool/#"; the numbers are added to what you had. Ignored until the missions are known.
+    /// Gives the missions stepped on, those begun at 0 with this step and the others ("season:mission").
+    pub fn progress_packet(&mut self, s: &str) -> (Vec<String>, Vec<String>) {
+        let (mut started, mut going) = (Vec::new(), Vec::new());
+        let s = s.trim();
+        let s = s.strip_prefix("pool/#").unwrap_or(s);
+        let Some(entries) = s.strip_prefix("prog/") else { return (started, going) };
+        if self.defs.is_none() {
+            return (started, going);
+        }
+        for entry in entries.split('|') {
+            let f: Vec<&str> = entry.trim().split(',').collect();
+            if f.len() < 3 {
+                continue;
+            }
+            let (Ok(season), Ok(id)) = (f[0].trim().parse::<i32>(), f[1].trim().parse::<i32>()) else { continue };
+            if self.def(season, id).is_none() {
+                continue;
+            }
+            let Ok(step) = f[2].split(':').map(|x| x.trim().parse::<i32>()).collect::<Result<Vec<i32>, _>>() else { continue };
+            let key = format!("{season}:{id}");
+            let p = self.progs.entry(key.clone()).or_default();
+            let was_zero = p.progress.iter().all(|v| *v == 0);
+            if p.progress.len() < step.len() {
+                p.progress.resize(step.len(), 0);
+            }
+            let mut any = false;
+            for (i, v) in step.iter().enumerate() {
+                if *v != 0 {
+                    p.progress[i] += v;
+                    any = true;
+                }
+            }
+            if any {
+                if was_zero { started.push(key) } else { going.push(key) }
+            }
+        }
+        (started, going)
+    }
+
+    /// Java `claimedMission`: which mission a claim (packet 163: the season and the mission's place on its board) is
+    /// about, with its item rewards per group (one of each group is given). The place is the mission's position in
+    /// the season's list; if that one is not finished, the season's only finished, unclaimed mission is taken.
+    pub fn claimed_mission(&self, season_id: i32, position: i32) -> (Option<String>, Vec<Vec<i32>>) {
+        let season = self.defs.as_ref().and_then(|d| d.iter().find(|s| s.id == season_id));
+        let mut m = None;
+        if let Some(season) = season {
+            let at = usize::try_from(position).ok().and_then(|i| season.missions.get(i)).and_then(Option::as_ref);
+            m = at.filter(|x| self.ready(season_id, x));
+            if m.is_none() {
+                let ready: Vec<&Mission> = season.missions.iter().flatten().filter(|x| self.ready(season_id, x)).collect();
+                if ready.len() == 1 {
+                    m = Some(ready[0]);
+                }
+            }
+        }
+        let mut rewards = Vec::new();
+        let key = m.map(|m| {
+            for g in m.reward_groups() {
+                let items: Vec<i32> = g.iter().flat_map(|r| r.as_ref()).filter(|r| r.kind == 2).map(Reward::item_id).filter(|id| *id > 0).collect();
+                if !items.is_empty() {
+                    rewards.push(items);
+                }
+            }
+            format!("{season_id}:{}", m.id)
+        });
+        crate::applog::line(
+            "game",
+            &format!(
+                "Mission claimed: season {season_id}, place {position} -> {}",
+                m.map_or("not known".to_string(), |m| format!("{} ({})", m.name.as_deref().unwrap_or("?"), key.as_deref().unwrap_or("")))
+            ),
+        );
+        (key, rewards)
+    }
+
     pub fn dump(&self) -> String {
         let q = |s: &Option<String>| s.as_deref().map_or("null".into(), |s| lg_protocol::dump::to_string(&s.to_string()));
         let mut out = format!(
@@ -504,6 +624,34 @@ impl Missions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A season with one mission: 3 steps of one objective, rewarding item 23624.
+    fn one_mission() -> Missions {
+        let m = Mission {
+            id: 1001,
+            name: Some("Three dungeons".into()),
+            conds: vec![Some(Cond { kind: 0, target: None, amount: 3, time: None })],
+            rewards: vec![Some(Reward { kind: 2, target: Some(Json::String("23624".into())), amount: 1 })],
+            ..Default::default()
+        };
+        let season = Season { id: 57, name: None, current: 1, available: 1, end_date: 0, missions: vec![Some(m)], game_data: None };
+        Missions { defs: Some(vec![season]), ..Default::default() }
+    }
+
+    #[test]
+    fn progress_steps_and_the_claim() {
+        let mut m = one_mission();
+        assert_eq!(m.progress_packet("prog/57,1001,1|57,999,1"), (vec!["57:1001".to_string()], vec![])); // 999 unknown
+        assert_eq!(m.progress_packet("pool/#prog/57,1001,2"), (vec![], vec!["57:1001".to_string()]));
+        assert_eq!(m.progs["57:1001"].progress, vec![3]);
+        assert_eq!(m.progress_packet("prog/57,1001,0"), (vec![], vec![])); // no step
+        // finished, so the claim at place 0 is it, with its item reward
+        assert_eq!(m.claimed_mission(57, 0), (Some("57:1001".into()), vec![vec![23624]]));
+        assert_eq!(m.claimed_mission(58, 0), (None, vec![]));
+        assert!(m.untouched(0).is_empty()); // it has progress now
+        assert_eq!(one_mission().untouched(0).len(), 1);
+        assert_eq!(one_mission().by_key("57:1001").map(|x| x.id), Some(1001));
+    }
 
     #[test]
     fn reads_the_answers() {

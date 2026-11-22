@@ -187,6 +187,59 @@ fn main() {
                     .collect(),
             }));
         }
+        // "Guild:UPE": logged in, this data's marked game mode runs as one member's, and a guildmate's run that took
+        // half of them
+        if tab == "Guild:UPE" {
+            use lg_app::guild::{CaravanCharacter, UpeBoard, UpeFind, UpeMember, UpeRun};
+            app.server.url = "https://loot.example.com".into();
+            app.server.state = lg_app::server::State::Online;
+            app.server.user = Some(lg_app::server::User { id: 1, ign: "Gunshit".into(), ..Default::default() });
+            let runs: Vec<UpeRun> = app
+                .upe
+                .runs
+                .values()
+                .filter(|r| r.marked)
+                .map(|r| {
+                    let ch = app.characters.get(r.char_id);
+                    UpeRun {
+                        char_id: i64::from(r.char_id),
+                        mode: r.mode.clone(),
+                        marked_at: 0,
+                        lost: r.broken.is_some(),
+                        alive: ch.is_some_and(|c| c.alive),
+                        character: ch.map(|c| CaravanCharacter {
+                            class_type: c.class_type,
+                            class_name: c.class_name.clone(),
+                            skin: c.skin,
+                            tex1: c.tex1,
+                            tex2: c.tex2,
+                            fame: 0,
+                        }),
+                        gathered: r
+                            .gathered
+                            .iter()
+                            .map(|g| UpeFind {
+                                item_id: g.item,
+                                enchants: g.enchants.as_ref().map_or(-1, |e| e.len() as i32),
+                                r#where: g.r#where.clone(),
+                                at: g.at,
+                            })
+                            .collect(),
+                    }
+                })
+                .collect();
+            let mut mate = runs.iter().max_by_key(|r| r.gathered.len()).cloned().unwrap_or_default();
+            mate.gathered.truncate(mate.gathered.len() / 2);
+            mate.lost = false;
+            mate.alive = true;
+            app.server.guild.upe = Some(Ok(UpeBoard {
+                guild: "Pluribus".into(),
+                members: vec![
+                    UpeMember { id: 1, ign: "Gunshit".into(), guild_rank: 40, runs },
+                    UpeMember { id: 2, ign: "Valhirs".into(), guild_rank: 10, runs: vec![mate] },
+                ],
+            }));
+        }
         // "Battles:mates:<start>": that visit with a guildmate the server has (as the local test server answers)
         let mates_visit = tab.strip_prefix("Battles:mates:").and_then(|t| t.parse::<i64>().ok());
         if let Some(start) = mates_visit {
@@ -234,6 +287,11 @@ fn main() {
                     root,
                     created_at: 1_795_000_000_000 + id * 3_600_000,
                     last_login_at: (id != 4).then_some(1_795_200_000_000 + id * 60_000),
+                    client: match id {
+                        4 => String::new(),
+                        _ if id % 2 == 1 => "Rust v0.0.1".into(),
+                        _ => "Java v0.9.2".into(),
+                    },
                 };
                 app.server.user = Some(user(1, "Gunshit", "admin", true, "active"));
                 let m = &mut app.server.moderation;
