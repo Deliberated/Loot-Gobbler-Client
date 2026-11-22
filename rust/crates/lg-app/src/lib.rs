@@ -244,6 +244,11 @@ impl App {
     /// One packet captured at `now` (ms since 1970).
     pub fn packet(&mut self, p: &Decoded, now: i64) -> Result<(), Abort> {
         self.world.set_time(now);
+        // while your character is not known yet (started in the middle of a map): your last class and name for it
+        if self.world.world_player_id <= 0 {
+            self.world.fallback_class = self.characters.last_played_char().map_or(0, |c| c.class_type);
+            self.world.fallback_name = self.characters.player_name.clone();
+        }
         let r = self.handle(p, now);
         if r.is_err() {
             self.events(now);
@@ -556,8 +561,14 @@ impl App {
                         self.dps_history.record(&f, now);
                     }
                 }
+                Event::FoundYou(id) => {
+                    crate::applog::line("game", &format!("Started in the middle of a map: found your character ({id})"));
+                }
                 Event::Guessed => {
                     let (data, m) = (self.world.data(), self.world.map.as_ref());
+                    if let Some(m) = m {
+                        crate::applog::line("game", &format!("Started in the middle of a map: it is {} (by its enemies)", m.name));
+                    }
                     self.dungeon_visits.entered_late(data, m, &self.characters, &self.dps_history, now);
                     let name = m.map_or(String::new(), |m| m.name.clone());
                     self.moonlight.entered(&name);

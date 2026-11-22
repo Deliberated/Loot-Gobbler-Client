@@ -54,6 +54,8 @@ pub enum Event {
     },
     /// The map you are in was told by its enemies (Java `guessMap`): it is in `map` now.
     Guessed,
+    /// Started in the middle of a map: your character was found, this object (Java `foundYourself`).
+    FoundYou(i32),
     /// A new map (Java `setNewRealm`): the vault or not, and its name as the app shows it (`LootEvents.mapName`).
     Entered {
         vault: bool,
@@ -255,6 +257,10 @@ pub struct World {
     pub map: Option<Map>,
     /// The map was guessed from its enemies (the sniffer started inside it).
     pub map_guessed: bool,
+    /// Your last played class and your name, from the app's records: what your character is given when it is found
+    /// in the middle of a map (the game sends both only on entering one).
+    pub fallback_class: i32,
+    pub fallback_name: Option<String>,
     map_guess_failed: bool,
     /// Your object id; -1 while not known.
     pub world_player_id: i32,
@@ -320,6 +326,8 @@ impl World {
         World {
             map: None,
             map_guessed: false,
+            fallback_class: 0,
+            fallback_name: None,
             map_guess_failed: false,
             world_player_id: -1,
             char_id: 0,
@@ -758,14 +766,24 @@ impl World {
         Ok(())
     }
 
-    /// Java `foundYourself`. The app also gives the object your last played class and your name when the game
-    /// didn't (not ported yet: the character list).
+    /// Java `foundYourself`: also gives the object your last played class and your name when the game didn't.
     fn found_yourself(&mut self, id: i32) {
         self.world_player_id = id;
         self.player = Some(id);
         self.own_positions.clear();
         let char_id = self.char_id;
-        self.entity(id).set_user(char_id);
+        let (class, name) = (self.fallback_class, self.fallback_name.clone());
+        let e = self.entity(id);
+        if e.object_type == 0 && class > 0 {
+            e.object_type = class;
+        }
+        if e.text(stats::NAME).is_none()
+            && let Some(n) = name
+        {
+            e.name = Some(n);
+        }
+        e.set_user(char_id);
+        self.events.push(Event::FoundYou(id));
         self.player_list.insert(id);
         self.player_list_updated.insert(id);
     }

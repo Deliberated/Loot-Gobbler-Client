@@ -407,6 +407,7 @@ impl DungeonVisits {
         self.entered(data, map, chars, dps, now);
         if let Some(v) = &mut self.current {
             v.late = true;
+            crate::applog::line("game", &format!("Dungeon visit joined late: {}", v.dungeon));
         }
     }
 
