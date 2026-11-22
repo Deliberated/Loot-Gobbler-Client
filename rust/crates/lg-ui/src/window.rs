@@ -497,15 +497,17 @@ impl Window {
                 _ => {}
             }
         });
-        // the dungeon you are in, in the menu bar after the menus
+        // the dungeon you are in, in the menu bar after the menus: as high as Java's menu bar (30 px less its
+        // line), centred in the taller title bar
         let bar = self.shell.menu_rect;
+        let badge_h = 30.0 - 1.5;
         let (badge, open_run) = crate::title_badge::show(
             ui,
             &mut self.icons,
             app,
             now,
-            egui::pos2(self.shell.menu_end + 12.0, bar.top()),
-            bar.height() - 1.5,
+            egui::pos2(self.shell.menu_end + 12.0, bar.center().y - badge_h / 2.0),
+            badge_h,
             self.preview_since,
         );
         if let Some(r) = badge {
