@@ -639,7 +639,8 @@ impl Upe {
         let standing = self.runs.get(&char_id).is_some_and(Run::standing);
         let known = self.missions.contains_key(mission);
         if was_zero || !known {
-            self.missions.insert(mission.to_string(), MissionRun { char_id, from_zero: was_zero, clean: standing && was_zero, started_at: now });
+            self.missions
+                .insert(mission.to_string(), MissionRun { char_id, from_zero: was_zero, clean: standing && was_zero, started_at: now });
             if !self.mission_keys.iter().any(|k| k == mission) {
                 self.mission_keys.push(mission.to_string());
             }
@@ -692,59 +693,8 @@ impl Upe {
                 Some(_) => "not clean (partly made elsewhere)".into(),
             }
         };
-        crate::applog::line(
-            "upe",
-            &format!("Mission {} claimed by character {char_id}: its reward is {why}", mission.unwrap_or("null")),
-        );
+        crate::applog::line("upe", &format!("Mission {} claimed by character {char_id}: its reward is {why}", mission.unwrap_or("null")));
         self.dirty = true;
-    }
-}
-
-#[cfg(test)]
-mod mission_tests {
-    use super::*;
-
-    /// A standing run in a mode; PPE takes any item, so the rewards' items need no game data.
-    fn with_run(char_id: i32, mode: &str) -> Upe {
-        let mut u = Upe::default();
-        let mut r = Run::new(char_id);
-        r.marked = true;
-        r.mode = mode.into();
-        u.runs.insert(char_id, r);
-        u
-    }
-
-    #[test]
-    fn a_reward_outside_the_modes_loadout_is_left_out() {
-        let data = GameData::default(); // item 23624 not known: not UT or ST
-        let mut u = with_run(7, "UPE");
-        u.mission_step("57:1001", 7, true, 1);
-        u.mission_claimed(&data, Some("57:1001"), 7, &[vec![23624]], 2);
-        assert!(u.runs[&7].allowed.is_empty());
-    }
-
-    #[test]
-    fn a_mission_solved_alone_from_zero_allows_its_reward() {
-        let mut u = with_run(7, PPE);
-        u.mission_step("57:1001", 7, true, 1);
-        u.mission_step("57:1001", 7, false, 2);
-        u.mission_claimed(&GameData::default(), Some("57:1001"), 7, &[vec![23624]], 3);
-        assert_eq!(u.runs[&7].allowed, vec![vec![23624]]);
-        assert!(u.missions.is_empty() && u.mission_keys.is_empty());
-    }
-
-    #[test]
-    fn a_step_by_another_character_or_earlier_progress_spoils_it() {
-        let mut u = with_run(7, PPE);
-        u.mission_step("57:1001", 7, true, 1);
-        u.mission_step("57:1001", 8, false, 2); // another character helped
-        u.mission_claimed(&GameData::default(), Some("57:1001"), 7, &[vec![23624]], 3);
-        assert!(u.runs[&7].allowed.is_empty());
-
-        let mut u = with_run(7, PPE);
-        u.mission_step("57:1002", 7, false, 1); // it had progress before
-        u.mission_claimed(&GameData::default(), Some("57:1002"), 7, &[vec![23624]], 2);
-        assert!(u.runs[&7].allowed.is_empty());
     }
 }
 
@@ -1784,5 +1734,53 @@ impl Upe {
             ).replace(" ", " "));
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod mission_tests {
+    use super::*;
+
+    /// A standing run in a mode; PPE takes any item, so the rewards' items need no game data.
+    fn with_run(char_id: i32, mode: &str) -> Upe {
+        let mut u = Upe::default();
+        let mut r = Run::new(char_id);
+        r.marked = true;
+        r.mode = mode.into();
+        u.runs.insert(char_id, r);
+        u
+    }
+
+    #[test]
+    fn a_reward_outside_the_modes_loadout_is_left_out() {
+        let data = GameData::default(); // item 23624 not known: not UT or ST
+        let mut u = with_run(7, "UPE");
+        u.mission_step("57:1001", 7, true, 1);
+        u.mission_claimed(&data, Some("57:1001"), 7, &[vec![23624]], 2);
+        assert!(u.runs[&7].allowed.is_empty());
+    }
+
+    #[test]
+    fn a_mission_solved_alone_from_zero_allows_its_reward() {
+        let mut u = with_run(7, PPE);
+        u.mission_step("57:1001", 7, true, 1);
+        u.mission_step("57:1001", 7, false, 2);
+        u.mission_claimed(&GameData::default(), Some("57:1001"), 7, &[vec![23624]], 3);
+        assert_eq!(u.runs[&7].allowed, vec![vec![23624]]);
+        assert!(u.missions.is_empty() && u.mission_keys.is_empty());
+    }
+
+    #[test]
+    fn a_step_by_another_character_or_earlier_progress_spoils_it() {
+        let mut u = with_run(7, PPE);
+        u.mission_step("57:1001", 7, true, 1);
+        u.mission_step("57:1001", 8, false, 2); // another character helped
+        u.mission_claimed(&GameData::default(), Some("57:1001"), 7, &[vec![23624]], 3);
+        assert!(u.runs[&7].allowed.is_empty());
+
+        let mut u = with_run(7, PPE);
+        u.mission_step("57:1002", 7, false, 1); // it had progress before
+        u.mission_claimed(&GameData::default(), Some("57:1002"), 7, &[vec![23624]], 2);
+        assert!(u.runs[&7].allowed.is_empty());
     }
 }

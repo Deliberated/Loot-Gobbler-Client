@@ -485,13 +485,8 @@ fn card(
     let mut mission_lines: Vec<(String, Vec<crate::widgets::TipLine>)> = Vec::new();
     if standing {
         let name_of = |k: &str| app.missions.by_key(k).and_then(|m| m.name.clone()).unwrap_or_else(|| format!("mission {k}"));
-        let working: Vec<String> = app
-            .upe
-            .missions
-            .iter()
-            .filter(|(_, m)| m.char_id == r.char_id && m.clean && m.from_zero)
-            .map(|(k, _)| name_of(k))
-            .collect();
+        let working: Vec<String> =
+            app.upe.missions.iter().filter(|(_, m)| m.char_id == r.char_id && m.clean && m.from_zero).map(|(k, _)| name_of(k)).collect();
         if !working.is_empty() {
             let tip = working.iter().map(|n| vec![(n.clone(), None, false)]).collect();
             mission_lines.push((format!("Solving alone: {}", working.join(", ")), tip));
@@ -509,10 +504,7 @@ fn card(
             if untouched.len() > 20 {
                 tip.push(vec![(format!("and {} more", untouched.len() - 20), Some(fixed::MUTED), false)]);
             }
-            mission_lines.push((
-                format!("Missions it can still do alone: {} (hover for the list)", untouched.len()),
-                tip,
-            ));
+            mission_lines.push((format!("Missions it can still do alone: {} (hover for the list)", untouched.len()), tip));
         } else {
             mission_lines.push(("Missions: not loaded yet (they come with the game's login)".into(), Vec::new()));
         }

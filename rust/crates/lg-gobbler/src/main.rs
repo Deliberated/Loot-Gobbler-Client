@@ -141,11 +141,8 @@ fn main() -> ExitCode {
         },
         ..Default::default()
     };
-    let options = eframe::NativeOptions {
-        viewport: gui::viewport(&lg_app::properties::Properties::load(&own)),
-        wgpu_options,
-        ..Default::default()
-    };
+    let options =
+        eframe::NativeOptions { viewport: gui::viewport(&lg_app::properties::Properties::load(&own)), wgpu_options, ..Default::default() };
     // Linux: X11 (XWayland under Wayland), as Java's Swing: only there can the overlays be placed and kept on top
     #[cfg(target_os = "linux")]
     if std::env::var_os("DISPLAY").is_some() && std::env::var_os("LG_WAYLAND").is_none() {

@@ -147,7 +147,10 @@ impl AmuletSaves {
                     crate::applog::line("amulet", &format!("Its +{amount} came: counted (life {lowest}% before it)"));
                     self.record(w, visits, &format!("{}: hit at {lowest}% life, Invulnerable, +{amount}", p.amulet), now);
                 } else {
-                    crate::applog::line("amulet", &format!("A +{amount} came, but your life was not at 20% or below ({lowest}%): not counted"));
+                    crate::applog::line(
+                        "amulet",
+                        &format!("A +{amount} came, but your life was not at 20% or below ({lowest}%): not counted"),
+                    );
                 }
             }
         }

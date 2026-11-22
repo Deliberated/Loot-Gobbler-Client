@@ -346,7 +346,15 @@ impl Icons {
 
     /// A character's look greyed out as Java shows a disabled picture (FlatLaf's dark theme `Component.grayFilter`:
     /// grey, contrast down 70 %, brightness down 20 %, the transparency kept), e.g. a lost game mode run.
-    pub fn skin_faded(&mut self, ctx: &egui::Context, data: &GameData, sprite: i32, tex1: i32, tex2: i32, size: u32) -> Option<TextureHandle> {
+    pub fn skin_faded(
+        &mut self,
+        ctx: &egui::Context,
+        data: &GameData,
+        sprite: i32,
+        tex1: i32,
+        tex2: i32,
+        size: u32,
+    ) -> Option<TextureHandle> {
         if sprite <= 0 {
             return None;
         }
@@ -359,7 +367,7 @@ impl Icons {
             Some(d) => outlined_dyed(&d, size),
             None => outlined(&self.sprites.object(data, sprite).unwrap_or(Image { w: 8, h: 8, rgba: vec![0; 256] }), size),
         };
-        for px in out.rgba.chunks_exact_mut(4) {
+        for px in out.rgba.as_chunks_mut::<4>().0 {
             let lum = 0.30 * f32::from(px[0]) + 0.59 * f32::from(px[1]) + 0.11 * f32::from(px[2]);
             let g = ((128.0 + (lum - 128.0) * 0.30) * 0.80).round().clamp(0.0, 255.0) as u8;
             px[0] = g;

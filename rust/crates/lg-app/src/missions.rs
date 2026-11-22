@@ -552,7 +552,8 @@ impl Missions {
         let mut rewards = Vec::new();
         let key = m.map(|m| {
             for g in m.reward_groups() {
-                let items: Vec<i32> = g.iter().flat_map(|r| r.as_ref()).filter(|r| r.kind == 2).map(Reward::item_id).filter(|id| *id > 0).collect();
+                let items: Vec<i32> =
+                    g.iter().flat_map(|r| r.as_ref()).filter(|r| r.kind == 2).map(Reward::item_id).filter(|id| *id > 0).collect();
                 if !items.is_empty() {
                     rewards.push(items);
                 }

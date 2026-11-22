@@ -1431,7 +1431,18 @@ pub fn suggestion(app: &crate::App, en: &Enchantments, c: &crate::characters::Ch
         let set = settings.locked_enchants(c.char_id, slot);
         en.of(pk.enchants.as_deref()).into_iter().filter(|e| set.contains(&en.get(*e).kind)).collect()
     };
-    Some(suggest(&input, class, &pool, &chosen, settings.scope, settings.enemy_def, &items, &locked, settings.second_chance, settings.suggest_enchants))
+    Some(suggest(
+        &input,
+        class,
+        &pool,
+        &chosen,
+        settings.scope,
+        settings.enemy_def,
+        &items,
+        &locked,
+        settings.second_chance,
+        settings.suggest_enchants,
+    ))
 }
 
 /// What the stat boxes show (the second half of Java `ideal`): per stat the class maximum, what the suggested and the

@@ -384,7 +384,7 @@ impl CharactersView {
     }
 
     fn paint_card_frame(&self, painter: &egui::Painter, p: &Palette, r: Rect, sel: bool) {
-        painter.rect_filled(r, 0.0, if sel { mix(p.gold, p.header, 0.3) } else { p.header });   // also the banners' `under`
+        painter.rect_filled(r, 0.0, if sel { mix(p.gold, p.header, 0.3) } else { p.header }); // also the banners' `under`
         if sel {
             painter.rect_stroke(r, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
         } else {

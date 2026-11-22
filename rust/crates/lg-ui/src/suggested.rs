@@ -179,7 +179,8 @@ fn switch(painter: &egui::Painter, r: Rect, stops: usize, stop: usize, knob: f32
     fan(painter, inner.center(), &pill_outline(inner), 2, |q| lerp_color(shade, clear, (q.y - o.y) / (h / 2.0)));
     // the rim: dark at the top, light at the bottom
     let (rim_top, rim_bottom) = (Color32::from_rgba_unmultiplied(0, 0, 0, 160), Color32::from_rgba_unmultiplied(255, 255, 255, 90));
-    let rim = egui::epaint::PathStroke::new_uv(1.2, move |r: Rect, q: egui::Pos2| lerp_color(rim_top, rim_bottom, (q.y - r.top()) / r.height()));
+    let rim =
+        egui::epaint::PathStroke::new_uv(1.2, move |r: Rect, q: egui::Pos2| lerp_color(rim_top, rim_bottom, (q.y - r.top()) / r.height()));
     painter.add(egui::epaint::PathShape::closed_line(outline.clone(), rim));
     let pad = 3.0;
     let d = h - 2.0 * pad;
@@ -655,7 +656,11 @@ pub fn suggested(
             tip.push(if locked {
                 vec![("Locked:".to_string(), None, true), (" kept whatever you aim for. Click to unlock".to_string(), None, false)]
             } else {
-                vec![("Click to lock it: the suggestion keeps it and counts it, and suggests nothing that clashes with it".to_string(), Some(fixed::MUTED), false)]
+                vec![(
+                    "Click to lock it: the suggestion keeps it and counts it, and suggests nothing that clashes with it".to_string(),
+                    Some(fixed::MUTED),
+                    false,
+                )]
             });
         };
         let mut chips: Vec<Chip> = Vec::new();

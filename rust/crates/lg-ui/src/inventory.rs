@@ -161,14 +161,14 @@ impl InventoryView {
             .values()
             .filter(|r| r.marked)
             .filter(|r| {
-                app.characters.get(r.char_id).is_some_and(|ch| {
-                    ch.alive || r.gathered.iter().filter(|g| data.items.collectible.contains(&g.item)).count() >= 5
-                })
+                app.characters
+                    .get(r.char_id)
+                    .is_some_and(|ch| ch.alive || r.gathered.iter().filter(|g| data.items.collectible.contains(&g.item)).count() >= 5)
             })
             .collect();
         runs.sort_by_key(|r| std::cmp::Reverse(r.char_id));
         if self.upe_char != 0 && !runs.iter().any(|r| r.char_id == self.upe_char) {
-            self.upe_char = 0;   // its run is not in the column (any more)
+            self.upe_char = 0; // its run is not in the column (any more)
         }
         // the gold frame of the entry shown: drawn under the entries once their places are known, gliding from the
         // one shown before to the one clicked
@@ -183,7 +183,12 @@ impl InventoryView {
                 target.set(Some(r));
             }
             if let Some(t) = tex {
-                painter.image(t.id(), Rect::from_min_size(pos2(r.center().x - 20.0, r.top() + 6.0), vec2(40.0, 40.0)), uv(), Color32::WHITE);
+                painter.image(
+                    t.id(),
+                    Rect::from_min_size(pos2(r.center().x - 20.0, r.top() + 6.0), vec2(40.0, 40.0)),
+                    uv(),
+                    Color32::WHITE,
+                );
             }
             jtext::draw(
                 &painter,
@@ -245,7 +250,10 @@ impl InventoryView {
             let (from, at) = ui.ctx().data(|d| d.get_temp::<(Rect, f64)>(id)).unwrap_or((to, now));
             let k = (1.0 - 0.67f64.powf(((now - at).clamp(0.0, 1.0)) / 0.015)) as f32;
             let lerp = |a: f32, b: f32| a + (b - a) * k;
-            let mut shown = Rect::from_min_max(pos2(lerp(from.left(), to.left()), lerp(from.top(), to.top())), pos2(lerp(from.right(), to.right()), lerp(from.bottom(), to.bottom())));
+            let mut shown = Rect::from_min_max(
+                pos2(lerp(from.left(), to.left()), lerp(from.top(), to.top())),
+                pos2(lerp(from.right(), to.right()), lerp(from.bottom(), to.bottom())),
+            );
             if (shown.top() - to.top()).abs() < 0.5 && (shown.bottom() - to.bottom()).abs() < 0.5 {
                 shown = to;
             } else {
@@ -256,7 +264,9 @@ impl InventoryView {
                 frame_slot,
                 egui::Shape::Vec(vec![
                     egui::epaint::RectShape::filled(shown, 0.0, mix(p.gold, p.paper, 0.25)).with_round_to_pixels(false).into(),
-                    egui::epaint::RectShape::stroke(shown, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside).with_round_to_pixels(false).into(),
+                    egui::epaint::RectShape::stroke(shown, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside)
+                        .with_round_to_pixels(false)
+                        .into(),
                 ]),
             );
         }
@@ -511,7 +521,7 @@ impl InventoryView {
                     match resp.hover_pos() {
                         Some(q) if ui.input(|i| i.pointer.any_down()) => {
                             rest = q;
-                            since = f64::INFINITY;   // pressed: no tip until the mouse moves again
+                            since = f64::INFINITY; // pressed: no tip until the mouse moves again
                             shown = None;
                         }
                         Some(q) if q != rest => {
@@ -551,7 +561,8 @@ impl InventoryView {
                             (format!("Count: {}", cells[i].held), Color32::from_rgb(0xF5, 0xC5, 0x42))
                         };
                         let f = text(18.0);
-                        let tip_painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, tid)).with_clip_rect(painter.clip_rect());
+                        let tip_painter =
+                            ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, tid)).with_clip_rect(painter.clip_rect());
                         let lh = jtext::height(&tip_painter, &f);
                         let (pad_x, pad_y, gap) = (8.0, 5.0, 1.0);
                         let w = jtext::width(&tip_painter, &name, &f).max(jtext::width(&tip_painter, &sub, &f)) + 2.0 * pad_x;
@@ -571,7 +582,14 @@ impl InventoryView {
                         tip_painter.rect_filled(b, 0.0, fade(p.paper));
                         tip_painter.rect_stroke(b, 0.0, Stroke::new(1.0, fade(p.line)), StrokeKind::Inside);
                         jtext::draw(&tip_painter, pos2(b.left() + pad_x, b.top() + pad_y), Align2::LEFT_TOP, &name, &f, fade(p.ink));
-                        jtext::draw(&tip_painter, pos2(b.left() + pad_x, b.top() + pad_y + lh + gap), Align2::LEFT_TOP, &sub, &f, fade(sub_c));
+                        jtext::draw(
+                            &tip_painter,
+                            pos2(b.left() + pad_x, b.top() + pad_y + lh + gap),
+                            Align2::LEFT_TOP,
+                            &sub,
+                            &f,
+                            fade(sub_c),
+                        );
                     }
                     if let Some((id, start, dur)) = pulse
                         && let Some(i) = cells.iter().position(|c| c.id == id)
@@ -579,7 +597,13 @@ impl InventoryView {
                         let t = ((time_s - start) / dur).clamp(0.0, 1.0) as f32;
                         let eased = 1.0 - (1.0 - t) * (1.0 - t);
                         let gold = Color32::from_rgb(0xF5, 0xC5, 0x42).gamma_multiply(1.0 - t);
-                        widgets::smooth_stroke(&painter, cell_rect(i).expand(eased * PULSE_GROW), 0.0, Stroke::new(5.0, gold), StrokeKind::Middle);
+                        widgets::smooth_stroke(
+                            &painter,
+                            cell_rect(i).expand(eased * PULSE_GROW),
+                            0.0,
+                            Stroke::new(5.0, gold),
+                            StrokeKind::Middle,
+                        );
                         if scroll_to == Some(id) {
                             ui.scroll_to_rect(cell_rect(i), Some(egui::Align::Center));
                         }

@@ -9,7 +9,7 @@ use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, p
 pub const TABS: [&str; 9] = ["Profile", "Inventory", "Characters", "Game Modes", "Battles", "Social", "Guild", "Server", "Settings"];
 
 /// Height of the menu bar, the tab row (without its bottom line) and the status bar.
-const MENU_H: f32 = 44.0;   // as tall as Java's FlatLaf title bar
+const MENU_H: f32 = 44.0; // as tall as Java's FlatLaf title bar
 const TAB_H: f32 = 46.0;
 const STATUS_H: f32 = 43.0;
 
@@ -286,7 +286,7 @@ impl Shell {
                     .fixed_pos(pos2(area.response.rect.right() - 2.0, guide_item.top() - MENU_PAD))
                     .show(ui.ctx(), |ui| {
                         menu_frame(p).show(ui, |ui| {
-                        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                             if menu_row(ui, p, 180.0, "Quick tour", true, false, false).clicked() {
                                 self.clicked_info = Some("Quick tour");
                             }

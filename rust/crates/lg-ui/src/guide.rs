@@ -10,8 +10,8 @@
 //! The views mark the parts it points at as they draw them ([`mark`], [`mark_item`]); the guide draws last.
 
 use crate::jtext;
-use crate::widgets;
 use crate::theme::{self, Palette, fixed};
+use crate::widgets;
 use crate::window::Ask;
 use egui::{Align2, Color32, Id, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use std::collections::HashMap;

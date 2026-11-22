@@ -309,7 +309,7 @@ fn upe(ui: &mut Ui, c: &mut Ctx, body: Rect, page: &mut usize) {
                 Some(Ok(b)) => b,
             };
             // every marked run with its points, the most first; ties by player
-            let mut rows: Vec<(&lg_app::guild::UpeMember, &lg_app::guild::UpeRun, f64, Vec<(i32, String, f64)>)> = board
+            let mut rows: Vec<UpeRow> = board
                 .members
                 .iter()
                 .flat_map(|m| m.runs.iter().map(move |r| (m, r)))
@@ -430,6 +430,9 @@ fn upe(ui: &mut Ui, c: &mut Ctx, body: Rect, page: &mut usize) {
         c.asks.push(crate::window::Ask::Server(crate::window::ServerAsk::OpenMember(id)));
     }
 }
+
+/// A row of the UPE chart: the member, the run, its points and the items that counted (item, where, points).
+type UpeRow<'a> = (&'a lg_app::guild::UpeMember, &'a lg_app::guild::UpeRun, f64, Vec<(i32, String, f64)>);
 
 fn note(painter: &egui::Painter, x: f32, y: f32, t: &str, f: &egui::FontId) {
     jtext::draw(painter, pos2(x, y), Align2::LEFT_TOP, t, f, fixed::MUTED);
