@@ -24,6 +24,55 @@ pub struct Reward {
     pub amount: i64,
 }
 
+impl Cond {
+    /// Java `target`: the target as text.
+    pub fn target_text(&self) -> String {
+        match &self.target {
+            None | Some(Json::Null) => String::new(),
+            Some(t) => t.as_string().unwrap_or_else(|_| t.write()),
+        }
+    }
+
+    /// Java `Cond.text`: what it asks, as a sentence ("Complete 3 Ocean Trench").
+    pub fn text(&self) -> String {
+        let n = if self.amount > 0 { format!("{} ", self.amount) } else { String::new() };
+        let t = nice(&self.target_text());
+        match self.kind {
+            1 => format!("Defeat {n}{t}"),
+            2 => format!("Defeat {n}enemies"),
+            3 => format!("Complete {n}{t}"),
+            4 => format!("Complete {n}dungeons of difficulty {t}"),
+            7 => format!("Close {n}realms"),
+            12 => format!("Complete {n}{} of difficulty {t}", if self.amount == 1 { "dungeon" } else { "dungeons" }),
+            14 => format!("Complete {n}{t}{}", self.time.map_or(String::new(), |s| format!(" in under {}", clock(s)))),
+            15 => format!("Gain {} EXP", crate::guild::grouped(i64::from(self.amount))),
+            _ if t.is_empty() => "Objective".into(),
+            _ => format!("Complete {n}{t}"),
+        }
+    }
+}
+
+/// Java `nice`: "BOSS_OCEAN_TRENCH" -> "Ocean Trench" (anything else as it is).
+pub fn nice(target: &str) -> String {
+    let t = target.trim();
+    let t = t.strip_prefix("BOSS_").unwrap_or(t);
+    if t.is_empty() || !t.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+        return t.to_string();
+    }
+    t.split('_')
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut c = w.chars();
+            c.next().map_or(String::new(), |f| f.to_string() + &c.as_str().to_lowercase())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn clock(seconds: i32) -> String {
+    if seconds >= 60 { format!("{}:{:02} min", seconds / 60, seconds % 60) } else { format!("{seconds} s") }
+}
+
 impl Reward {
     /// Java `itemId`.
     pub fn item_id(&self) -> i32 {
@@ -87,6 +136,54 @@ impl Mission {
         }
     }
 
+    /// Java `repeatable`.
+    pub fn repeatable(&self) -> bool {
+        self.interval > 0.0 || self.name.as_deref().is_some_and(|n| n.contains("Repeatable"))
+    }
+
+    /// Java `parents`: the missions it comes after.
+    pub fn parents(&self) -> Vec<i32> {
+        self.parents_str.as_deref().unwrap_or("").split(|c: char| !c.is_ascii_digit()).filter_map(|x| x.parse().ok()).collect()
+    }
+
+    /// Java `worn`: what must be equipped for it ("Ring"...).
+    pub fn worn(&self) -> Vec<String> {
+        let Some(Json::Array(a)) = &self.worn_restriction else { return Vec::new() };
+        a.iter()
+            .filter_map(|e| {
+                let text = |k: &str| e.get(k).filter(|v| !matches!(v, Json::Null)).and_then(|v| v.as_string().ok());
+                text("display").or_else(|| text("type").map(|t| nice(&t))).filter(|s| !s.trim().is_empty())
+            })
+            .collect()
+    }
+
+    /// Java `MissionsView.forYou`: why this character makes no progress on it ("Needs a seasonal character"), or
+    /// None if it does. `slot_names`: the class's slot names (Weapon types, "Ring"...).
+    pub fn for_you(&self, seasonal: bool, crucible: bool, slot_names: &[String]) -> Option<String> {
+        let p = self.participants;
+        let allowed = p == 0 || p == 255 || (p & 2 != 0 && seasonal) || (p & 4 != 0 && crucible) || (p & 1 != 0 && !seasonal);
+        if !allowed {
+            return Some(
+                if p & 4 != 0 && p & 2 == 0 {
+                    "Needs a crucible character"
+                } else if p & 2 != 0 {
+                    "Needs a seasonal character"
+                } else {
+                    "Not for this character"
+                }
+                .into(),
+            );
+        }
+        if !slot_names.is_empty() {
+            for w in self.worn() {
+                if !slot_names.iter().any(|s| s.eq_ignore_ascii_case(&w)) {
+                    return Some(format!("Needs a class with a {w}"));
+                }
+            }
+        }
+        None
+    }
+
     /// Java `complete`: progress meets every group (a null objective throws).
     pub fn complete(&self, progress: &[i32]) -> Result<bool, Thrown> {
         let groups = self.groups();
@@ -134,6 +231,27 @@ pub struct Season {
     pub end_date: i64,
     pub missions: Vec<Option<Mission>>,
     pub game_data: Option<Json>,
+}
+
+/// Where a mission stands for you (Java `Missions.Status`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Claimable,
+    InProgress,
+    Cooldown,
+    Claimed,
+    Locked,
+}
+
+/// One mission as shown (Java `Missions.View`): its season and definition, your progress, where it stands, and
+/// when it opens again (on cooldown, unix seconds).
+#[derive(Debug, Clone)]
+pub struct View<'a> {
+    pub season: &'a Season,
+    pub mission: &'a Mission,
+    pub progress: Vec<i32>,
+    pub status: Status,
+    pub resets_at: i64,
 }
 
 /// Your state of one mission.
@@ -478,6 +596,50 @@ impl Missions {
     pub fn by_key(&self, key: &str) -> Option<&Mission> {
         let (s, m) = key.split_once(':')?;
         self.def(s.parse().ok()?, m.parse().ok()?)
+    }
+
+    /// Java `views`: per season (the current first, those neither current nor available left out) every mission
+    /// with where it stands at `now_s` (unix seconds).
+    pub fn views(&self, now_s: i64) -> Vec<(&Season, Vec<View<'_>>)> {
+        let Some(defs) = &self.defs else { return Vec::new() };
+        let mut seasons: Vec<&Season> = defs.iter().filter(|s| !(s.available == 0 && s.current == 0)).collect();
+        seasons.sort_by_key(|s| std::cmp::Reverse(s.current));
+        seasons.into_iter().map(|s| (s, s.missions.iter().flatten().map(|m| self.view(s, m, now_s)).collect())).collect()
+    }
+
+    fn view<'a>(&self, s: &'a Season, m: &'a Mission, now: i64) -> View<'a> {
+        let key = format!("{}:{}", s.id, m.id);
+        let p = self.progs.get(&key);
+        let mut progress = p.map_or(vec![0; m.conds.len()], |p| p.progress.clone());
+        if progress.len() < m.conds.len() {
+            progress.resize(m.conds.len(), 0);
+        }
+        let mk = |progress: Vec<i32>, status: Status, resets_at: i64| View { season: s, mission: m, progress, status, resets_at };
+        if let Some(p) = p
+            && p.state >= 2
+        {
+            if m.repeatable() && p.claimed_at > 0 {
+                let resets = p.claimed_at + (m.interval * 86_400.0).round() as i64;
+                if resets > now {
+                    return mk(progress, Status::Cooldown, resets);
+                }
+                // the cooldown is over: open again, from nothing (the claim's progress is gone)
+                return mk(vec![0; m.conds.len()], Status::InProgress, 0);
+            }
+            return mk(progress, Status::Claimed, 0);
+        }
+        let started = p.is_some_and(|p| p.state >= 1 || p.progress.iter().any(|v| *v > 0));
+        let engaged = started || p.is_some_and(|p| p.ever_done);
+        let parents_done =
+            m.parents().iter().all(|parent| self.progs.get(&format!("{}:{parent}", s.id)).is_some_and(|p| p.ever_done || p.state >= 2));
+        let open = parents_done || self.unlocked.contains(&key) || engaged;
+        if (self.locked.contains(&key) && !engaged) || !open {
+            return mk(progress, Status::Locked, 0);
+        }
+        if p.is_some_and(|p| p.state == 1) || m.complete(&progress).unwrap_or(false) {
+            return mk(progress, Status::Claimable, 0);
+        }
+        mk(progress, Status::InProgress, 0)
     }
 
     /// A season's mission by its id (Java `mission`).

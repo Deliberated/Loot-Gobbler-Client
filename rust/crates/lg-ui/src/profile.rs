@@ -58,6 +58,7 @@ impl Ctx<'_> {
 
 pub struct Profile {
     pub page: usize,
+    quests: crate::quests::QuestsView,
     greeting: &'static str,
     /// The frame it was last drawn in, the account then and when the guild card was last asked for (Java loads it
     /// when shown, after logging in or out, every minute and after your uploads).
@@ -69,7 +70,14 @@ pub struct Profile {
 impl Default for Profile {
     fn default() -> Self {
         let pick = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos()) as usize;
-        Profile { page: 0, greeting: GREETINGS[pick % GREETINGS.len()], last_pass: 0, last_account: String::new(), guild_asked: 0 }
+        Profile {
+            page: 0,
+            quests: Default::default(),
+            greeting: GREETINGS[pick % GREETINGS.len()],
+            last_pass: 0,
+            last_account: String::new(),
+            guild_asked: 0,
+        }
     }
 }
 
@@ -225,6 +233,10 @@ impl Profile {
                     b.add_space(20.0);
                     ui.allocate_exact_size(vec2(inner.width(), b.min_rect().height() + 16.0), Sense::hover());
                 });
+            }
+            1 => {
+                let body = ui.available_rect_before_wrap();
+                self.quests.show(&mut ui, c, body);
             }
             _ => {
                 muted(&mut ui, "Coming soon.");

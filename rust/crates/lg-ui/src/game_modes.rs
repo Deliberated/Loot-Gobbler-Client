@@ -483,6 +483,25 @@ fn card(
     // the gift chest (rewards of missions and quests it solved alone that fit its mode)
     let standing = r.marked && r.broken.is_none() && c.alive;
     let mut mission_lines: Vec<(String, Vec<crate::widgets::TipLine>)> = Vec::new();
+    // its bank: the forge resources its character gained while playing the run (counted when the amounts rose)
+    if let Some(bank) = app.resources.banks.get(&r.char_id).filter(|b| !b.is_empty()) {
+        let mut parts: Vec<String> = Vec::new();
+        for (k, v) in bank.dust.iter().filter(|(_, v)| **v > 0) {
+            parts.push(format!("+{} {}", num(*v), crate::inventory::dust_name(*k)));
+        }
+        for (k, v) in bank.materials.iter().filter(|(_, v)| **v > 0) {
+            parts.push(format!("+{} {}", num(*v), crate::inventory::material_name(*k)));
+        }
+        if bank.forgefire > 0 {
+            parts.push(format!("+{} Forgefire", num(bank.forgefire)));
+        }
+        let tip = vec![vec![(
+            "What this run's character gained while playing it: its own, whatever the account's amounts are now".into(),
+            None,
+            false,
+        )]];
+        mission_lines.push((format!("Its own forge resources: {}", parts.join(", ")), tip));
+    }
     if standing {
         let name_of = |k: &str| app.missions.by_key(k).and_then(|m| m.name.clone()).unwrap_or_else(|| format!("mission {k}"));
         let working: Vec<String> =

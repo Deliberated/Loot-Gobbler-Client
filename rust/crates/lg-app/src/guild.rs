@@ -348,7 +348,7 @@ pub fn total(data: &lg_gamedata::GameData, w: &crate::server::ScoreWeights, tall
     tenths(tally.iter().map(|t| t.count as f64 * score(data, w, t.item_id, &t.r#where, t.enchants)).sum())
 }
 
-fn grouped(n: i64) -> String {
+pub(crate) fn grouped(n: i64) -> String {
     let s = n.abs().to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {

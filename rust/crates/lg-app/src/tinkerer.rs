@@ -2,7 +2,7 @@
 //!
 //! Not yet: writing the file.
 
-use lg_protocol::packets::data::Quest;
+pub use lg_protocol::packets::data::Quest;
 
 #[derive(Debug, Default)]
 pub struct Tinkerer {

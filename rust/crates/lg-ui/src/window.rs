@@ -271,6 +271,7 @@ impl Window {
                 self.characters.page = 0;
                 self.characters.selected = id.parse().unwrap_or(0);
             }
+            ("Profile", p) => self.profile.page = ["", "quests", "stats"].iter().position(|x| *x == p).unwrap_or(0),
             ("Battles", p) => self.battles.page = ["", "dps", "overlay"].iter().position(|x| *x == p).unwrap_or(0),
             ("Social", p) => self.social.page = ["", "quests", "discord"].iter().position(|x| *x == p).unwrap_or(0),
             ("Guild", p) => self.guild.page = GUILD_PAGES.iter().position(|x| *x == p).unwrap_or(0),

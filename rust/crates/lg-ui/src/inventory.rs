@@ -4,7 +4,7 @@
 
 use crate::detail::{Rarity, enchant_badge, uv};
 use crate::jtext;
-use crate::profile::Ctx;
+use crate::profile::{Ctx, num};
 use crate::theme::{Palette, fixed, mix};
 use crate::widgets::{self, small, text};
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
@@ -130,6 +130,9 @@ impl InventoryView {
         ) {
             self.page = i;
         }
+        // the forge resources, right-aligned on the same row: the regular side at the right, the seasonal one before it
+        let pages_end = all.left() + 8.0 + 34.0 + 8.0 + 330.0;
+        resource_row(ui, &p, c.icons, app, pos2(all.right(), all.top()), 36.0, pages_end);
         let mut body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
         let column = c.props.get("collectionUpeColumn") == Some("true");
         if column {
@@ -1448,5 +1451,138 @@ impl InventoryView {
             g.chunk += 1;
         }
         ctx.request_repaint();
+    }
+}
+
+/// A forge resource's look: its name, and how it is drawn (an item's sprite, or a gem in its colour).
+enum Look {
+    Sprite(i32),
+    Gem(Color32),
+    Flame,
+    Unknown,
+}
+
+/// Materials by kind (decoded 2026-11-22: 1 silver, 2 gold, 3 red, 4 purple crystal).
+fn material(kind: i32) -> (String, Look) {
+    match kind {
+        1 => ("Silver material".into(), Look::Gem(Color32::from_rgb(0xC9, 0xCC, 0xD6))),
+        2 => ("Gold material".into(), Look::Gem(Color32::from_rgb(0xE8, 0xB5, 0x3C))),
+        3 => ("Red material".into(), Look::Gem(Color32::from_rgb(0xD0, 0x3C, 0x3C))),
+        4 => ("Purple crystal".into(), Look::Gem(Color32::from_rgb(0x9C, 0x5C, 0xE8))),
+        k => (format!("Material {k}"), Look::Unknown),
+    }
+}
+
+/// Dust by kind: 4 is purple (its maximum grew with a Purple Dust Cap Extender); 1 and 5 are green and red, not
+/// known yet which is which (both were full when seen).
+fn dust(kind: i32) -> (String, Look) {
+    match kind {
+        4 => ("Purple dust".into(), Look::Sprite(1120)), // the Purple Dust Charm's sprite
+        1 | 5 => (format!("Green or red dust (kind {kind}: which one shows once it changes)"), Look::Unknown),
+        k => (format!("Dust kind {k}"), Look::Unknown),
+    }
+}
+
+/// A material's name (for the game mode run's bank).
+pub fn material_name(kind: i32) -> String {
+    material(kind).0
+}
+
+/// A dust kind's short name (for the game mode run's bank).
+pub fn dust_name(kind: i32) -> String {
+    match kind {
+        4 => "purple dust".into(),
+        k => format!("dust {k}"),
+    }
+}
+
+/// The forge resources of both sides (as last seen), right to left from `right`, not past `left_limit`.
+fn resource_row(ui: &Ui, p: &Palette, icons: &mut crate::icons::Icons, app: &lg_app::App, right: egui::Pos2, h: f32, left_limit: f32) {
+    let painter = ui.painter().clone();
+    let data = app.world.data();
+    let f = text(18.0);
+    let small_f = widgets::small();
+    const ICON: f32 = 22.0;
+    let mut x = right.x - 4.0;
+    let cy = right.y + h / 2.0;
+    for (label, side) in [("Regular", app.resources.regular.as_ref()), ("Seasonal", app.resources.seasonal.as_ref())] {
+        let Some(side) = side else { continue };
+        let mut entries: Vec<(String, Look, i32, Option<i32>)> = Vec::new();
+        for (k, (v, max)) in &side.materials {
+            let (n, look) = material(*k);
+            entries.push((n, look, *v, Some(*max)));
+        }
+        for (k, (v, max)) in &side.dust {
+            if *v == 0 && matches!(k, 2 | 3) {
+                continue; // empty kinds the game does not show either
+            }
+            let (n, look) = dust(*k);
+            entries.push((n, look, *v, Some(*max)));
+        }
+        if let Some(fire) = side.forgefire {
+            entries.push(("Forgefire".into(), Look::Flame, fire, None));
+        }
+        let widths: Vec<f32> = entries.iter().map(|e| ICON + 4.0 + jtext::width(&painter, &num(i64::from(e.2)), &f) + 14.0).collect();
+        let label_w = jtext::width(&painter, &label.to_uppercase(), &small_f) + 10.0;
+        let total: f32 = widths.iter().sum::<f32>() + label_w;
+        if x - total < left_limit {
+            break; // no room: the side further left is left out
+        }
+        for (e, w) in entries.iter().zip(&widths).rev() {
+            x -= w;
+            let r = Rect::from_min_size(pos2(x, cy - ICON / 2.0), vec2(ICON, ICON));
+            match &e.1 {
+                Look::Sprite(id) => {
+                    if let Some(t) = icons.object(ui.ctx(), data, *id, ICON as u32) {
+                        painter.image(t.id(), r, uv(), Color32::WHITE);
+                    }
+                }
+                Look::Gem(col) => {
+                    let c = r.center();
+                    let pts =
+                        vec![pos2(c.x, r.top() + 2.0), pos2(r.right() - 3.0, c.y), pos2(c.x, r.bottom() - 2.0), pos2(r.left() + 3.0, c.y)];
+                    painter.add(egui::Shape::convex_polygon(pts, *col, Stroke::new(1.5, Color32::BLACK)));
+                    painter.line_segment(
+                        [pos2(c.x - 3.0, c.y - 3.0), pos2(c.x, r.top() + 5.0)],
+                        Stroke::new(1.5, Color32::from_white_alpha(170)),
+                    );
+                }
+                Look::Flame => {
+                    let c = r.center();
+                    let blue = Color32::from_rgb(0x3C, 0x8C, 0xFF);
+                    let outer = vec![
+                        pos2(c.x, r.top() + 1.0),
+                        pos2(r.right() - 4.0, c.y + 3.0),
+                        pos2(c.x, r.bottom() - 1.0),
+                        pos2(r.left() + 4.0, c.y + 3.0),
+                    ];
+                    painter.add(egui::Shape::convex_polygon(outer, blue, Stroke::NONE));
+                    let inner =
+                        vec![pos2(c.x, c.y - 2.0), pos2(c.x + 3.0, c.y + 4.0), pos2(c.x, r.bottom() - 3.0), pos2(c.x - 3.0, c.y + 4.0)];
+                    painter.add(egui::Shape::convex_polygon(inner, Color32::from_rgb(0xCF, 0xE8, 0xFF), Stroke::NONE));
+                }
+                Look::Unknown => {
+                    painter.circle(r.center(), ICON / 2.0 - 3.0, p.header, Stroke::new(1.5, fixed::MUTED));
+                    jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, "?", &small_f, fixed::MUTED);
+                }
+            }
+            let full = e.3.is_some_and(|m| m > 0 && e.2 >= m);
+            let tr = jtext::draw(
+                &painter,
+                pos2(r.right() + 4.0, cy),
+                Align2::LEFT_CENTER,
+                &num(i64::from(e.2)),
+                &f,
+                if full { fixed::GOLD } else { p.ink },
+            );
+            let tip = match e.3 {
+                Some(m) if m > 0 => format!("{}: {} / {} ({})", e.0, num(i64::from(e.2)), num(i64::from(m)), label.to_lowercase()),
+                _ => format!("{}: {} ({})", e.0, num(i64::from(e.2)), label.to_lowercase()),
+            };
+            widgets::tip(ui, r.union(tr), ("resource", label, e.0.as_str()), &tip);
+        }
+        x -= label_w;
+        jtext::draw(&painter, pos2(x + 4.0, cy), Align2::LEFT_CENTER, &label.to_uppercase(), &small_f, fixed::MUTED);
+        x -= 18.0;
     }
 }

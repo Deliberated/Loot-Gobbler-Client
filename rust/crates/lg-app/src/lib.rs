@@ -91,7 +91,7 @@ pub struct App {
     pub exalts: exalt_store::ExaltStore,
     pub moonlight: moonlight::Moonlight,
     pub amulet_saves: amulet_saves::AmuletSaves,
-    /// Forge resources, logged for now (see `resources`).
+    /// Forge resources per side and each game mode run's bank (see `resources`).
     pub resources: resources::Resources,
     pub cooldowns: item_cooldowns::ItemCooldowns,
     pub vitals: item_cooldowns::Vitals,
@@ -182,7 +182,7 @@ impl App {
             exalts,
             moonlight: moonlight::Moonlight::default(),
             amulet_saves,
-            resources: resources::Resources::default(),
+            resources: java_data.map(resources::Resources::load).unwrap_or_default(),
             cooldowns: item_cooldowns::ItemCooldowns::new(),
             vitals: item_cooldowns::Vitals::default(),
             pets: java_data.map(pet_store::PetStore::import).unwrap_or_default(),
@@ -309,7 +309,12 @@ impl App {
                 self.dungeon_visits.hits(&f, &self.characters, false, now);
                 self.moonlight.tick(&self.world, &mut self.dungeon_visits, now);
                 self.amulet_saves.tick(&self.world, &mut self.dungeon_visits, now);
-                self.resources.tick(&self.world);
+                if let Some(me) = self.world.me() {
+                    let id = me.char_id;
+                    let seasonal = self.characters.get(id).is_some_and(|c| c.seasonal);
+                    let standing = self.upe.runs.get(&id).is_some_and(|r| r.marked && r.standing());
+                    self.resources.tick(&self.world, seasonal, standing, now);
+                }
                 self.cooldowns.armor_tick(&self.world, now);
                 self.vitals.tick(&self.world, now);
                 let me = self.world.me().cloned();

@@ -30,6 +30,7 @@ pub mod pets;
 pub mod profile;
 pub mod profile_guild;
 pub mod quest_map;
+pub mod quests;
 pub mod server;
 pub mod settings;
 pub mod shell;

@@ -129,6 +129,9 @@ impl App {
         if std::mem::take(&mut self.upe.dirty) {
             write("upe.json", upe(&mut self.upe))?;
         }
+        if std::mem::take(&mut self.resources.dirty) {
+            write("resources.json", self.resources.json())?;
+        }
         if std::mem::take(&mut self.dps_history.dirty) {
             write("dps_history.json", runs(&self.dps_history))?;
         }
