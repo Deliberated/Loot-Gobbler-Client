@@ -63,7 +63,12 @@ jobs:
           Loot Gobbler for Linux
 
           Start it with ./LootGobbler (its records are kept next to it).
-          To capture the game it needs the right to read network traffic, once:
+          To capture the game it needs libpcap and the right to read network traffic.
+          The first time you start the sniffer it asks for your password, installs what
+          is missing, gives itself the right and starts again (it asks once more after
+          each update). Without a password prompt, it shows the commands to run instead,
+          e.g. on Ubuntu:
+              sudo apt-get install -y libpcap0.8t64 libcap2-bin
               sudo setcap cap_net_raw,cap_net_admin=eip ./LootGobbler
           TXT
           tar -C dist -czf dist/LootGobbler-linux-x86_64.tar.gz LootGobbler

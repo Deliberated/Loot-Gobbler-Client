@@ -60,6 +60,10 @@ pub enum Ask {
     OpenUrl(String),
     /// The first start's greeting: the Java app's records taken over from this folder (the app starts again).
     TakeOverJava(String),
+    /// Linux: the system's password prompt gives the program the right to capture (then it starts again).
+    GrantCapture,
+    /// Start the app again once this one has saved and closed (a granted capture right applies to a new start).
+    Restart,
 }
 
 /// What the Server tab asks of the server (Java `ServerPanel`'s buttons).

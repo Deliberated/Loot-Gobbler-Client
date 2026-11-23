@@ -14,6 +14,7 @@
 //! `--pcap`: a recording played first, as if it happened now (without a window: instead of capturing).
 //! `--no-window`: no window; captures at once until Ctrl+C.
 
+mod capture_setup;
 mod gui;
 mod net;
 mod sound;
@@ -286,10 +287,10 @@ fn capture(app: &mut lg_app::App, own: &Path) -> ExitCode {
         Ok(c) => c,
         Err(e) => {
             lg_app::applog::err(&format!("{e}"));
-            if matches!(e, lg_capture::live::Error::Permission(_)) && cfg!(target_os = "linux") {
-                eprintln!(
-                    "Run it as root, or give it the capture rights once:\n  sudo setcap cap_net_raw,cap_net_admin=eip <path to loot-gobbler>"
-                );
+            let pcap_missing = matches!(e, lg_capture::live::Error::NoLibrary(_));
+            if cfg!(target_os = "linux") && (pcap_missing || matches!(e, lg_capture::live::Error::Permission(_))) {
+                let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("./LootGobbler"));
+                eprintln!("Run it as root, or set it up once:\n{}", capture_setup::Plan::now(pcap_missing).manual(&exe));
             }
             return ExitCode::FAILURE;
         }

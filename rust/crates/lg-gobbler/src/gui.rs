@@ -51,6 +51,12 @@ pub struct Gui {
     notes: Option<std::sync::mpsc::Receiver<Result<Vec<lg_ui::welcome::Note>, String>>>,
     /// The app started again to take over the Java app's records: this one closes without writing anything.
     handing_over: bool,
+    /// Linux: the password prompt giving the capture right is open; its answer comes here.
+    granting: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    /// Start the app again once this one has saved and closed.
+    restart_on_exit: bool,
+    /// The capture setup offered also installs libpcap.
+    setup_pcap: bool,
 }
 
 impl Gui {
@@ -77,6 +83,9 @@ impl Gui {
             restarting: None,
             notes: None,
             handing_over: false,
+            granting: None,
+            restart_on_exit: false,
+            setup_pcap: false,
         };
         // the first start's greeting offers the Java app's records, ticked when its folder holds some
         g.window.java_offer =
@@ -106,13 +115,113 @@ impl Gui {
             }
             Err(e) => {
                 lg_app::applog::err(&format!("{e}"));
-                let line = if matches!(e, lg_capture::live::Error::Permission(_)) && cfg!(target_os = "linux") {
-                    "Capturing needs the rights: sudo setcap cap_net_raw,cap_net_admin=eip <path to loot-gobbler>".to_string()
-                } else {
-                    format!("The sniffer could not start: {e}")
+                let linux = cfg!(target_os = "linux");
+                let line = match e {
+                    lg_capture::live::Error::Permission(_) if linux => {
+                        self.offer_setup(false);
+                        "The sniffer is not allowed to capture yet.".to_string()
+                    }
+                    lg_capture::live::Error::NoLibrary(_) if linux => {
+                        self.offer_setup(true);
+                        "The sniffer needs libpcap, which is not installed.".to_string()
+                    }
+                    e => format!("The sniffer could not start: {e}"),
                 };
                 let time = self.app.zone.local_date_time(now_ms());
                 self.app.chat.system(&line, time.get(11..).unwrap_or(""));
+            }
+        }
+    }
+
+    fn exe() -> PathBuf {
+        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("./LootGobbler"))
+    }
+
+    /// Linux, capturing not possible yet (Java `LinuxCaptureGUI`): one click asks for the password, installs what is
+    /// missing (libpcap, setcap) and gives this program the right; where the app cannot do that, the commands for a
+    /// terminal.
+    fn offer_setup(&mut self, pcap_missing: bool) {
+        if self.granting.is_some() {
+            return;
+        }
+        let plan = crate::capture_setup::Plan::now(pcap_missing);
+        let missing = plan.missing();
+        let why = if pcap_missing {
+            "Loot Gobbler needs libpcap to read the game's network traffic, and the permission to do so."
+        } else {
+            "Loot Gobbler is not allowed to read network packets yet."
+        };
+        let ask = if plan.by_itself() {
+            let install = if missing.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " It installs {} first ({} packages), then gives the permission.",
+                    missing.join(" and "),
+                    plan.packages.map_or("", |p| p.name)
+                )
+            };
+            self.setup_pcap = pcap_missing;
+            lg_ui::window::Ask::Confirm {
+                title: "Allow packet capture".into(),
+                text: format!(
+                    "{why}\n\nLinux only lets programs do that with a one-time permission. Click GRANT PERMISSION and enter your password.{install} Loot Gobbler then starts again and the sniffer runs.\n\nAfter an update it asks once more. The installed package (rpm) does this by itself."
+                ),
+                yes: "Grant permission".into(),
+                no: "Not now".into(),
+                then: Box::new(lg_ui::window::Ask::GrantCapture),
+            }
+        } else {
+            lg_ui::window::Ask::Confirm {
+                title: "Allow packet capture".into(),
+                text: format!(
+                    "{why}\n\nSet it up once in a terminal (the permission again after every update), then start Loot Gobbler again:\n\n{}",
+                    plan.manual(&Self::exe())
+                ),
+                yes: "OK".into(),
+                no: String::new(),
+                then: Box::new(lg_ui::window::Ask::Nothing),
+            }
+        };
+        self.window.ask(ask);
+    }
+
+    /// The password prompt on its own thread (the window goes on drawing); its answer is taken in `granted`.
+    fn grant_capture(&mut self) {
+        let plan = crate::capture_setup::Plan::now(self.setup_pcap);
+        let exe = Self::exe();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.granting = Some(rx);
+        std::thread::spawn(move || {
+            let _ = tx.send(plan.run(&exe));
+        });
+    }
+
+    /// The password prompt's answer: granted, the app starts again (with the sniffer on); else how to do it by hand.
+    fn granted(&mut self) {
+        let Some(rx) = &self.granting else { return };
+        let Ok(result) = rx.try_recv() else { return };
+        self.granting = None;
+        match result {
+            Ok(()) => {
+                lg_app::applog::line("sniffer", "capture right granted, starting again");
+                self.set("sniffer", "T");
+                self.window.ask(lg_ui::window::Ask::Confirm {
+                    title: "Allow packet capture".into(),
+                    text: "Permission granted. Loot Gobbler starts again now.".into(),
+                    yes: "OK".into(),
+                    no: String::new(),
+                    then: Box::new(lg_ui::window::Ask::Restart),
+                });
+            }
+            Err(why) => {
+                lg_app::applog::err(&format!("capture right not granted: {why}"));
+                let plan = crate::capture_setup::Plan::now(self.setup_pcap);
+                let text = format!(
+                    "{why}\n\nYou can also set it up in a terminal, then start Loot Gobbler again:\n\n{}",
+                    plan.manual(&Self::exe())
+                );
+                self.message("Packet capture not allowed", &text);
             }
         }
     }
@@ -612,6 +721,12 @@ impl eframe::App for Gui {
         if let Err(e) = self.app.save_changed(&self.own) {
             lg_app::applog::err(&format!("cannot save into {}: {e}", self.own.display()));
         }
+        if self.restart_on_exit {
+            let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+            if let Err(e) = std::env::current_exe().and_then(|exe| std::process::Command::new(exe).args(&args).spawn()) {
+                lg_app::applog::err(&format!("cannot start again: {e}"));
+            }
+        }
     }
 
     /// The mouse wheel scrolls as in the Java app (see `widgets::java_wheel`).
@@ -639,6 +754,10 @@ impl eframe::App for Gui {
         self.window.shell.overlays_on = ids.iter().any(|id| self.window.props.get(&on_key(id)) == Some("true"));
         self.sounds();
         self.chosen();
+        self.granted();
+        if self.granting.is_some() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+        }
         self.server(ui.ctx());
         // what the views asked for last frame is done before this one is drawn
         if !self.handing_over
@@ -686,6 +805,11 @@ impl eframe::App for Gui {
                 },
                 lg_ui::window::Ask::ReleaseNotes => self.release_notes(),
                 lg_ui::window::Ask::TakeOverJava(dir) => self.take_over_java(&ui.ctx().clone(), &dir),
+                lg_ui::window::Ask::GrantCapture => self.grant_capture(),
+                lg_ui::window::Ask::Restart => {
+                    self.restart_on_exit = true;
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
                 lg_ui::window::Ask::OpenUrl(url) => {
                     let url = if url.is_empty() { lg_net::updater::releases_page() } else { url };
                     if let Err(e) = lg_ui::info::open_url(&url) {

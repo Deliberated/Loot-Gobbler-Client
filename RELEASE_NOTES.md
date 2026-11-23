@@ -5,6 +5,7 @@ v0.0.1: The first Rust build of Loot Gobbler
 - Keeps its records in the Java app's formats; its first start offers to take over the Java app's records and settings, from the Java app's default folder or one you pick
 - Finds the game's files by itself and reads the game data from them
 - Windows (exe or portable zip) and Linux (rpm or portable tar.gz)
+- Linux: when the sniffer cannot capture yet, one click asks for your password, installs what is missing (libpcap, setcap), gives the permission and starts Loot Gobbler again
 
 **Profile:** 
 - The overview's fame graph of the last 24 hours: every dungeon's portal above the line, the guildmates who fought with you above it, hours without fame cut out
