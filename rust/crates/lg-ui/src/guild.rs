@@ -735,7 +735,7 @@ fn member(ui: &mut Ui, c: &mut Ctx, body: Rect) {
 }
 
 /// The sky with its stars and moon, the hills, the road with its moving lines (Java `Scene.paintBackdrop`).
-pub fn backdrop(painter: &egui::Painter, r: Rect, phase: i64, k: f32) {
+pub fn backdrop(painter: &egui::Painter, r: Rect, phase: f64, k: f32) {
     const HEIGHT: f32 = 440.0;
     // drawn at scale k (the Profile's small wagon: half size)
     let w = (r.width() / k).floor();
@@ -747,7 +747,7 @@ pub fn backdrop(painter: &egui::Painter, r: Rect, phase: i64, k: f32) {
     for i in 0..40 {
         let sx = i64::from(rnd.next_int(10_000));
         let sy = 8 + rnd.next_int(150);
-        let dim = (phase / 12 + i) % 7 == 0;
+        let dim = (phase as i64 / 12 + i) % 7 == 0;
         // Color.darker() twice: 0.7 * 0.7
         let c = if dim {
             Color32::from_rgb(
@@ -793,14 +793,15 @@ pub fn backdrop(painter: &egui::Painter, r: Rect, phase: i64, k: f32) {
     hills(HEIGHT - 110.0, 90.0, rgb(0x24301F), &[50, 30, 60, 35, 55, 30, 60, 40, 60]);
     painter.rect_filled(Rect::from_min_size(at(0.0, HEIGHT - 112.0), sz(w, 112.0)), 0.0, rgb(0x4A3522));
     painter.rect_filled(Rect::from_min_size(at(0.0, HEIGHT - 112.0), sz(w, 4.0)), 0.0, rgb(0x6B4E2E));
-    let mut x = -52 + (phase * 2) % 52;
-    while (x as f32) < w {
-        painter.rect_filled(Rect::from_min_size(at(x as f32, HEIGHT - 50.0), sz(26.0, 4.0)), 0.0, rgb(0x6B4E2E));
-        x += 52;
+    // the dashes roll by smoothly (two pixels per 70 ms step, with the fraction)
+    let mut x = -52.0 + (phase * 2.0).rem_euclid(52.0) as f32;
+    while x < w {
+        painter.rect_filled(Rect::from_min_size(at(x, HEIGHT - 50.0), sz(26.0, 4.0)), 0.0, rgb(0x6B4E2E));
+        x += 52.0;
     }
-    let mut x = -40 + (phase * 2) % 40;
-    while (x as f32) < w {
-        painter.rect_filled(Rect::from_min_size(at(x as f32, HEIGHT - 22.0), sz(14.0, 4.0)), 0.0, rgb(0x3A2818));
-        x += 40;
+    let mut x = -40.0 + (phase * 2.0).rem_euclid(40.0) as f32;
+    while x < w {
+        painter.rect_filled(Rect::from_min_size(at(x, HEIGHT - 22.0), sz(14.0, 4.0)), 0.0, rgb(0x3A2818));
+        x += 40.0;
     }
 }

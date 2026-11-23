@@ -151,7 +151,8 @@ struct Scene<'a> {
     weights: &'a lg_app::server::ScoreWeights,
     riders: Vec<&'a CaravanMember>,
     walkers: Vec<&'a CaravanMember>,
-    phase: i64,
+    /// Animation time in steps of 70 ms, with the fraction: the wheels and the road move smoothly, the legs step.
+    phase: f64,
     picked: i64,
     me: i64,
     gold: Color32,
@@ -194,9 +195,9 @@ impl Scene<'_> {
     }
 
     fn paint_ox(&self, p: &egui::Painter, t: &T, x: f32, ground: f32) {
-        let half = (self.phase / 4 % 2) as f32;
+        let half = (self.phase as i64 / 4 % 2) as f32;
         let y = ground - 96.0 - half * 2.0;
-        let step = if self.phase / 4 % 2 == 0 { 3.0 } else { -3.0 };
+        let step = if self.phase as i64 / 4 % 2 == 0 { 3.0 } else { -3.0 };
         block(p, t, x + 22.0, y + 22.0, 76.0, 40.0, WOOD);
         block(p, t, x, y + 10.0, 30.0, 28.0, WOOD);
         p.rect_filled(t.r(x + 6.0, y + 18.0, 5.0, 5.0), 0.0, DARK);
@@ -212,10 +213,10 @@ impl Scene<'_> {
         let c = t.p(cx, cy);
         p.circle_filled(c, 19.0 * t.f, WOOD_DARK);
         p.circle_stroke(c, 17.0 * t.f, Stroke::new(5.0 * t.f, INK));
-        let a = -(self.phase as f64) * 0.18;
+        let a = -self.phase * 0.18;
         for i in 0..2 {
             let s = a + f64::from(i) * std::f64::consts::FRAC_PI_2;
-            let (dx, dy) = ((s.cos() * 14.0).round() as f32, (s.sin() * 14.0).round() as f32);
+            let (dx, dy) = ((s.cos() * 14.0) as f32, (s.sin() * 14.0) as f32); // not rounded: they turn smoothly
             p.line_segment([t.p(cx - dx, cy - dy), t.p(cx + dx, cy + dy)], Stroke::new(4.0 * t.f, INK));
         }
     }
@@ -330,8 +331,8 @@ impl Scene<'_> {
         hits: &mut Hits,
     ) {
         let bed_y = ground - 32.0 - BED_H;
-        let bob = (2.0 * (self.phase as f64 * 0.25 + index as f64).sin()).round() as f32;
-        let loot_bob = (2.0 * (self.phase as f64 * 0.06 + index as f64).sin()).round() as f32;
+        let bob = (2.0 * (self.phase * 0.25 + index as f64).sin()).round() as f32;
+        let loot_bob = (2.0 * (self.phase * 0.06 + index as f64).sin()).round() as f32;
         let mine = m.id == self.me;
         let (mut pile_items, copies) = pile(m);
         pile_items.reverse(); // drawn from the bottom up
@@ -427,7 +428,7 @@ impl Scene<'_> {
         ground: f32,
         hits: &mut Hits,
     ) {
-        let step = ((self.phase / 4 + index as i64) % 2) as f32 * 2.0;
+        let step = ((self.phase as i64 / 4 + index as i64) % 2) as f32 * 2.0;
         let top = ground - DRIVER + 2.0 - step;
         let fx = x + ((slot - DRIVER) / 2.0).floor();
         block(p, t, fx + 40.0, top + 22.0, 18.0, 24.0, WOOD);
@@ -457,7 +458,7 @@ pub fn small_wagon(
     m: &CaravanMember,
     gold: Color32,
     at: Pos2,
-    phase: i64,
+    phase: f64,
 ) -> Rect {
     const ZOOM: f32 = 0.5;
     const WAGON_SKY: f32 = 10.0;
@@ -483,6 +484,13 @@ pub fn small_wagon(
     p2.rect_filled(t.r(PAD + OX_W, ground - 40.0, BAR, 4.0), 0.0, INK);
     scene.wagon(ui, icons, &p2, &t, m, 0, PAD + OX_W + BAR, ground, 0.0, &mut hits);
     shown
+}
+
+/// The animation's time (in steps of 70 ms, with the fraction) from the frame clock, and the next frame asked for
+/// soon: the wheels and the road roll on smoothly while a caravan is shown.
+pub fn phase(ui: &Ui) -> f64 {
+    ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
+    ui.input(|i| i.time) * 1000.0 / 70.0
 }
 
 /// "12 min ago" from a find's local time.
@@ -571,7 +579,7 @@ impl CaravanView {
                         weights,
                         riders,
                         walkers,
-                        phase: now / 70,
+                        phase: phase(ui),
                         picked,
                         me,
                         gold: p.gold,

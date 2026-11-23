@@ -671,7 +671,16 @@ pub fn guild_card(
     let f = text(18.0);
     let fh = jtext::height(&painter, &f);
     let y1 = top.y + cap_h + 6.0;
-    let wr = crate::caravan::small_wagon(ui, icons, app.world.data(), &app.server.weights, wagon, p.gold, pos2(top.x, y1), now / 70);
+    let wr = crate::caravan::small_wagon(
+        ui,
+        icons,
+        app.world.data(),
+        &app.server.weights,
+        wagon,
+        p.gold,
+        pos2(top.x, y1),
+        crate::caravan::phase(ui),
+    );
     // the quest map: the next dungeon's portal, "Next: ...", how far the guild got
     let qx = wr.right() + 48.0;
     let q_lines: Option<(String, String, bool, i32)> = g.map.as_ref().filter(|m| !m.dungeons.is_empty()).map(|m| {

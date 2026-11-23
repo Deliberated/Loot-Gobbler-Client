@@ -86,7 +86,7 @@ pub fn welcome(ctx: &egui::Context, p: &Palette, offer: &mut Option<JavaOffer>) 
     let icon = icon(ctx);
     let modal = egui::Modal::new(egui::Id::unique("welcome")).frame(egui::Frame::NONE).show(ctx, |ui| {
         let painter = ui.painter().clone();
-        // as wide as the wider of the heading and the 330 px the words wrap at (Java's dialog fits its content)
+        // as wide as the heading (at least 330 px); the words wrap at that width, using the room beside the goblin
         let col = jtext::width(&painter, "Hello fellow realmer!", &theme::head(46.0)).max(330.0);
         let w = 16.0 + 32.0 + 128.0 + 28.0 + col + 32.0 + 16.0;
         let body = theme::body(25.0);
@@ -95,13 +95,13 @@ pub fn welcome(ctx: &egui::Context, p: &Palette, offer: &mut Option<JavaOffer>) 
                 .into(),
             body.clone(),
             p.ink,
-            330.0,
+            col,
         );
         let g2 = painter.layout(
             "When you're ready to start, click \"Start Sniffer\" in the bottom right and start your game".into(),
             body,
             p.ink,
-            330.0,
+            col,
         );
         let head = theme::head(46.0);
         let text_h = 6.0 + jtext::height(&painter, &head) + 8.0 + g1.size().y + 18.0 + g2.size().y;
