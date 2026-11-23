@@ -6,6 +6,10 @@ v0.0.1: The first Rust build of Loot Gobbler
 - Finds the game's files by itself and reads the game data from them
 - Windows (exe or portable zip) and Linux (rpm or portable tar.gz)
 
+**Profile:** 
+- The overview's fame graph of the last 24 hours: every dungeon's portal above the line, the guildmates who fought with you above it, hours without fame cut out
+- Click a portal to open that dungeon under Battles
+
 **Focus:** 
 - Pick a game mode run as the focus: a gold line above the tabs, the run's box hanging from it, the open door to leave it again
 - While focused, the Inventory shows the run's own finds and only its side of the forge resources, and Quests lists only the missions it can still do alone

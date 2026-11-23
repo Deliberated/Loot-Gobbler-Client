@@ -1001,7 +1001,7 @@ fn gained_text(gain: i64, range: usize) -> String {
 }
 
 /// Java `CharacterStore.combinedGain`: the steps of all characters' fame since a time, added up from 0.
-fn combined_gain(chars: &[&Char], since: i64) -> Vec<(i64, i64)> {
+pub(crate) fn combined_gain(chars: &[&Char], since: i64) -> Vec<(i64, i64)> {
     let mut steps = Vec::new();
     for c in chars {
         let mut prev: Option<&lg_app::characters::Sample> = None;
@@ -1032,7 +1032,7 @@ fn combined_gain(chars: &[&Char], since: i64) -> Vec<(i64, i64)> {
 }
 
 /// The dungeon visits, oldest first, with their portals, to mark on a fame chart.
-fn visit_marks(app: &lg_app::App, icons: &mut Icons, ctx: &egui::Context) -> Vec<charts::Mark> {
+pub(crate) fn visit_marks(app: &lg_app::App, icons: &mut Icons, ctx: &egui::Context) -> Vec<charts::Mark> {
     let mut v: Vec<&lg_app::dungeon_visits::Visit> = app.dungeon_visits.visits.iter().chain(app.dungeon_visits.current.iter()).collect();
     v.sort_by_key(|x| x.start);
     let data = app.world.data();

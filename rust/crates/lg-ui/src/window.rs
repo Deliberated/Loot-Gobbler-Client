@@ -285,6 +285,11 @@ impl Window {
                 self.characters.selected = id.parse().unwrap_or(0);
             }
             ("Profile", p) => self.profile.page = ["", "quests", "stats"].iter().position(|x| *x == p).unwrap_or(0),
+            ("Battles", p) if p.starts_with("visit:") => {
+                // a dungeon visit under Battles > Dungeons
+                self.battles.page = 0;
+                self.battles.selected = p[6..].parse().unwrap_or(0);
+            }
             ("Battles", p) => self.battles.page = ["", "dps", "overlay"].iter().position(|x| *x == p).unwrap_or(0),
             ("Social", p) => self.social.page = ["", "quests", "discord"].iter().position(|x| *x == p).unwrap_or(0),
             ("Guild", p) => self.guild.page = GUILD_PAGES.iter().position(|x| *x == p).unwrap_or(0),

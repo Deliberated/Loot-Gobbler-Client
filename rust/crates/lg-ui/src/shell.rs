@@ -186,7 +186,7 @@ impl Shell {
             Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             Color32::WHITE,
         );
-        jtext::draw(&painter, menu.center(), Align2::CENTER_CENTER, "Loot Gobbler by Gunshit", &theme::head(22.0), p.title_fg);
+        jtext::draw(&painter, menu.center(), Align2::CENTER_CENTER, "Loot Gobbler", &theme::head(22.0), mix(p.title_fg, p.gold, 0.5));
         // minimize, maximize / restore, close
         let mut bx = menu.right();
         for which in [2, 1, 0] {

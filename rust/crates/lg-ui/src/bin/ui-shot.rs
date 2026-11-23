@@ -270,6 +270,20 @@ fn main() {
                 app.server.mates.looks.insert(key, Looks::Got([("valhirs".to_string(), vec![look])].into_iter().collect()));
             }
         }
+        // "Profile:mates": the overview with the players of your recent runs as guildmates
+        if tab == "Profile:mates" {
+            let names: std::collections::HashSet<String> = app
+                .dps_history
+                .runs
+                .iter()
+                .take(20)
+                .flat_map(|r| r.bosses.iter().flat_map(|b| b.players.iter()))
+                .filter(|p| !p.me)
+                .take(3)
+                .map(|p| p.name.to_lowercase())
+                .collect();
+            app.server.mates.names = names;
+        }
         let admin = tab == "Server:admin";
         let shown = if mates_visit.is_some() {
             "Battles".to_string()

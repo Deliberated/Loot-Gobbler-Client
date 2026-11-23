@@ -8,7 +8,7 @@ use std::path::PathBuf;
 pub fn viewport(props: &lg_app::properties::Properties) -> egui::ViewportBuilder {
     // its own title bar, as the Java app's (FlatLaf's): no frame of the system's
     let mut v = egui::ViewportBuilder::default()
-        .with_title("Loot Gobbler by Gunshit")
+        .with_title("Loot Gobbler")
         .with_app_id("lootgobbler")
         .with_decorations(false)
         .with_min_inner_size([640.0, 420.0]);

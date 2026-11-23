@@ -4,7 +4,7 @@
 use crate::icons::Icons;
 use crate::theme::{Palette, fixed};
 use crate::widgets::{self, caption, heading, label, muted, row, soft, text};
-use egui::{Color32, Sense, Ui, pos2, vec2};
+use egui::{Color32, Rect, Sense, Ui, pos2, vec2};
 use lg_app::App;
 use lg_app::characters::{Char, Characters, DAY_MS};
 
@@ -372,7 +372,7 @@ fn player_card(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, now: i64,
 
     if let Some(m) = most {
         ui.add_space(16.0);
-        fame_gain(ui, p, chars, m, now);
+        fame_gain(ui, p, app, icons, chars, m, now);
     }
     // the Newcomer's Guide frames all of the card
     let m = ui.max_rect();
@@ -503,8 +503,9 @@ fn character_block(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, c: &C
     }
 }
 
-/// The fame all characters gained in the last 24 hours, at the right (Java `fameGain`; its chart comes later).
-fn fame_gain(ui: &mut Ui, p: &Palette, chars: &Characters, _most: &Char, now: i64) {
+/// The fame all characters gained in the last 24 hours, at the right, its chart with the dungeons played in it, and
+/// which characters it is made of (Java `fameGain`).
+fn fame_gain(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, chars: &Characters, most: &Char, now: i64) {
     let mut gainers: Vec<&Char> = chars.all().filter(|o| Characters::gained_today(o, now) > 0).collect();
     gainers.sort_by_key(|o| -Characters::gained_today(o, now));
     let gain: i64 = gainers.iter().map(|o| Characters::gained_today(o, now)).sum();
@@ -515,6 +516,12 @@ fn fame_gain(ui: &mut Ui, p: &Palette, chars: &Characters, _most: &Char, now: i6
     if hour > 0 {
         widgets::label_right(ui, &format!("+{} last hour", num(hour)), &text(18.0), p.gold, 24.0)
             .on_hover_text("Fame gained in the last hour");
+    }
+    let since = now - DAY_MS;
+    let points = crate::characters::combined_gain(if gainers.is_empty() { std::slice::from_ref(&most) } else { &gainers }, since);
+    if points.len() > 1 {
+        ui.add_space(6.0);
+        fame_graph(ui, p, app, icons, &points, now);
     }
     if !gainers.is_empty() {
         ui.horizontal_wrapped(|ui| {
@@ -532,6 +539,193 @@ fn fame_gain(ui: &mut Ui, p: &Palette, chars: &Characters, _most: &Char, now: i6
                 }
             }
         });
+    }
+}
+
+/// Fame over the last 24 hours as a thin step line on a base line (Java `ProfileView.FameGraph`): stretches of an
+/// hour or more without a change cut out to a narrow break, and every dungeon above the line where you left it, the
+/// same dungeon several times in a row as one portal with "3x" before it (click: that dungeon under Battles).
+fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[(i64, i64)], now: i64) {
+    use crate::charts::{Timeline, changes, fame_at, fame_in, gap};
+    // GAP: the room between a portal and the line below it; AXIS: room for the break times
+    const BREAK: f32 = 26.0;
+    const ICON: f32 = 24.0;
+    const GAP: f32 = 7.0;
+    const TOP: f32 = ICON + 16.0 + GAP + 4.0;
+    const AXIS: f32 = 15.0;
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 64.0 + TOP + AXIS), Sense::click());
+    let painter = ui.painter().clone();
+    let Some(&(from, _)) = points.first() else { return };
+    let tl = Timeline::new(&changes(points), from, now, BREAK);
+    let (left, right) = (r.left() + 2.0, r.right() - 2.0);
+    let h = r.height() - 4.0 - AXIS;
+    let hi = points.iter().map(|q| q.1).max().unwrap_or(1).max(1);
+    let y_of = |v: i64| r.top() + h - v.max(0) as f32 * (h - 4.0 - TOP) / hi as f32 - 2.0;
+    let breaks = tl.breaks(left, right);
+    // the lines leave the cut-out stretches empty: drawn piece by piece between them
+    let mut pieces = Vec::new();
+    let mut x0 = r.left();
+    for &(_, _, cx) in &breaks {
+        pieces.push((x0, cx.round() - BREAK / 2.0 + 3.0));
+        x0 = cx.round() + BREAK / 2.0 - 3.0;
+    }
+    pieces.push((x0, r.right()));
+    let gold = p.gold;
+    let mut line = Vec::new();
+    for (i, &(t, v)) in points.iter().enumerate() {
+        let x = tl.x(t, left, right).round();
+        if let Some(&last) = line.last() {
+            let last: egui::Pos2 = last;
+            line.push(pos2(x, last.y));
+        }
+        line.push(pos2(x, y_of(v)));
+        if i + 1 == points.len() {
+            // fame stays until now
+            line.push(pos2(tl.x(now, left, right).round(), y_of(v)));
+        }
+    }
+    for &(a, b) in &pieces {
+        let clipped = painter.with_clip_rect(Rect::from_min_max(pos2(a, r.top()), pos2(b, r.bottom())));
+        clipped.rect_filled(Rect::from_min_max(pos2(r.left(), r.top() + h + 2.0), pos2(r.right(), r.top() + h + 4.0)), 0.0, p.line);
+        clipped.add(egui::Shape::line(line.clone(), egui::Stroke::new(2.5, gold)));
+    }
+    // the line's highest point (smallest y) in every pixel column, so the dungeons sit evenly above it
+    let w = r.width().max(1.0) as usize;
+    let mut line_top = vec![f32::INFINITY; w];
+    for s in line.windows(2) {
+        let (a, b) = (s[0], s[1]);
+        let (c0, c1) = (((a.x.min(b.x) - r.left()).max(0.0)) as usize, ((a.x.max(b.x) - r.left()).max(0.0)) as usize);
+        for c in line_top.iter_mut().take(c1.min(w - 1) + 1).skip(c0) {
+            *c = c.min(a.y.min(b.y));
+        }
+    }
+    // the cut-out stretches: two slashes on the base line and how long it was below
+    let small = text(12.0);
+    let mut tip: Option<String> = None;
+    let hover = resp.hover_pos();
+    for &(a, b, cx) in &breaks {
+        let cx = cx.round();
+        let base = r.top() + h;
+        for dx in [-3.0, 2.0] {
+            painter.line_segment([pos2(cx + dx - 2.0, base + 5.0), pos2(cx + dx + 2.0, base - 3.0)], egui::Stroke::new(1.3, fixed::MUTED));
+        }
+        let t = gap(b - a);
+        let tw = crate::jtext::width(&painter, &t, &small);
+        let tx = (cx - tw / 2.0).min(r.right() - tw).max(r.left());
+        crate::jtext::draw(&painter, pos2(tx, base + 7.0), egui::Align2::LEFT_TOP, &t, &small, fixed::MUTED);
+        if hover.is_some_and(|q| (q.x - cx).abs() <= BREAK / 2.0) {
+            tip = Some(format!("No fame for {} (left out)", gap(b - a)));
+        }
+    }
+    // the dungeons, the same one several times in a row as one group
+    let mut visits: Vec<&lg_app::dungeon_visits::Visit> =
+        app.dungeon_visits.visits.iter().chain(app.dungeon_visits.current.iter()).collect();
+    visits.sort_by_key(|v| v.start);
+    let end_of = |v: &lg_app::dungeon_visits::Visit| if v.duration_ms > 0 { v.start + v.duration_ms } else { now };
+    let mut groups: Vec<Vec<&lg_app::dungeon_visits::Visit>> = Vec::new();
+    for v in visits {
+        if v.hidden || end_of(v) < tl.from || v.start > now {
+            continue;
+        }
+        match groups.last_mut() {
+            Some(g) if g[0].dungeon == v.dungeon => g.push(v),
+            _ => groups.push(vec![v]),
+        }
+    }
+    let count_f = text(16.0);
+    let data = app.world.data();
+    let mut last_right = -10_000.0f32;
+    let mut clicked: Option<i64> = None;
+    for group in &groups {
+        let (first, last) = (group[0], group[group.len() - 1]);
+        let Some(icon) = data.dungeons.portal_by_name.get(&first.dungeon).and_then(|id| icons.object(ui.ctx(), data, *id, ICON as u32))
+        else {
+            continue;
+        };
+        let end = end_of(last).min(tl.to);
+        let gained: i64 = group.iter().filter_map(|v| fame_in(points, v.start, end_of(v))).sum();
+        let count = if group.len() > 1 { format!("{}x", group.len()) } else { String::new() };
+        let count_w = if count.is_empty() { 0.0 } else { crate::jtext::width(&painter, &count, &count_f) + 2.0 };
+        // the portal's centre where you left, kept clear of the group before it and inside the graph
+        let x = tl.x(end, left, right).round().max(last_right + 6.0 + count_w + ICON / 2.0).min(right - ICON / 2.0);
+        let (c0, c1) =
+            ((x - ICON / 2.0 - count_w - r.left()).max(0.0) as usize, ((x + ICON / 2.0 - r.left()).max(0.0) as usize).min(w - 1));
+        let mut under = line_top[c0.min(w - 1)..=c1].iter().copied().fold(f32::INFINITY, f32::min);
+        if !under.is_finite() {
+            under = y_of(fame_at(points, end).unwrap_or(0));
+        }
+        let y = (under - ICON - GAP).max(r.top() + 18.0);
+        let mut box_r = Rect::from_min_size(pos2(x - ICON / 2.0, y), vec2(ICON, ICON));
+        painter.image(icon.id(), box_r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);
+        if !count.is_empty() {
+            crate::jtext::draw(&painter, pos2(box_r.left() - count_w, box_r.center().y), egui::Align2::LEFT_CENTER, &count, &count_f, gold);
+            box_r = box_r.union(Rect::from_min_size(pos2(box_r.left() - count_w, y), vec2(count_w, ICON)));
+        }
+        // the guildmates' characters (of all the group's runs), in their look then, side by side right above it
+        let mut mates: Vec<(String, i32, i32, i32, i32)> = Vec::new();
+        for v in group {
+            let current = app.dungeon_visits.current.as_ref().is_some_and(|c| c.start == v.start);
+            let run = if current { app.dps_history.live.as_ref() } else { lg_app::dungeon_visits::run_of(v, &app.dps_history) };
+            let fought = app.server.mates.fought(run, &v.dungeon);
+            if fought.is_empty() {
+                continue;
+            }
+            let key = format!("{}/{}", v.dungeon, v.start);
+            if !current && !app.server.mates.looks.contains_key(&key) {
+                crate::window::ask_later(
+                    ui.ctx(),
+                    crate::window::Ask::Server(crate::window::ServerAsk::RunLooks(v.dungeon.clone(), v.start, v.duration_ms)),
+                );
+            }
+            for m in app.server.mates.with(&key, &fought, &data.items.transform_skins) {
+                if !mates.iter().any(|x| x.0.eq_ignore_ascii_case(&m.0)) {
+                    mates.push(m);
+                }
+            }
+        }
+        const MATE: f32 = 16.0;
+        let mut with = Vec::new();
+        let mut mx = x - mates.len() as f32 * MATE / 2.0;
+        for (name, class, skin, t1, t2) in &mates {
+            if let Some(t) = icons.skin(ui.ctx(), data, if *skin > 0 { *skin } else { *class }, *t1, *t2, MATE as u32) {
+                painter.image(
+                    t.id(),
+                    Rect::from_min_size(pos2(mx, y - MATE - 1.0), vec2(MATE, MATE)),
+                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+            mx += MATE;
+            let cls = data.classes.iter().find(|k| k.id == *class).map_or(String::new(), |k| format!(" ({})", k.name));
+            with.push(format!("{name}{cls}"));
+        }
+        if !mates.is_empty() {
+            box_r = box_r.union(Rect::from_min_size(
+                pos2(x - mates.len() as f32 * MATE / 2.0, y - MATE - 1.0),
+                vec2(mates.len() as f32 * MATE, MATE),
+            ));
+        }
+        if hover.is_some_and(|q| box_r.contains(q)) {
+            let n = group.len();
+            tip = Some(format!(
+                "{}{}:  +{} fame{}  ·  {}",
+                if n > 1 { format!("{n}x ") } else { String::new() },
+                first.dungeon,
+                num(gained),
+                if with.is_empty() { String::new() } else { format!("  ·  with {}", with.join(", ")) },
+                if n > 1 { "click to open the last one in Battles" } else { "click to open it in Battles" }
+            ));
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            if resp.clicked() {
+                clicked = Some(last.start);
+            }
+        }
+        last_right = x + ICON / 2.0;
+    }
+    let resp = resp.on_hover_text(tip.unwrap_or_else(|| "Fame gained over the last 24 hours".into()));
+    let _ = resp;
+    if let Some(start) = clicked {
+        crate::window::open_later(ui.ctx(), format!("Battles:visit:{start}"));
     }
 }
 
