@@ -29,17 +29,35 @@ jobs:
         shell: bash
         run: grep -q "^version = \"${GITHUB_REF_NAME#v}\"$" Cargo.toml || { echo "rust/Cargo.toml version is not ${GITHUB_REF_NAME#v}"; exit 1; }
       - run: cargo build --release -p lg-gobbler
-      - name: exe and portable zip
+      - name: portable zip (the program and its records in one folder)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist/LootGobbler | Out-Null
-          Copy-Item target/release/loot-gobbler.exe dist/LootGobbler.exe
           Copy-Item target/release/loot-gobbler.exe dist/LootGobbler/LootGobbler.exe
           Copy-Item ../LICENSE, ../THIRD_PARTY_LICENSE-RealmShark.md dist/LootGobbler/
           Compress-Archive -Path dist/LootGobbler -DestinationPath dist/LootGobbler-portable.zip
           # the program answers its version (the updater checks a download with it)
-          $v = (& dist/LootGobbler.exe --version | Out-String).Trim()
+          $v = (& dist/LootGobbler/LootGobbler.exe --version | Out-String).Trim()
           if ($env:GITHUB_REF_NAME -like 'v*' -and "v$v" -ne $env:GITHUB_REF_NAME) { throw "LootGobbler.exe is $v, the tag $env:GITHUB_REF_NAME" }
+      - name: installer (LootGobbler.exe, installs into %APPDATA%\LootGobbler-Rust)
+        shell: pwsh
+        run: |
+          function Find-Iscc {
+            $c = Get-Command iscc -ErrorAction SilentlyContinue
+            if ($c) { return $c.Source }
+            $f = Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($f) { return $f.FullName }
+          }
+          $iscc = Find-Iscc
+          if (-not $iscc) { choco install innosetup -y --no-progress | Out-Null; $iscc = Find-Iscc }
+          if (-not $iscc) { throw "Inno Setup not found" }
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches.Groups[1].Value
+          $src = (Resolve-Path dist/LootGobbler).Path
+          New-Item -ItemType Directory -Force -Path dist/installer | Out-Null
+          $out = (Resolve-Path dist/installer).Path
+          & $iscc /Q "/DAppVersion=$version" "/DSourceDir=$src" "/DOutputDir=$out" packaging/windows/lootgobbler.iss
+          if ($LASTEXITCODE -ne 0) { throw "iscc failed ($LASTEXITCODE)" }
+          Copy-Item dist/installer/LootGobbler-setup.exe dist/LootGobbler.exe
       - uses: actions/upload-artifact@v7
         with:
           name: windows

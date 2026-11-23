@@ -91,12 +91,12 @@ Get the latest version from the [Releases page](https://github.com/Deliberated/L
 
 | File | For |
 |---|---|
-| `LootGobbler.exe` | Windows: the program itself, ready to start |
-| `LootGobbler-portable.zip` | Windows: the same program in its own folder |
+| `LootGobbler.exe` | Windows: the installer. Installs Loot Gobbler for you alone (no admin rights needed) into `%APPDATA%\LootGobbler-Rust`, with a Start menu entry |
+| `LootGobbler-portable.zip` | Windows: the program in a folder of its own, no installing: unpack it anywhere and start `LootGobbler.exe` |
 | `LootGobbler-x86_64.rpm` | Linux (Fedora, openSUSE and others): installs to `/opt` with the rights to capture already set |
 | `LootGobbler-linux-x86_64.tar.gz` | Linux, any distribution: unpack and start |
 
-The Loot Gobbler keeps its records next to the program, so give it a folder of its own (the portable zip does that for you). It checks for new versions on its own and tells you when one is out.
+The Loot Gobbler keeps its records next to the program: in the installed folder, or in the portable folder. It checks for new versions on its own and tells you when one is out.
 
 **Windows says "Windows protected your PC"?** That is Microsoft Defender SmartScreen: it warns about programs that are not signed with a paid certificate and that few people have run yet, which is true for every new release of a small open-source project like this one. Click **More info** if needed, then **Run anyway**. The program's code is all here to read, and each release is built by GitHub from it.
 
