@@ -165,7 +165,7 @@ impl Info {
         }
     }
 
-    /// Java `AboutDialog`: the app icon (poke it: the goblin cackles), name, author, version, tagline and credits.
+    /// Java `AboutDialog` (and "Say Thanks!", the Ko-fi tip page): the app icon (poke it: the goblin cackles), name, author, version, tagline and credits.
     fn about(&mut self, ctx: &egui::Context, p: &Palette, asks: &mut Vec<Ask>) {
         if !self.about {
             return;
@@ -229,6 +229,33 @@ impl Info {
             if crate::inventory::button(ui, p, upd_r, "Check for updates", false, "about-updates") {
                 asks.push(Ask::CheckUpdatesAbout);
             }
+            // "Say Thanks!" at the bottom left, as high as the buttons: a Ko-fi cup in a box, the tip page on a click
+            let thanks_f = crate::theme::body(20.0);
+            let thanks_w = 12.0 + 26.0 + 8.0 + jtext::width(&painter, "Say Thanks!", &thanks_f) + 14.0;
+            let thanks_r = Rect::from_min_size(pos2(r.left() + 32.0, close_r.top()), vec2(thanks_w, 36.0));
+            let thanks = ui
+                .interact(thanks_r, ui.scope_id().with("about-thanks"), Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(KO_FI);
+            painter.rect(
+                thanks_r,
+                0.0,
+                if thanks.hovered() { crate::theme::mix(p.header, p.gold, 0.2) } else { p.header },
+                Stroke::new(1.5, if thanks.hovered() { p.gold } else { Color32::BLACK }),
+                StrokeKind::Inside,
+            );
+            ko_fi_cup(&painter, pos2(thanks_r.left() + 12.0, thanks_r.center().y - 10.0));
+            jtext::draw(
+                &painter,
+                pos2(thanks_r.left() + 12.0 + 26.0 + 8.0, thanks_r.center().y),
+                Align2::LEFT_CENTER,
+                "Say Thanks!",
+                &thanks_f,
+                p.ink,
+            );
+            if thanks.clicked() {
+                asks.push(Ask::OpenUrl(KO_FI.into()));
+            }
             let cr = ui.interact(close_r, ui.scope_id().with("about-close"), Sense::click());
             painter.rect(close_r, 0.0, p.gold, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
             jtext::draw(&painter, close_r.center(), Align2::CENTER_CENTER, "CLOSE", &small, p.on_accent);
@@ -241,4 +268,22 @@ impl Info {
             self.about = false;
         }
     }
+}
+
+/// Where "Say Thanks!" in About leads: the developer's Ko-fi tip page.
+const KO_FI: &str = "https://ko-fi.com/deliberated/tip";
+
+/// Ko-fi's mark, drawn: a white cup with its handle and a red heart on it, 26 x 20 from `at` (top left).
+fn ko_fi_cup(painter: &egui::Painter, at: egui::Pos2) {
+    let cup = Color32::WHITE;
+    let heart = Color32::from_rgb(0xFF, 0x5E, 0x5B);
+    // the handle: a ring at the right
+    painter.circle_stroke(pos2(at.x + 19.0, at.y + 8.0), 4.5, Stroke::new(3.0, cup));
+    // the cup: wide at the rim, rounded at the bottom
+    painter.rect_filled(Rect::from_min_size(at, vec2(20.0, 20.0)), egui::CornerRadius { nw: 2, ne: 2, sw: 7, se: 7 }, cup);
+    // the heart: two lobes and a point
+    let (cx, cy) = (at.x + 10.0, at.y + 8.5);
+    painter.circle_filled(pos2(cx - 2.6, cy - 1.0), 3.0, heart);
+    painter.circle_filled(pos2(cx + 2.6, cy - 1.0), 3.0, heart);
+    painter.add(egui::Shape::convex_polygon(vec![pos2(cx - 5.5, cy), pos2(cx + 5.5, cy), pos2(cx, cy + 6.0)], heart, Stroke::NONE));
 }

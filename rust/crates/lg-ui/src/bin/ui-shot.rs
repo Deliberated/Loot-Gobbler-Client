@@ -499,6 +499,12 @@ fn main() {
                         win.java_offer =
                             Some(lg_ui::welcome::JavaOffer { path: r"C:\Users\Someone\AppData\Roaming\LootGobbler".into(), take: true });
                     }
+                    // "about": Info > About over the Profile
+                    if tab == "about" {
+                        win.open("Profile");
+                        let mut asks = Vec::new();
+                        win.info.open("About", &mut asks);
+                    }
                     if let Some(start) = mates_visit {
                         win.battles.selected = start;
                         win.battles.reveal = true;
