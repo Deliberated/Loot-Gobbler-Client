@@ -145,3 +145,8 @@ footer .wrap { display: grid; gap: 10px; }
 @media (max-width: 900px) { .badge-row { grid-template-columns: 1fr; } }
 .badge-row .soon { margin-top: 16px; padding: 10px 14px; border: 2px dashed var(--line); color: var(--muted); font-size: 19px; }
 .soon span { display: inline-block; margin-right: 8px; padding: 1px 8px; background: var(--header); color: var(--gold); text-transform: uppercase; font-size: 16px; letter-spacing: .5px; }
+/* a note under the downloads */
+.notice { margin-top: 20px; padding: 16px 18px; background: var(--paper); border: 2px solid var(--line); border-left: 6px solid var(--gold); }
+.notice h3 { color: var(--gold); font-size: 28px; margin-bottom: 6px; }
+.notice p { margin: 0; color: var(--soft); }
+.notice b { color: var(--ink); font-weight: 400; }

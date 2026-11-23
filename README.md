@@ -25,7 +25,7 @@ See the full set of features with screenshots on the [Loot Gobbler page](https:/
 
 
 ## Approach
-The project was designed to give our guild a better game experience, no matter whether you are a new player or a veteran. Big disclaimer: this project is vibecoded, but heavily tested by our guildies and designed with time and taste!
+The project was designed to give our guild a better game experience, no matter whether you are a new player or a veteran. Big disclaimer: this project is vibecoded, but heavily tested by our guildies and designed with time, taste, and love!
 
 It is a fork of **Tomato**, built on the **RealmShark** sniffing engine (both MIT, see `THIRD_PARTY_LICENSE-RealmShark.md`), and rewritten in Rust. Many of the original features have been revisited and redesigned.
 
@@ -97,6 +97,8 @@ Get the latest version from the [Releases page](https://github.com/Deliberated/L
 | `LootGobbler-linux-x86_64.tar.gz` | Linux, any distribution: unpack and start |
 
 The Loot Gobbler keeps its records next to the program, so give it a folder of its own (the portable zip does that for you). It checks for new versions on its own and tells you when one is out.
+
+**Windows says "Windows protected your PC"?** That is Microsoft Defender SmartScreen: it warns about programs that are not signed with a paid certificate and that few people have run yet, which is true for every new release of a small open-source project like this one. Click **More info** if needed, then **Run anyway**. The program's code is all here to read, and each release is built by GitHub from it.
 
 **Have you used the previous Java-based Loot Gobbler?** On its first start, the new one offers to take over your records and settings from the Java app's folder. If you installed the Java app at its default place, leave the suggested path as it is.
 
