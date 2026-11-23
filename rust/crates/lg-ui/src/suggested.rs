@@ -593,8 +593,9 @@ pub fn suggested(
     let ix = x + col_w + 12.0;
     let iw = r.right() - ix;
     let mut iy = r.top();
-    let small_f = small();
-    let name_f = text(18.0);
+    // the item's name the biggest, its lines below smaller
+    let small_f = crate::theme::head(14.0);
+    let name_f = text(22.0);
     for (slot, pk) in picks.iter().enumerate() {
         if slot > 0 {
             iy += 6.0;
@@ -765,11 +766,21 @@ pub fn suggested(
             (t, t.max(52.0))
         };
         // the replaced ones that show only on hover: shown while the pointer is on the item's row
+        // they roll out while the pointer is on the row (as tall as it is drawn, the rolled out lines included)
+        // and roll back in after it left
         let always = chips.iter().filter(|c| !c.hover_only).count();
-        let (_, h0) = text_h_of(always);
-        let hovered = ui.rect_contains_pointer(Rect::from_min_size(pos2(ix, iy), vec2(iw, h0)));
-        chips.retain(|c| !c.hover_only || hovered);
-        let (text_h, h) = text_h_of(chips.len());
+        let (text_h0, h0) = text_h_of(always);
+        let reveal_id = ui.scope_id().with(("hover-chips", slot));
+        let drawn_h = ctx.data(|d| d.get_temp::<f32>(reveal_id)).unwrap_or(h0).max(h0);
+        let hovered = ui.rect_contains_pointer(Rect::from_min_size(pos2(ix, iy), vec2(iw, drawn_h)));
+        let reveal = ctx.animate_bool_with_time(reveal_id, hovered, 0.18);
+        let reveal = reveal * reveal * (3.0 - 2.0 * reveal); // eased at both ends
+        if reveal <= 0.0 {
+            chips.retain(|c| !c.hover_only);
+        }
+        let (text_h1, h1) = text_h_of(chips.len());
+        let (text_h, h) = (text_h0 + (text_h1 - text_h0) * reveal, h0 + (h1 - h0) * reveal);
+        ctx.data_mut(|d| d.insert_temp(reveal_id, h));
         let icon_r = Rect::from_min_size(pos2(ix, iy + (h - 52.0) / 2.0), vec2(60.0, 52.0));
         if pk.id > 0 {
             let t = icons.object(&ctx, data, pk.id, 48);
@@ -793,9 +804,11 @@ pub fn suggested(
                 lx += 14.0;
             }
             let start = lx;
-            for (t, color, _) in line {
+            for (j, (t, color, _)) in line.iter().enumerate() {
                 let fitted = widgets::fit(&painter, t, f, (tx + tw - lx).max(10.0));
-                let a = jtext::draw(&painter, pos2(lx, ty), Align2::LEFT_TOP, &fitted, f, *color);
+                // a locked item's name in gold
+                let color = if k == 0 && j == 0 && item_locked { fixed::GOLD } else { *color };
+                let a = jtext::draw(&painter, pos2(lx, ty), Align2::LEFT_TOP, &fitted, f, color);
                 lx = a.right();
             }
             if k == 0 && pk.id > 0 {
@@ -830,6 +843,13 @@ pub fn suggested(
         }
         for (k, chip) in chips.iter().enumerate() {
             let mut lx = tx;
+            // a rolling line: only the part rolled out shows, fading in
+            let line_h = if chip.hover_only { small_h * reveal } else { small_h };
+            let painter = if chip.hover_only {
+                painter.with_clip_rect(Rect::from_min_max(pos2(tx - 20.0, ty), pos2(tx + tw + 20.0, ty + line_h)))
+            } else {
+                painter.clone()
+            };
             let kind = chip.e.map(|e| en.get(e).kind);
             let locked = chip.lockable && kind.is_some_and(|k| locked_now.contains(&k));
             if locked {
@@ -849,7 +869,8 @@ pub fn suggested(
                 }
                 lx += 19.0;
             }
-            let color = if locked { HAS_IT } else { chip.color };
+            let color = if locked { fixed::GOLD } else { chip.color };
+            let color = if chip.hover_only { color.gamma_multiply(reveal) } else { color };
             let a = jtext::draw(
                 &painter,
                 pos2(lx, ty),
@@ -861,9 +882,10 @@ pub fn suggested(
             if chip.struck {
                 painter.line_segment([pos2(a.left(), a.center().y), pos2(a.right(), a.center().y)], Stroke::new(1.0, color));
             }
-            let cr = Rect::from_min_max(pos2(tx, ty), pos2(a.right(), ty + small_h));
+            let cr = Rect::from_min_max(pos2(tx, ty), pos2(a.right(), ty + line_h));
             widgets::rich_tip(ui, cr, ("chip", slot, k), &chip.tip);
             if chip.lockable
+                && line_h > small_h * 0.9
                 && let Some(kd) = kind
                 && ui
                     .interact(cr, ui.scope_id().with(("chip-lock", slot, k)), Sense::click())
@@ -872,7 +894,7 @@ pub fn suggested(
             {
                 change = Some(Change::EnchantLock(slot, kd));
             }
-            ty += small_h;
+            ty += line_h;
         }
         iy += h;
     }

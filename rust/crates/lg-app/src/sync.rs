@@ -6,7 +6,7 @@ use crate::files;
 use lg_world::json::Json;
 
 /// The kinds in Java's order (`ServerSync.kinds`): the server document's name and the Server tab's label.
-pub const KINDS: [(&str, &str); 10] = [
+pub const KINDS: [(&str, &str); 11] = [
     ("collection", "Collection"),
     ("characters", "Characters"),
     ("exalts", "Exaltations"),
@@ -17,6 +17,8 @@ pub const KINDS: [(&str, &str); 10] = [
     ("amulet_saves", "Amulet saves"),
     ("holdings", "Inventory & vaults"),
     ("upe", "UPE runs"),
+    // not in Java: the forge resources, and what each game mode run gained itself
+    ("resources", "Forge resources"),
 ];
 
 impl App {
@@ -33,6 +35,7 @@ impl App {
             "amulet_saves" => files::amulet(&self.amulet_saves),
             "holdings" => files::holdings_json(&self.holdings),
             "upe" => files::upe(&mut self.upe),
+            "resources" => self.resources.json(),
             _ => "null".into(),
         }
     }
@@ -57,6 +60,7 @@ impl App {
                 changed
             }
             "upe" => self.upe.merge_sync(remote),
+            "resources" => self.resources.merge_sync(remote),
             _ => false,
         };
         Ok(changed)
@@ -75,6 +79,9 @@ impl App {
             "amulet_saves" => self.amulet_saves.count(),
             "holdings" => self.holdings.places.len(),
             "upe" => self.upe.runs.values().filter(|r| r.marked || r.eligible()).count(),
+            "resources" => {
+                usize::from(self.resources.seasonal.is_some()) + usize::from(self.resources.regular.is_some()) + self.resources.banks.len()
+            }
             _ => 0,
         }
     }
@@ -473,6 +480,7 @@ impl App {
             self.amulet_saves.dirty,
             self.holdings.dirty,
             self.upe.dirty,
+            self.resources.dirty,
         ];
         let kinds = KINDS.iter().zip(dirty).filter(|(_, d)| *d).map(|((k, _), _)| *k).collect();
         let soon = std::mem::take(&mut self.collection.soon)

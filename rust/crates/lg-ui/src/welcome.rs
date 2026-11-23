@@ -62,10 +62,27 @@ fn icon(ctx: &egui::Context) -> egui::TextureHandle {
     t
 }
 
+/// The first start's offer to take over the Java app's records: from which folder (its default place unless changed),
+/// and whether they are wanted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JavaOffer {
+    pub path: String,
+    pub take: bool,
+}
+
+/// What the greeting asks: to close (LET'S GO), or to pick the Java app's folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Greeting {
+    Keep,
+    Close,
+    Browse,
+}
+
 /// Java `WelcomeDialog`: the goblin, "Hello fellow realmer!", what Loot Gobbler is for and how to start; LET'S GO.
-/// Gives whether it is to close.
-pub fn welcome(ctx: &egui::Context, p: &Palette) -> bool {
+/// On the first start of this app also the offer to take over the Java app's records (`offer`).
+pub fn welcome(ctx: &egui::Context, p: &Palette, offer: &mut Option<JavaOffer>) -> Greeting {
     let mut close = false;
+    let mut browse = false;
     let icon = icon(ctx);
     let modal = egui::Modal::new(egui::Id::unique("welcome")).frame(egui::Frame::NONE).show(ctx, |ui| {
         let painter = ui.painter().clone();
@@ -88,7 +105,17 @@ pub fn welcome(ctx: &egui::Context, p: &Palette) -> bool {
         );
         let head = theme::head(46.0);
         let text_h = 6.0 + jtext::height(&painter, &head) + 8.0 + g1.size().y + 18.0 + g2.size().y;
-        let h = 16.0 + 28.0 + text_h.max(128.0) + 18.0 + 36.0 + 24.0 + 16.0;
+        // the offer: a line to tick, the folder with BROWSE, a note
+        let small = theme::body(18.0);
+        let note = painter.layout(
+            "This is where the Java Loot Gobbler keeps its records by default. If you installed it at its default place, leave this path as it is."
+                .into(),
+            theme::body(16.0),
+            fixed::MUTED,
+            w - 32.0 - 64.0,
+        );
+        let offer_h = if offer.is_some() { 24.0 + 30.0 + 8.0 + 36.0 + 6.0 + note.size().y } else { 0.0 };
+        let h = 16.0 + 28.0 + text_h.max(128.0) + offer_h + 18.0 + 36.0 + 24.0 + 16.0;
         let (outer, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
         let r = outer.shrink(16.0);
         painter.rect(r, 0.0, p.paper, Stroke::new(2.0, p.line), StrokeKind::Inside);
@@ -102,13 +129,56 @@ pub fn welcome(ctx: &egui::Context, p: &Palette) -> bool {
         painter.galley(pos2(tx, ty), g1, p.ink);
         ty += h1 + 18.0;
         painter.galley(pos2(tx, ty), g2, p.ink);
+        if let Some(o) = offer.as_mut() {
+            let (lx, rx) = (r.left() + 32.0, r.right() - 32.0);
+            let mut oy = y + text_h.max(128.0) + 24.0;
+            painter.rect_filled(Rect::from_min_size(pos2(lx, oy - 12.0), vec2(rx - lx, 1.0)), 0.0, p.line);
+            // the box to tick, and its words (both click)
+            let label = "Take over my records and settings from the Java Loot Gobbler";
+            let line = Rect::from_min_size(pos2(lx, oy), vec2(22.0 + 10.0 + jtext::width(&painter, label, &small), 30.0));
+            let resp = ui.interact(line, ui.scope_id().with("java-offer-take"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+            if resp.clicked() {
+                o.take = !o.take;
+            }
+            let bx = Rect::from_min_size(pos2(lx, oy + 4.0), vec2(22.0, 22.0));
+            painter.rect(bx, 3.0, if o.take { p.gold } else { p.header }, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+            if o.take {
+                let st = Stroke::new(2.5, p.on_accent);
+                painter.line_segment([pos2(bx.left() + 5.0, bx.center().y), pos2(bx.left() + 9.5, bx.bottom() - 6.0)], st);
+                painter.line_segment([pos2(bx.left() + 9.5, bx.bottom() - 6.0), pos2(bx.right() - 5.0, bx.top() + 6.0)], st);
+            }
+            jtext::draw(&painter, pos2(bx.right() + 10.0, bx.center().y), Align2::LEFT_CENTER, label, &small, p.ink);
+            oy += 30.0 + 8.0;
+            // the folder: typed, or picked with BROWSE
+            let bw = button_w(ui, "BROWSE");
+            let field = Rect::from_min_size(pos2(lx, oy), vec2(rx - lx - bw - 8.0, 36.0));
+            if o.take {
+                crate::widgets::search_field(ui, p, field, &mut o.path, "The Java Loot Gobbler's folder", "java-offer-path");
+            } else {
+                // not wanted: the folder shown greyed out
+                painter.rect(field, 0.0, p.header, Stroke::new(1.0, p.line), StrokeKind::Inside);
+                let shown = crate::widgets::fit(&painter, &o.path, &theme::body(18.0), field.width() - 16.0);
+                jtext::draw(&painter, pos2(field.left() + 8.0, field.center().y), Align2::LEFT_CENTER, &shown, &theme::body(18.0), fixed::MUTED);
+            }
+            if o.take && button(ui, p, Rect::from_min_size(pos2(field.right() + 8.0, oy), vec2(bw, 36.0)), "BROWSE", false, "java-browse") {
+                browse = true;
+            }
+            oy += 36.0 + 6.0;
+            painter.galley(pos2(lx, oy), note, fixed::MUTED);
+        }
         let bw = button_w(ui, "LET'S GO");
         let br = Rect::from_min_size(pos2(r.right() - 32.0 - bw, r.bottom() - 24.0 - 36.0), vec2(bw, 36.0));
-        if button(ui, p, br, "LET'S GO", true, "lets-go") || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        if button(ui, p, br, "LET'S GO", true, "lets-go") || (offer.is_none() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
             close = true;
         }
     });
-    close || modal.should_close()
+    if browse {
+        Greeting::Browse
+    } else if close || modal.should_close() {
+        Greeting::Close
+    } else {
+        Greeting::Keep
+    }
 }
 
 /// Days since 1970 of a date.

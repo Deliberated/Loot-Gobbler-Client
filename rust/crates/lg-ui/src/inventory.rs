@@ -39,14 +39,58 @@ pub struct InventoryView {
     pub history: Option<i32>,
     /// An item opened from another tab, to be scrolled to and pulsed once the grid is drawn (Java `showItem`).
     pub show_item: Option<i32>,
-    /// The gold box growing and fading around an item: which, since when (s), how long (s); and to scroll to it.
-    pulse: Option<(i32, f64, f64)>,
+    /// The gold box growing and fading around an item: which, since when (s), how long one opening takes (s), and
+    /// whether it glows up three times (an item opened from another tab); and to scroll to it.
+    pulse: Option<(i32, f64, f64, bool)>,
     scroll_to: Option<i32>,
 }
+
+/// The column of whose finds: its width.
+const UPE_COLUMN_W: f32 = 4.0 + 96.0 + 4.0 + 6.0;
 
 const PULSE_S: f64 = 2.0;
 const CLICK_PULSE_S: f64 = 1.0;
 const PULSE_GROW: f32 = 14.0;
+
+/// An item opened from another tab glows up three times, each slower: a quarter, half, then the whole of one
+/// opening's time (the last as a click's).
+const GLOW_UPS: [f64; 3] = [0.25, 0.5, 1.0];
+
+/// How far each glow-up starts before the one before it ends, as a share of that one's time: the second barely
+/// overlaps the first, the third clearly overlaps the second.
+const GLOW_OVERLAP: [f64; 3] = [0.0, 0.15, 0.45];
+
+/// When each glow-up starts and how long it takes (s).
+fn glow_ups(dur: f64) -> [(f64, f64); 3] {
+    let mut out = [(0.0, 0.0); 3];
+    let mut end: f64 = 0.0;
+    let mut prev = 0.0;
+    for (i, f) in GLOW_UPS.iter().enumerate() {
+        let d = dur * f;
+        let start = (end - prev * GLOW_OVERLAP[i]).max(0.0);
+        out[i] = (start, d);
+        end = start + d;
+        prev = d;
+    }
+    out
+}
+
+/// How long a pulse lasts: one opening, or the three glow-ups.
+fn pulse_length(dur: f64, again: bool) -> f64 {
+    if again { glow_ups(dur).iter().map(|(s, d)| s + d).fold(0.0, f64::max) } else { dur }
+}
+
+/// The boxes showing `elapsed` seconds in, each at where it is (0 the box at the item, 1 grown and faded).
+fn pulse_ts(elapsed: f64, dur: f64, again: bool) -> Vec<f32> {
+    if !again {
+        return vec![(elapsed / dur).clamp(0.0, 1.0) as f32];
+    }
+    glow_ups(dur)
+        .iter()
+        .filter(|(s, d)| elapsed >= *s && elapsed < s + d)
+        .map(|(s, d)| ((elapsed - s) / d).clamp(0.0, 1.0) as f32)
+        .collect()
+}
 
 /// What you hold and how much, as the Items page counts it (Java `collected`, `held`, `bestEnchants`).
 struct Owned {
@@ -116,13 +160,21 @@ impl InventoryView {
             }
             self.focus_seen = focus_id;
         }
+        // the column of whose finds: sliding open and shut (`col_t` 0 shut, 1 open); with it open the white bag
+        // stands over its middle and the pages start where the collection does, shut the bag is at the left and the
+        // pages after it
+        let column_on = c.props.get("collectionUpeColumn") == Some("true");
+        let col_t = ui.ctx().animate_bool_with_time(ui.scope_id().with("upe-column-open"), column_on, 0.22);
+        let col_t = col_t * col_t * (3.0 - 2.0 * col_t);
+        let lerp = |a: f32, b: f32| a + (b - a) * col_t;
+        let bag_x = lerp(all.left() + 8.0, all.left() + 4.0 + UPE_COLUMN_W / 2.0 - 4.0 - 17.0);
+        let pages_x = lerp(all.left() + 8.0 + 34.0 + 8.0, all.left() + UPE_COLUMN_W);
         // the white bag (opens the column of whose finds), then the pages
-        let bag_r = Rect::from_min_size(pos2(all.left() + 8.0, all.top() + 1.0), vec2(34.0, 34.0));
+        let bag_r = Rect::from_min_size(pos2(bag_x, all.top() + 1.0), vec2(34.0, 34.0));
         if let Some(t) = c.icons.object(ui.ctx(), data, WHITE_BAG, 34) {
             painter.image(t.id(), bag_r, uv(), Color32::WHITE);
         }
         // click: the column of whose finds are shown, on or off (remembered)
-        let column_on = c.props.get("collectionUpeColumn") == Some("true");
         if ui
             .interact(bag_r, ui.scope_id().with("upe-bag"), Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -131,26 +183,24 @@ impl InventoryView {
         {
             c.asks.push(crate::window::Ask::Set("collectionUpeColumn".into(), (!column_on).to_string()));
         }
-        if let Some(i) = widgets::segmented(
-            ui,
-            &p,
-            pos2(all.left() + 8.0 + 34.0 + 8.0, all.top()),
-            36.0,
-            &["Items", "ST Sets", "Log"],
-            self.page,
-            false,
-            &[],
-        ) {
+        if let Some(i) = widgets::segmented(ui, &p, pos2(pages_x, all.top()), 36.0, &["Items", "ST Sets", "Log"], self.page, false, &[]) {
             self.page = i;
         }
         // the forge resources, right-aligned on the same row: the regular side at the right, the seasonal one before it
-        let pages_end = all.left() + 8.0 + 34.0 + 8.0 + 330.0;
+        let pages_end = pages_x + 330.0;
         resource_row(ui, &p, c.icons, app, pos2(all.right(), all.top()), 36.0, pages_end, focus.map(|(_, ch)| ch.seasonal));
         let mut body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
-        let column = c.props.get("collectionUpeColumn") == Some("true");
-        if column {
-            let w = self.upe_column(ui, c, body);
-            body = Rect::from_min_max(pos2(body.left() + w, body.top()), body.max);
+        if col_t > 0.0 {
+            // it slides out from under the left edge
+            let shown = UPE_COLUMN_W * col_t;
+            let at = Rect::from_min_max(pos2(body.left() + shown - UPE_COLUMN_W, body.top()), pos2(body.left() + shown, body.bottom()));
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(at));
+            child.set_clip_rect(Rect::from_min_max(body.min, pos2(body.left() + shown, body.bottom())).intersect(ui.clip_rect()));
+            self.upe_column(&mut child, c, at);
+            body = Rect::from_min_max(pos2(body.left() + shown, body.top()), body.max);
+            if col_t < 1.0 {
+                ui.ctx().request_repaint();
+            }
         }
         match self.page {
             1 => self.st_sets(ui, c, rarity, body),
@@ -165,7 +215,7 @@ impl InventoryView {
         let app = c.app;
         let data = app.world.data();
         let painter = ui.painter().clone();
-        let w = 4.0 + 96.0 + 4.0 + 6.0;
+        let w = UPE_COLUMN_W;
         let x = body.left() + 4.0;
         let mut y = body.top() + 4.0;
         let f = small();
@@ -379,7 +429,7 @@ impl InventoryView {
         if let Some(id) = self.show_item {
             self.history = Some(id);
             if grid.contains(&id) {
-                self.pulse = Some((id, time_s, PULSE_S));
+                self.pulse = Some((id, time_s, PULSE_S, true));
                 self.scroll_to = Some(id);
                 self.show_item = None;
             } else if self.filter != 0 || !self.search.is_empty() {
@@ -408,7 +458,7 @@ impl InventoryView {
         let mut search = self.search.clone();
         let icons = &mut *c.icons;
         let clicked_cell = std::cell::Cell::new(None);
-        let pulse = self.pulse.filter(|(_, start, dur)| time_s - start < *dur);
+        let pulse = self.pulse.filter(|(_, start, dur, again)| time_s - start < pulse_length(*dur, *again));
         let scroll_to = self.scroll_to.take();
         crate::guide::mark(ui, "inventory.grid", main);
         widgets::section(
@@ -607,19 +657,20 @@ impl InventoryView {
                             fade(sub_c),
                         );
                     }
-                    if let Some((id, start, dur)) = pulse
+                    if let Some((id, start, dur, again)) = pulse
                         && let Some(i) = cells.iter().position(|c| c.id == id)
                     {
-                        let t = ((time_s - start) / dur).clamp(0.0, 1.0) as f32;
-                        let eased = 1.0 - (1.0 - t) * (1.0 - t);
-                        let gold = Color32::from_rgb(0xF5, 0xC5, 0x42).gamma_multiply(1.0 - t);
-                        widgets::smooth_stroke(
-                            &painter,
-                            cell_rect(i).expand(eased * PULSE_GROW),
-                            0.0,
-                            Stroke::new(5.0, gold),
-                            StrokeKind::Middle,
-                        );
+                        for t in pulse_ts(time_s - start, dur, again) {
+                            let eased = 1.0 - (1.0 - t) * (1.0 - t);
+                            let gold = Color32::from_rgb(0xF5, 0xC5, 0x42).gamma_multiply(1.0 - t);
+                            widgets::smooth_stroke(
+                                &painter,
+                                cell_rect(i).expand(eased * PULSE_GROW),
+                                0.0,
+                                Stroke::new(5.0, gold),
+                                StrokeKind::Middle,
+                            );
+                        }
                         if scroll_to == Some(id) {
                             ui.scroll_to_rect(cell_rect(i), Some(egui::Align::Center));
                         }
@@ -634,7 +685,7 @@ impl InventoryView {
         self.pulse = pulse;
         if let Some(id) = clicked_cell.get() {
             self.history = Some(id);
-            self.pulse = Some((id, time_s, CLICK_PULSE_S));
+            self.pulse = Some((id, time_s, CLICK_PULSE_S, false));
         }
 
         // the side: progress and actions on top, recent finds below

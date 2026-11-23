@@ -636,7 +636,12 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                             None => format!("{} - never logged in", u.role_name()),
                         };
                         if !u.client.is_empty() {
-                            sub.push_str(&format!(" - {}", u.client));
+                            // the Java app sent "Loot Gobbler v0.7.27" before the server named it "Java v0.7.27"
+                            let client = match u.client.strip_prefix("Loot Gobbler ") {
+                                Some(v) => format!("Java v{}", v.trim_start_matches('v')),
+                                None => u.client.clone(),
+                            };
+                            sub.push_str(&format!(" - {client}"));
                         }
                         let title = if u.id == me.id { format!("{} (you)", u.ign) } else { u.ign.clone() };
                         let shown: Vec<(&str, Style)> = buttons.iter().map(|b| (b.0, b.1)).collect();

@@ -49,10 +49,12 @@ pub struct Gui {
     restarting: Option<std::time::Instant>,
     /// Release notes loading on their thread, for the release notes window.
     notes: Option<std::sync::mpsc::Receiver<Result<Vec<lg_ui::welcome::Note>, String>>>,
+    /// The app started again to take over the Java app's records: this one closes without writing anything.
+    handing_over: bool,
 }
 
 impl Gui {
-    pub fn new(app: lg_app::App, own: PathBuf, assets: PathBuf, updates: bool) -> Gui {
+    pub fn new(app: lg_app::App, own: PathBuf, assets: PathBuf, updates: bool, java_offer: Option<PathBuf>) -> Gui {
         let props = lg_app::properties::Properties::load(&own);
         let start = props.get("sniffer") == Some("T");
         let mut g = Gui {
@@ -74,7 +76,11 @@ impl Gui {
             updater: updates.then(|| lg_net::updater::Updater::new(env!("CARGO_PKG_VERSION"))),
             restarting: None,
             notes: None,
+            handing_over: false,
         };
+        // the first start's greeting offers the Java app's records, ticked when its folder holds some
+        g.window.java_offer =
+            java_offer.map(|p| lg_ui::welcome::JavaOffer { take: lg_app::files::holds_data(&p), path: p.display().to_string() });
         g.seen_run = g.app.dps_history.runs.first().map(|r| r.start);
         // Java `GobblerServer.reconnect` on start: the saved server and session
         g.app.server = lg_app::server::Connection::new(&g.window.props, &format!("Loot Gobbler {}", env!("CARGO_PKG_VERSION")));
@@ -176,6 +182,35 @@ impl Gui {
         });
     }
 
+    /// The first start's greeting: the Java app's records wanted from `dir`. If it holds them, the app starts again
+    /// with them (`--take-over-java`) and this one closes without writing; else the greeting says so.
+    fn take_over_java(&mut self, ctx: &egui::Context, dir: &str) {
+        let dir = PathBuf::from(dir);
+        if !lg_app::files::holds_data(&dir) {
+            self.message(
+                "The Java Loot Gobbler's records",
+                &format!(
+                    "No Loot Gobbler records were found in {}. You can still log in on the Server tab to get your synced records.",
+                    dir.display()
+                ),
+            );
+            self.window.begin_start(None);
+            return;
+        }
+        self.set(crate::JAVA_OFFER, "pending");
+        let mut args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+        args.push("--take-over-java".into());
+        args.push(dir.clone().into_os_string());
+        match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).args(&args).spawn()) {
+            Ok(_) => {
+                lg_app::applog::line("app", &format!("starting again to take over {}", dir.display()));
+                self.handing_over = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Err(e) => self.message("The Java Loot Gobbler's records", &format!("Loot Gobbler could not start again: {e}")),
+        }
+    }
+
     /// Info > Release Notes: every published release, the latest first; open at once, filled in when GitHub answers.
     fn release_notes(&mut self) {
         self.window.release_notes = Some(lg_ui::welcome::ReleaseNotes { from: None, notes: None });
@@ -266,6 +301,13 @@ impl Gui {
         self.choosing = None;
         let Some(path) = picked else { return };
         let path = std::path::absolute(&path).unwrap_or(path);
+        if key == lg_ui::window::JAVA_FOLDER_PICK {
+            if let Some(o) = self.window.java_offer.as_mut() {
+                o.path = path.display().to_string();
+                o.take = true;
+            }
+            return;
+        }
         if key == "logDir" {
             self.set(&key, &path.display().to_string());
             return;
@@ -561,6 +603,10 @@ impl Gui {
 impl eframe::App for Gui {
     /// Closing: the sync's last upload, then the files.
     fn on_exit(&mut self) {
+        if self.handing_over {
+            lg_app::applog::line("app", "Closing: the app started again with the Java app's records");
+            return;
+        }
         self.flush();
         lg_app::applog::line("app", "Closing");
         if let Err(e) = self.app.save_changed(&self.own) {
@@ -595,7 +641,9 @@ impl eframe::App for Gui {
         self.chosen();
         self.server(ui.ctx());
         // what the views asked for last frame is done before this one is drawn
-        if let Err(e) = self.app.save_changed(&self.own) {
+        if !self.handing_over
+            && let Err(e) = self.app.save_changed(&self.own)
+        {
             lg_app::applog::err(&format!("cannot save into {}: {e}", self.own.display()));
         }
         let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
@@ -637,6 +685,7 @@ impl eframe::App for Gui {
                     None => self.message("Check for updates", "Updates are not checked with --offline."),
                 },
                 lg_ui::window::Ask::ReleaseNotes => self.release_notes(),
+                lg_ui::window::Ask::TakeOverJava(dir) => self.take_over_java(&ui.ctx().clone(), &dir),
                 lg_ui::window::Ask::OpenUrl(url) => {
                     let url = if url.is_empty() { lg_net::updater::releases_page() } else { url };
                     if let Err(e) = lg_ui::info::open_url(&url) {

@@ -167,9 +167,13 @@ impl Resources {
 
     /// What was kept (`resources.json`), if anything.
     pub fn load(dir: &std::path::Path) -> Resources {
+        std::fs::read_to_string(dir.join("resources.json")).map_or_else(|_| Resources::default(), |t| Resources::from_text(&t))
+    }
+
+    /// The file's (or the server's document's) text read.
+    fn from_text(text: &str) -> Resources {
         let mut r = Resources::default();
-        let Ok(text) = std::fs::read_to_string(dir.join("resources.json")) else { return r };
-        let Ok(root) = json::parse(&text) else { return r };
+        let Ok(root) = json::parse(text) else { return r };
         let kinds = |v: Option<&Json>| -> BTreeMap<i32, (i32, i32)> {
             let mut out = BTreeMap::new();
             if let Some(Json::Object(o)) = v {
@@ -214,6 +218,36 @@ impl Resources {
             }
         }
         r
+    }
+
+    /// The server's (or another PC's) document merged in: each side as seen last, each run's bank the larger of
+    /// both counts per kind (both PCs may have counted the same gains). True if anything changed.
+    pub fn merge_sync(&mut self, remote: &Json) -> bool {
+        let Json::Object(_) = remote else { return false };
+        let other = Resources::from_text(&remote.write());
+        let mut changed = false;
+        for (mine, theirs) in [(&mut self.seasonal, other.seasonal), (&mut self.regular, other.regular)] {
+            if let Some(t) = theirs
+                && mine.as_ref().is_none_or(|m| t.seen_at > m.seen_at)
+            {
+                *mine = Some(t);
+                changed = true;
+            }
+        }
+        for (id, theirs) in other.banks {
+            let mine = self.banks.entry(id).or_default();
+            let before = mine.clone();
+            for (m, t) in [(&mut mine.materials, theirs.materials), (&mut mine.dust, theirs.dust)] {
+                for (k, v) in t {
+                    let e = m.entry(k).or_insert(0);
+                    *e = (*e).max(v);
+                }
+            }
+            mine.forgefire = mine.forgefire.max(theirs.forgefire);
+            changed |= *mine != before;
+        }
+        self.dirty |= changed;
+        changed
     }
 
     /// The file's text.

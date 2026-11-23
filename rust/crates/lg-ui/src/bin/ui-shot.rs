@@ -209,6 +209,9 @@ fn main() {
                         mode: r.mode.clone(),
                         marked_at: 0,
                         lost: r.broken.is_some(),
+                        why: r.broken.clone().unwrap_or_default(),
+                        lost_at: r.broken_at,
+                        notes: r.notes.clone(),
                         alive: ch.is_some_and(|c| c.alive),
                         character: ch.map(|c| CaravanCharacter {
                             class_type: c.class_type,
@@ -339,6 +342,13 @@ fn main() {
                 }
                 None => {
                     win.open(&shown);
+                    // "welcome": the first start's greeting, with the offer of the Java app's records
+                    if tab == "welcome" {
+                        win.open("Profile");
+                        win.welcome = true;
+                        win.java_offer =
+                            Some(lg_ui::welcome::JavaOffer { path: r"C:\Users\Someone\AppData\Roaming\LootGobbler".into(), take: true });
+                    }
                     if let Some(start) = mates_visit {
                         win.battles.selected = start;
                     }

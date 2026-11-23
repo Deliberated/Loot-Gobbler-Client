@@ -110,6 +110,8 @@ impl ItemSound {
 enum Zone {
     /// A click sets the key to the value.
     Set(Rect, String, String),
+    /// A click sets every key to its value (one zone: stacked zones only hand the click to the top one).
+    SetAll(Rect, Vec<(String, String)>),
     /// A slider: the key gets the value under the pointer (track from, to; values min..max) when let go.
     Slider(Rect, String, f32, f32, i32, i32),
     /// Asked already (a picker was clicked).
@@ -630,11 +632,12 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                 let cr = check(&painter, &p, x + 6.0, ty + 4.0 + 13.0, "Show the whole guide on the next start, as if never seen", next);
                 widgets::tip(ui, cr, "guide-next", "Switches off by itself once the guide was finished or skipped");
                 // Java `setOnNextStart`: on, it starts from the beginning
-                zones.borrow_mut().push(Zone::Set(cr, "guideDoneVersion".into(), if next { "2".into() } else { String::new() }));
+                let mut sets = vec![("guideDoneVersion".to_string(), if next { "2".to_string() } else { String::new() })];
                 if !next {
-                    zones.borrow_mut().push(Zone::Set(cr, "guideActive".into(), "false".into()));
-                    zones.borrow_mut().push(Zone::Set(cr, "guideStep".into(), "0".into()));
+                    sets.push(("guideActive".into(), "false".into()));
+                    sets.push(("guideStep".into(), "0".into()));
                 }
+                zones.borrow_mut().push(Zone::SetAll(cr, sets));
                 ty += 26.0 + 8.0;
                 ty - r.top() + 2.0
             },
@@ -648,6 +651,13 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
                 Zone::Set(rect, key, value) => {
                     if ui.interact(rect, ui.scope_id().with(("set", k)), egui::Sense::click()).clicked() {
                         set(asks, &key, &value);
+                    }
+                }
+                Zone::SetAll(rect, sets) => {
+                    if ui.interact(rect, ui.scope_id().with(("set", k)), egui::Sense::click()).clicked() {
+                        for (key, value) in sets {
+                            set(asks, &key, &value);
+                        }
                     }
                 }
                 Zone::Slider(rect, key, from, to, min, max) => {

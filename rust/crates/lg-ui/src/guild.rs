@@ -388,6 +388,15 @@ fn upe(ui: &mut Ui, c: &mut Ctx, body: Rect, page: &mut usize) {
                         (format!("{} ", m.ign), None, true),
                         (format!("({class}, {}{state})", lg_app::upe::label(&run.mode)), None, false),
                     ]];
+                    // why it was lost, and when (as their client wrote it); what was worth a look
+                    if run.lost {
+                        let why = if run.why.trim().is_empty() { "the reason was not synced (an older client)".to_string() } else { run.why.clone() };
+                        let when = if run.lost_at > 0 { format!(" ({})", app.zone.local_date_time(run.lost_at).replace('T', " ").chars().take(16).collect::<String>()) } else { String::new() };
+                        tip.push(vec![("Lost: ".into(), Some(fixed::RED), true), (format!("{why}{when}"), None, false)]);
+                    }
+                    for note in &run.notes {
+                        tip.push(vec![("Worth a look: ".into(), Some(fixed::MUTED), false), (note.clone(), None, false)]);
+                    }
                     let mut best: Vec<&(i32, String, f64)> = counted.iter().collect();
                     best.sort_by(|a, b| b.2.total_cmp(&a.2));
                     for (id, place, pts) in best.iter().take(10) {

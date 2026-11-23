@@ -248,8 +248,12 @@ pub struct UpeRun {
     pub char_id: i64,
     pub mode: String,
     pub marked_at: i64,
-    /// A rule was broken.
+    /// A rule was broken: which (as the client wrote it; empty from an older server) and when.
     pub lost: bool,
+    pub why: String,
+    pub lost_at: i64,
+    /// What the client found worth a look (not against the rules).
+    pub notes: Vec<String>,
     pub alive: bool,
     pub character: Option<CaravanCharacter>,
     pub gathered: Vec<UpeFind>,
@@ -281,6 +285,9 @@ pub fn upe_board_of(j: &Json) -> UpeBoard {
                 mode: text(r.get("mode")),
                 marked_at: long(r.get("markedAt")),
                 lost: matches!(r.get("lost"), Some(Json::Bool(true))),
+                why: text(r.get("why")),
+                lost_at: long(r.get("lostAt")),
+                notes: list(r.get("notes"), |n| text(Some(n))),
                 alive: matches!(r.get("alive"), Some(Json::Bool(true))),
                 character: r.get("character").filter(|c| matches!(c, Json::Object(_))).map(|c| CaravanCharacter {
                     class_type: int(c.get("classType"), 0),

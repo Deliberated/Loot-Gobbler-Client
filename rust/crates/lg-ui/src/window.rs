@@ -58,6 +58,8 @@ pub enum Ask {
     ReleaseNotes,
     /// A web page to open (empty: the releases page).
     OpenUrl(String),
+    /// The first start's greeting: the Java app's records taken over from this folder (the app starts again).
+    TakeOverJava(String),
 }
 
 /// What the Server tab asks of the server (Java `ServerPanel`'s buttons).
@@ -155,6 +157,8 @@ pub struct Window {
     /// The greeting of the very first start, the release notes window, and what of the start is still to come
     /// (Java `TomatoGUI`: the release notes after an update, then the greeting, then the Newcomer's Guide).
     pub welcome: bool,
+    /// The first start's offer to take over the Java app's records (shown in the greeting).
+    pub java_offer: Option<crate::welcome::JavaOffer>,
     pub release_notes: Option<crate::welcome::ReleaseNotes>,
     start: StartStep,
     /// The Newcomer's Guide shows a sample dungeon in the menu bar: since when it is "in" it.
@@ -201,6 +205,9 @@ fn now_ms() -> i64 {
 
 const GUILD_PAGES: [&str; 7] = crate::guild::PAGES;
 
+/// The folder picker's key for the Java app's folder (the first start's greeting): the pick fills the offer.
+pub const JAVA_FOLDER_PICK: &str = "javaFolderPick";
+
 impl Window {
     /// With the game data in `assets` and the settings (`realmShark.properties`).
     pub fn new(assets: &Path, props: Properties) -> Window {
@@ -233,6 +240,7 @@ impl Window {
             guide: Default::default(),
             tour: Default::default(),
             welcome: false,
+            java_offer: None,
             release_notes: None,
             start: StartStep::Done,
             preview_since: None,
@@ -605,10 +613,23 @@ impl Window {
             self.dialog = None;
         }
         // the greeting and the release notes
-        if self.welcome && crate::welcome::welcome(ui.ctx(), &self.palette) {
-            self.welcome = false;
-            if self.start == StartStep::Welcome {
-                self.after_welcome();
+        if self.welcome {
+            match crate::welcome::welcome(ui.ctx(), &self.palette, &mut self.java_offer) {
+                crate::welcome::Greeting::Keep => {}
+                crate::welcome::Greeting::Browse => self.asks.push(Ask::Choose {
+                    key: JAVA_FOLDER_PICK.into(),
+                    title: "The Java Loot Gobbler's folder".into(),
+                    folder: true,
+                }),
+                crate::welcome::Greeting::Close => {
+                    self.welcome = false;
+                    // the Java app's records wanted: the app starts again with them
+                    if let Some(o) = self.java_offer.take().filter(|o| o.take && !o.path.trim().is_empty()) {
+                        self.asks.push(Ask::TakeOverJava(o.path.trim().to_string()));
+                    } else if self.start == StartStep::Welcome {
+                        self.after_welcome();
+                    }
+                }
             }
         }
         if let Some(n) = &self.release_notes {

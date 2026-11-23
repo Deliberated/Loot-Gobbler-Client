@@ -30,10 +30,12 @@ struct Options {
     offline: bool,
     pcap: Option<PathBuf>,
     no_window: bool,
+    /// Asked from the first start's greeting: the Java app's records taken over from this folder (the app restarted).
+    take_over: Option<PathBuf>,
 }
 
 fn options() -> Result<Options, String> {
-    let mut o = Options { java: None, data: None, assets: None, game: None, offline: false, pcap: None, no_window: false };
+    let mut o = Options { java: None, data: None, assets: None, game: None, offline: false, pcap: None, no_window: false, take_over: None };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut value = || args.next().map(PathBuf::from).ok_or(format!("{a} needs a value"));
@@ -43,6 +45,7 @@ fn options() -> Result<Options, String> {
             "--assets" => o.assets = Some(value()?),
             "--path" => o.game = Some(value()?),
             "--pcap" => o.pcap = Some(value()?),
+            "--take-over-java" => o.take_over = Some(value()?),
             "--offline" => o.offline = true,
             "--no-window" => o.no_window = true,
             _ => return Err(format!("unknown: {a}")),
@@ -62,7 +65,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     lg_net::updater::clean_up();
-    let o = match options() {
+    let mut o = match options() {
         Ok(o) => o,
         Err(e) => {
             eprintln!(
@@ -82,6 +85,19 @@ fn main() -> ExitCode {
         lg_app::applog::err(&format!("cannot make {}: {e}", own.display()));
         return ExitCode::FAILURE;
     }
+    // the greeting of the first start offered the Java app's records and they were wanted: what this first start
+    // wrote is put aside (it holds nothing yet) and the Java app's folder taken over as on a first start
+    if let Some(j) = o.take_over.clone()
+        && lg_app::properties::Properties::load(&own).get(JAVA_OFFER) == Some("pending")
+        && lg_app::files::holds_data(&j)
+    {
+        for f in lg_app::files::KEPT.iter().chain(&["char-list.xml", "resources.json", lg_app::properties::FILE]) {
+            let _ = std::fs::remove_file(own.join(f));
+        }
+        o.java = Some(j);
+    }
+    // a first start without --java: the greeting offers the Java app's folder (where it keeps its records by default)
+    let offer = (o.java.is_none() && !lg_app::files::holds_data(&own)).then(|| java_folder(&own)).flatten();
     if let Some(j) = &o.java {
         match lg_app::files::take_over_settings(&own, j) {
             Ok(true) => lg_app::applog::line("app", "took the Java app's settings over"),
@@ -150,7 +166,7 @@ fn main() -> ExitCode {
         unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
     }
     // no update checks with --offline, unless a test points them elsewhere (LG_UPDATE_API)
-    let gui = gui::Gui::new(app, own, assets, !o.offline || std::env::var_os("LG_UPDATE_API").is_some());
+    let gui = gui::Gui::new(app, own, assets, !o.offline || std::env::var_os("LG_UPDATE_API").is_some(), offer);
     match eframe::run_native("Loot Gobbler", options, Box::new(|_| Ok(Box::new(gui)))) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -162,6 +178,25 @@ fn main() -> ExitCode {
 
 /// The game data in the own folder, extracted if the game's file changed (Java: `AssetCheck`); without the game
 /// and without own game data, the Java app's.
+/// The setting marking that the first start's greeting offered the Java app's folder ("pending" once taken).
+pub const JAVA_OFFER: &str = "javaOffer";
+
+/// Where the Java app keeps its records by default, unless that is this app's own folder: on Windows
+/// %APPDATA%\LootGobbler, on Linux ~/.local/share/LootGobbler (its rpm's; the portable folders are unknown).
+fn java_folder(own: &Path) -> Option<PathBuf> {
+    let dir = if cfg!(windows) {
+        PathBuf::from(std::env::var_os("APPDATA")?).join("LootGobbler")
+    } else {
+        match std::env::var("XDG_DATA_HOME") {
+            Ok(x) if x.starts_with('/') => PathBuf::from(x),
+            _ => PathBuf::from(std::env::var_os("HOME")?).join(".local").join("share"),
+        }
+        .join("LootGobbler")
+    };
+    let same = |a: &Path, b: &Path| matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y);
+    (!same(&dir, own)).then_some(dir)
+}
+
 fn own_assets(own: &Path, o: &Options) -> PathBuf {
     let zone = lg_app::localtime::Zone::system();
     let mut props = lg_app::properties::Properties::load(own);
