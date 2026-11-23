@@ -186,7 +186,21 @@ impl Shell {
             Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             Color32::WHITE,
         );
-        jtext::draw(&painter, menu.center(), Align2::CENTER_CENTER, "Loot Gobbler", &theme::head(22.0), mix(p.title_fg, p.gold, 0.5));
+        let title_font = theme::head(22.0);
+        let title_w = jtext::width(&painter, "Loot Gobbler", &title_font);
+        let title_r = Rect::from_center_size(menu.center(), vec2(title_w + 16.0, menu.height() - 8.0));
+        let icon_r = Rect::from_center_size(pos2(menu.left() + 8.0 + 11.0, menu.center().y), vec2(30.0, 30.0));
+        // the goblin and the name open About, as Info > About does
+        let about_icon = ui.interact(icon_r, ui.scope_id().with("title-icon-about"), Sense::click()).on_hover_text("About Loot Gobbler");
+        let about_title = ui.interact(title_r, ui.scope_id().with("title-about"), Sense::click()).on_hover_text("About Loot Gobbler");
+        if about_icon.hovered() || about_title.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if about_icon.clicked() || about_title.clicked() {
+            self.clicked_info = Some("About");
+        }
+        let title_ink = if about_title.hovered() { p.gold } else { mix(p.title_fg, p.gold, 0.5) };
+        jtext::draw(&painter, menu.center(), Align2::CENTER_CENTER, "Loot Gobbler", &title_font, title_ink);
         // minimize, maximize / restore, close
         let mut bx = menu.right();
         for which in [2, 1, 0] {
