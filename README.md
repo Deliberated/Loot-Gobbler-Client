@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/img/icon.png" alt="The Loot Gobbler" width="128">
+<img src="docs/img/loot-gobbler.png" alt="The Loot Gobbler hugging its sack of treasure" width="420">
 
 # Loot Gobbler
 
