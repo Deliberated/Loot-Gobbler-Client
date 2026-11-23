@@ -58,7 +58,7 @@ pub struct Shell {
     /// Where the menus end in the menu bar (the dungeon you are in shows after them), and the bar.
     pub menu_end: f32,
     pub menu_rect: Rect,
-    /// E.g. "rust build v0.0.1" (Java: "stable" for a released app).
+    /// E.g. "rust stable v0.0.2" (Java: "stable" for a released app).
     pub version: String,
     pub overlays_on: bool,
     /// Clicks this frame.
@@ -111,7 +111,7 @@ impl Default for Shell {
             guide_menu_open: false,
             menu_end: 0.0,
             menu_rect: Rect::NOTHING,
-            version: concat!("rust build v", env!("CARGO_PKG_VERSION")).into(),
+            version: concat!("rust stable v", env!("CARGO_PKG_VERSION")).into(),
             overlays_on: false,
             clicked_sniffer: false,
             clicked_overlay: false,
