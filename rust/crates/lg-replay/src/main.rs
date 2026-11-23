@@ -413,6 +413,10 @@ fn summary(w: &lg_world::World) -> String {
 }
 
 /// The world state after each packet it is fed, as `oracle/WorldOracle.java` prints Java's.
+/// Packets only the Rust app takes (the season missions' progress and claims, for the game mode runs): the Java app
+/// has no listener for them, so the comparison with it is not fed them.
+const RUST_ONLY: [u8; 2] = [163, 165];
+
 fn world(
     file: &str,
     assets: &std::path::Path,
@@ -442,7 +446,9 @@ fn world(
     if let Some(dir) = web {
         w.web = Box::new(lg_app::web::Canned::new(dir));
     }
-    let fed = |id: u8| lg_app::FED.contains(&id) || (web.is_some() && id == lg_app::HELLO);
+    // the app's own log lines beside the packet lines, as Java's oracle does with its own
+    lg_app::applog::console_to_stderr();
+    let fed = |id: u8| (lg_app::FED.contains(&id) && !RUST_ONLY.contains(&id)) || (web.is_some() && id == lg_app::HELLO);
     // taking over the Java folder into the own one: a full copy; then what the app writes on starting
     if let (Some(_), Some(j)) = (save, java_data) {
         w.copy_from_java(j);

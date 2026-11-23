@@ -23,6 +23,14 @@ struct State {
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
+/// The console lines go to the error stream instead (the replay's comparison with Java: its standard output is the
+/// world's packet lines, as Java's oracle moves the app's own messages aside too).
+static CONSOLE_TO_ERR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn console_to_stderr() {
+    CONSOLE_TO_ERR.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
@@ -67,7 +75,11 @@ pub fn dir() -> PathBuf {
 /// One log line, "[area] message", on the console and in the file.
 pub fn line(area: &str, message: &str) {
     let text = format!("[{area}] {message}");
-    println!("{text}");
+    if CONSOLE_TO_ERR.load(std::sync::atomic::Ordering::Relaxed) {
+        eprintln!("{text}");
+    } else {
+        println!("{text}");
+    }
     write("", &text);
 }
 
