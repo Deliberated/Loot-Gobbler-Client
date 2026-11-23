@@ -1,9 +1,11 @@
 <div align="center">
 
+<img src="docs/img/icon.png" alt="The Loot Gobbler" width="128">
+
 # Loot Gobbler
 
-### A tool, designed and built <>
-
+### A tool, designed and built around what _you_ need
+[Loot Gobbler Page](https://deliberated.github.io/Loot-Gobbler-Client/)
 </div>
 
 The Loot Gobbler is a sniffing tool that can act as your right hand for your RotMG adventures. It helps you track your UPEs, your characters, their inventories, and your dungeon and exaltation progress, and it suggests the ideal loadout and enchantments. All that while being written in Rust, so it won't bother your CPU!
