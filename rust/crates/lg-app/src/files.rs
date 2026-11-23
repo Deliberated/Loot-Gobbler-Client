@@ -601,15 +601,32 @@ fn writable(dir: &Path) -> bool {
     ok
 }
 
+/// The Newcomer's Guide's progress in the settings: this app's guide is its own, so the Java app's (finished there,
+/// or stopped at a step) is not taken over and the guide starts on the first start here.
+const JAVA_GUIDE_KEYS: [&str; 4] = ["guideActive", "guideStep", "guideQuickChosen", "guideDoneVersion"];
+
 /// On a first start (no data in the own folder yet) the Java app's settings (`realmShark.properties`) copied
-/// over, as they are, before anything else reads them. True if copied.
+/// over before anything else reads them, all but the guide's progress. True if copied.
 pub fn take_over_settings(own: &Path, java: &Path) -> std::io::Result<bool> {
     let (from, to) = (java.join(crate::properties::FILE), own.join(crate::properties::FILE));
     if holds_data(own) || to.exists() || !from.is_file() {
         return Ok(false);
     }
-    std::fs::copy(from, to)?;
+    let text = std::fs::read(&from)?;
+    std::fs::write(to, without_guide(&String::from_utf8_lossy(&text)))?;
     Ok(true)
+}
+
+/// The settings text without the lines of the guide's keys (`key=value`, `key: value` or `key value`).
+fn without_guide(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let key = line.trim_start().split(['=', ':', ' ', '\t', '\r', '\n']).next().unwrap_or("");
+        if !JAVA_GUIDE_KEYS.contains(&key) {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 /// Whether a folder holds the app's data.
@@ -664,5 +681,33 @@ mod tests {
         assert!(again.characters.get(7).is_some());
         assert_eq!(std::fs::read_to_string(own.join("holdings-journal.txt")).unwrap(), format!("line one{LINE_END}"), "not copied twice");
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn java_settings_without_the_guide() {
+        let java = "#Realm shark properties
+welcomeShown=true
+guideDoneVersion=2
+guideActive=false
+guideStep: 4
+logging=true
+guideQuickChosen=true
+";
+        assert_eq!(
+            super::without_guide(java),
+            "#Realm shark properties
+welcomeShown=true
+logging=true
+"
+        );
+        // a key that only starts like one of them stays
+        assert_eq!(
+            super::without_guide(
+                "guideDoneVersionOld=1
+"
+            ),
+            "guideDoneVersionOld=1
+"
+        );
     }
 }
