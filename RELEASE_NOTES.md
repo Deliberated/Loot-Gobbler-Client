@@ -5,7 +5,7 @@ v0.0.1: The first Rust build of Loot Gobbler
 - Only listens to what the game receives on your PC; it never sends, blocks or changes anything
 - Keeps its records in the Java app's formats; its first start offers to take over the Java app's records and settings, from its default folder or one you pick
 - Finds the game's files by itself and reads the game data from them
-- Windows (exe or portable zip) and Linux (rpm or portable tar.gz); tells you when a new version is out
+- Windows: an installer (LootGobbler.exe, no admin rights needed, installs into %APPDATA%\LootGobbler-Rust beside the Java app) or the portable zip; Linux: rpm or portable tar.gz; tells you when a new version is out
 - Linux: when the sniffer cannot capture yet, one click asks for your password, installs what is missing (libpcap, setcap), gives the permission and starts Loot Gobbler again
 - Its own page with every feature and pictures: https://deliberated.github.io/Loot-Gobbler-Client/
 
