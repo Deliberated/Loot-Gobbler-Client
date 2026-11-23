@@ -473,6 +473,21 @@ impl Window {
             };
             (shell::Server::Offline, format!("{}: {why}. Click to open the Server tab.", s.url))
         };
+        // the focus boxes under the focus line: the runs that can be the focus, the one picked
+        let data = app.world.data();
+        self.shell.focus_boxes = crate::focus::candidates(app)
+            .into_iter()
+            .map(|(r, ch)| {
+                let skin = if ch.skin > 0 { ch.skin } else { ch.class_type };
+                shell::FocusBox {
+                    id: r.char_id,
+                    title: ch.class_name.clone(),
+                    sub: format!("{}{}", lg_app::upe::label(&r.mode), if ch.seasonal { " · seasonal" } else { "" }),
+                    icon: self.icons.skin(ui.ctx(), data, skin, ch.tex1, ch.tex2, 72).map(|t| t.id()),
+                }
+            })
+            .collect();
+        self.shell.focus_on = crate::focus::current(app, &self.props).map(|(r, _)| r.char_id);
         let Window { shell, icons, en, loadout, props, profile, characters, inventory, game_modes, battles, social, guild, asks, .. } =
             self;
         shell.show(ui, &palette, |ui, tab| {
@@ -525,6 +540,9 @@ impl Window {
             if let Some(v) = &app.dungeon_visits.current {
                 self.battles.selected = v.start;
             }
+        }
+        if let Some(pick) = self.shell.clicked_focus {
+            self.asks.push(Ask::Set(crate::focus::KEY.into(), crate::focus::value(pick)));
         }
         if self.shell.order_changed {
             self.asks.push(Ask::Set("tabOrder".into(), self.shell.order.join("|")));

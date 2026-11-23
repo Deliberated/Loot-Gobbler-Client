@@ -120,7 +120,7 @@ fn tag(painter: &egui::Painter, at: Pos2, t: &str, color: Color32) {
 /// A brush stroke along a cubic curve, its width going from `w0` at the start through `wm` to `w1` at the end
 /// (Java `brush`), with round ends.
 fn brush(painter: &egui::Painter, c: [Pos2; 4], w0: f32, wm: f32, w1: f32, color: Color32) {
-    let n = 40;
+    let n = 80;
     let at = |t: f32| {
         let u = 1.0 - t;
         (c[0].to_vec2() * u * u * u + c[1].to_vec2() * 3.0 * u * u * t + c[2].to_vec2() * 3.0 * u * t * t + c[3].to_vec2() * t * t * t)
@@ -128,18 +128,27 @@ fn brush(painter: &egui::Painter, c: [Pos2; 4], w0: f32, wm: f32, w1: f32, color
     };
     let ease = |t: f32| t * t * (3.0 - 2.0 * t);
     let pts: Vec<Pos2> = (0..=n).map(|i| at(i as f32 / n as f32)).collect();
+    // per point four vertices across the stroke: a feather outside each edge fading to nothing, as egui smooths
+    // its own shapes (a bare mesh would show stair-stepped edges)
+    let px = 1.0 / painter.pixels_per_point();
+    let clear = Color32::TRANSPARENT;
     let mut mesh = egui::Mesh::default();
     for (i, q) in pts.iter().enumerate() {
         let d = (pts[(i + 1).min(n)] - pts[i.saturating_sub(1)]).normalized();
         let t = i as f32 / n as f32;
         let w = if t < 0.5 { w0 + (wm - w0) * ease(t * 2.0) } else { wm + (w1 - wm) * ease((t - 0.5) * 2.0) };
-        let nrm = vec2(-d.y, d.x) * w / 2.0;
-        mesh.colored_vertex(*q + nrm, color);
-        mesh.colored_vertex(*q - nrm, color);
+        let side = vec2(-d.y, d.x);
+        let core = (w / 2.0 - px / 2.0).max(0.0);
+        mesh.colored_vertex(*q + side * (core + px), clear);
+        mesh.colored_vertex(*q + side * core, color);
+        mesh.colored_vertex(*q - side * core, color);
+        mesh.colored_vertex(*q - side * (core + px), clear);
         if i > 0 {
-            let k = (2 * i) as u32;
-            mesh.add_triangle(k - 2, k - 1, k);
-            mesh.add_triangle(k - 1, k + 1, k);
+            let (a, b) = ((4 * (i - 1)) as u32, (4 * i) as u32);
+            for k in 0..3 {
+                mesh.add_triangle(a + k, a + k + 1, b + k);
+                mesh.add_triangle(a + k + 1, b + k + 1, b + k);
+            }
         }
     }
     painter.add(egui::Shape::mesh(mesh));
@@ -289,7 +298,14 @@ impl QuestsView {
         let now = c.now;
         let now_s = now / 1000;
         let views = app.missions.views(now_s);
-        let character = app.characters.playing().or_else(|| app.characters.last_played_char());
+        // with a focus: its character, and only the missions its run can still do without being disqualified
+        let focus = crate::focus::current(app, c.props);
+        let untouched: Vec<String> =
+            if focus.is_some() { app.missions.untouched(now_s).into_iter().map(|(k, _)| k).collect() } else { Vec::new() };
+        let open_for_focus = |v: &View| {
+            focus.is_none_or(|(run, _)| crate::focus::mission_open(app, run, &format!("{}:{}", v.season.id, v.mission.id), &untouched))
+        };
+        let character = focus.map(|(_, ch)| ch).or_else(|| app.characters.playing()).or_else(|| app.characters.last_played_char());
         let slot_names: Vec<String> = character
             .and_then(|ch| data.classes.iter().find(|k| k.id == ch.class_type))
             .and_then(|k| k.slot_types)
@@ -329,7 +345,7 @@ impl QuestsView {
                 let rw = jtext::width(&painter, "REFRESH", &small()) + 40.0;
                 let rr = Rect::from_min_size(pos2(head.right() - 5.0 - rw, head.top()), vec2(rw, head.height()));
                 refresh.set(crate::inventory::button(ui, &p, rr, "Refresh", false, "missions-refresh"));
-                let names = ["This character", "All missions"];
+                let names = [if focus.is_some() { "For the focus" } else { "This character" }, "All missions"];
                 let w: f32 = names.iter().map(|n| jtext::width(&painter, &n.to_uppercase(), &small()) + 26.0).sum();
                 if let Some(i) = widgets::segmented(
                     ui,
@@ -416,7 +432,9 @@ impl QuestsView {
                             continue;
                         }
                         for v in list {
-                            if matches!(v.status, Status::Claimed | Status::Cooldown) || (!all.get() && for_you(v.mission).is_some()) {
+                            if matches!(v.status, Status::Claimed | Status::Cooldown)
+                                || (!all.get() && (for_you(v.mission).is_some() || !open_for_focus(v)))
+                            {
                                 continue;
                             }
                             if v.status == Status::Claimable { claimable.push(v) } else { rest.push(v) }

@@ -108,7 +108,7 @@ fn typing_into_the_inventory_search() {
         win,
     );
     h.run_steps(2);
-    click(&mut h, Pos2::new(946.0, 150.0));
+    click(&mut h, Pos2::new(946.0, 154.0)); // under the focus line
     h.input_mut().events.push(Event::Text("lute".into()));
     h.run_steps(2);
     assert_eq!(h.state().inventory.search, "lute");

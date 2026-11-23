@@ -51,9 +51,12 @@ fn main() {
     let assets = data.as_ref().map(|d| d.join("assets")).unwrap_or_default();
     let world = lg_world::World::new(lg_gamedata::GameData::load(&assets));
     let mut app = lg_app::App::importing(world, now, data.as_deref());
-    let props = lg_app::properties::Properties::in_memory(
-        &data.as_ref().and_then(|d| std::fs::read_to_string(d.join("realmShark.properties")).ok()).unwrap_or_default(),
-    );
+    // the folder's settings, then any from UI_SHOT_PROPS ("key=value" lines, e.g. "focus=run:12")
+    let props = lg_app::properties::Properties::in_memory(&format!(
+        "{}\n{}",
+        data.as_ref().and_then(|d| std::fs::read_to_string(d.join("realmShark.properties")).ok()).unwrap_or_default(),
+        std::env::var("UI_SHOT_PROPS").unwrap_or_default()
+    ));
     let (w, h): (f32, f32) = (w.parse().expect("width"), h.parse().expect("height"));
     let tabs: Vec<String> = if tabs.is_empty() { lg_ui::shell::TABS.iter().map(|t| t.to_string()).collect() } else { tabs.to_vec() };
     std::fs::create_dir_all(out).expect("out dir");

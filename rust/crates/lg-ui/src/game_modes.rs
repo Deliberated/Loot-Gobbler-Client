@@ -150,6 +150,7 @@ impl GameModesView {
         let p = *c.p;
         let app = c.app;
         let all = ui.max_rect().shrink(8.0);
+        let focused = crate::focus::current(app, c.props).map(|(r, _)| r.char_id);
         let mut runs: Vec<&upe::Run> = app.upe.runs.values().collect();
         runs.sort_by_key(|r| r.char_id);
         let alive = |id: i32| app.characters.get(id).is_some_and(|ch| ch.alive);
@@ -380,7 +381,7 @@ impl GameModesView {
                     }
                     for run in group.iter() {
                         let ch = app.characters.get(run.char_id).expect("checked");
-                        y += card(ui, &p, app, icons, run, ch, &mode, toggles.1, Rect::from_min_size(pos2(x, y), vec2(card_w, 0.0))) + 6.0;
+                        y += card(ui, &p, app, icons, run, ch, &mode, toggles.1, focused, Rect::from_min_size(pos2(x, y), vec2(card_w, 0.0))) + 6.0;
                     }
                 }
                 ui.allocate_exact_size(vec2(r.width() - 12.0, y + 16.0 - top.y), Sense::hover());
@@ -405,6 +406,7 @@ fn card(
     c: &lg_app::characters::Char,
     mode: &str,
     no_pet: bool,
+    focused: Option<i32>,
     at: Rect,
 ) -> f32 {
     let painter = ui.painter().clone();
@@ -442,6 +444,20 @@ fn card(
             tips.push((label.clone(), "It has a pet: a run without a pet cannot start while one follows it".into()));
         }
         buttons.push((label, true, r.can_start(mode, no_pet), Ok(ask)));
+    }
+    let is_focus = focused == Some(id);
+    if c.alive && r.marked && r.broken.is_none() {
+        // the focus: the whole app about this run (or everything again)
+        let (label, value) = if is_focus { ("Leave focus", None) } else { ("Focus", Some(id)) };
+        tips.push((
+            label.into(),
+            if is_focus {
+                "Everything is shown again, as without a focus".into()
+            } else {
+                "The other tabs show what is this run's: its side of the forge, its own finds, the missions it can still do".into()
+            },
+        ));
+        buttons.push((label.into(), !is_focus, true, Ok(Ask::Set(crate::focus::KEY.into(), crate::focus::value(value)))));
     }
     if c.alive && r.marked && r.broken.is_none() {
         let on = upe::guild(&r.mode);
@@ -486,10 +502,15 @@ fn card(
     // its bank: the forge resources its character gained while playing the run (counted when the amounts rose)
     if let Some(bank) = app.resources.banks.get(&r.char_id).filter(|b| !b.is_empty()) {
         let mut parts: Vec<String> = Vec::new();
-        for (k, v) in bank.dust.iter().filter(|(_, v)| **v > 0) {
+        use crate::inventory::{DUST_ORDER, MATERIAL_ORDER, place};
+        let mut dust: Vec<_> = bank.dust.iter().filter(|(_, v)| **v > 0).collect();
+        dust.sort_by_key(|(k, _)| place(&DUST_ORDER, **k));
+        for (k, v) in dust {
             parts.push(format!("+{} {}", num(*v), crate::inventory::dust_name(*k)));
         }
-        for (k, v) in bank.materials.iter().filter(|(_, v)| **v > 0) {
+        let mut materials: Vec<_> = bank.materials.iter().filter(|(_, v)| **v > 0).collect();
+        materials.sort_by_key(|(k, _)| place(&MATERIAL_ORDER, **k));
+        for (k, v) in materials {
             parts.push(format!("+{} {}", num(*v), crate::inventory::material_name(*k)));
         }
         if bank.forgefire > 0 {
@@ -541,8 +562,14 @@ fn card(
         + gift_h;
     let h = 8.0 + text_h.max(56.0) + 8.0;
     let rect = Rect::from_min_size(at.min, vec2(at.width(), h));
-    painter.rect_filled(rect, 0.0, p.paper);
-    painter.rect_stroke(rect, 0.0, Stroke::new(1.0, p.line), StrokeKind::Inside);
+    if is_focus {
+        // the focus: lit, in a gold frame
+        painter.rect_filled(rect, 0.0, p.header);
+        painter.rect_stroke(rect, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
+    } else {
+        painter.rect_filled(rect, 0.0, p.paper);
+        painter.rect_stroke(rect, 0.0, Stroke::new(1.0, p.line), StrokeKind::Inside);
+    }
     let skin = if c.skin > 0 { c.skin } else { c.class_type };
     if let Some(t) = icons.skin(ui.ctx(), data, skin, c.tex1, c.tex2, 56) {
         painter.image(

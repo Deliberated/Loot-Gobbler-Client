@@ -262,11 +262,50 @@ fn as_find(app: &App, h: &lg_app::loadout::Held, seen_at: i64) -> Find {
     f
 }
 
-/// The history of `item` in `r` (the side section's body); `held`: how many you have now.
-pub fn show(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, rarity: &Rarity, item: i32, held: i32, now: i64, r: Rect) {
+/// A game mode run's own finds of `item`, as rows of the history (nothing from the rest of the account).
+fn run_finds(app: &App, run: &lg_app::upe::Run, item: i32) -> Vec<Find> {
+    run.gathered
+        .iter()
+        .filter(|g| g.item == item)
+        .map(|g| {
+            let r#where = match g.how.as_str() {
+                lg_app::upe::CRAFTED => "Forged".to_string(),
+                lg_app::upe::GUILD => "From a guild mate".to_string(),
+                _ => g.r#where.clone(),
+            };
+            let mut f = Find::of(
+                collection::DROP,
+                g.enchants.as_ref().map_or(-1, |e| e.len() as i32),
+                &r#where,
+                "",
+                g.at,
+                &app.zone.local_date_time(g.at),
+            );
+            f.enchant_ids = g.enchants.clone();
+            f
+        })
+        .collect()
+}
+
+/// The history of `item` in `r` (the side section's body); `held`: how many you have now. With `run`, only what is
+/// that game mode run's: the copies on its character and its own finds.
+#[allow(clippy::too_many_arguments)]
+pub fn show(
+    ui: &mut Ui,
+    p: &Palette,
+    app: &App,
+    icons: &mut Icons,
+    rarity: &Rarity,
+    item: i32,
+    held: i32,
+    now: i64,
+    r: Rect,
+    run: Option<&lg_app::upe::Run>,
+) {
     let data = app.world.data();
     let Some(it) = data.items.item(item) else { return };
-    let entry = app.collection.entry(item);
+    let entry = if run.is_some() { None } else { app.collection.entry(item) };
+    let own: Option<Vec<Find>> = run.map(|run| run_finds(app, run, item));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
     egui::ScrollArea::vertical().id_salt(("item-history", item)).show(&mut child, |ui| {
         let top = ui.cursor().min;
@@ -325,7 +364,7 @@ pub fn show(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, rarity: &Rar
         // where it drops: from the game data, else the dungeons your own drops of it came from
         let places = it.origin().map(str::to_string).unwrap_or_else(|| {
             let mut counted: Vec<(String, i32)> = Vec::new();
-            for f in entry.and_then(|e| e.history.as_ref()).into_iter().flatten() {
+            for f in entry.and_then(|e| e.history.as_ref()).or(own.as_ref()).into_iter().flatten() {
                 if f.source == collection::DROP && !f.r#where.trim().is_empty() {
                     match counted.iter_mut().find(|(w, _)| *w == f.r#where) {
                         Some(c) => c.1 += 1,
@@ -358,8 +397,14 @@ pub fn show(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, rarity: &Rar
             rows.muted("Shown once Loot Gobbler has seen your characters (log in) and your vault.");
         } else {
             let living: std::collections::HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
-            let copies = app.holdings.every_copy(&living, item);
-            if copies.is_empty() {
+            let mut copies = app.holdings.every_copy(&living, item);
+            if let Some(run) = run {
+                // only the run's character: a copy in a vault is not told apart from your others'
+                copies.retain(|h| h.char_id == run.char_id);
+                if copies.is_empty() {
+                    rows.muted("None on this character.");
+                }
+            } else if copies.is_empty() {
                 rows.muted("None on your characters or in your vaults.");
             }
             for (k, h) in copies.iter().enumerate() {
@@ -381,8 +426,18 @@ pub fn show(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, rarity: &Rar
             if seasonal && !app.holdings.places.contains_key(lg_app::holdings::SEASONAL_VAULT) {
                 parts.push("your seasonal vault".into());
             }
-            if !parts.is_empty() {
+            if !parts.is_empty() && run.is_none() {
                 rows.muted(&format!("Not seen yet: {}. Their copies are not counted until then.", parts.join(", ")));
+            }
+        }
+        if let Some(own) = &own {
+            // the run's own finds, latest first (what the rest of the account found is not this run's)
+            rows.heading("FOUND BY THIS RUN");
+            if own.is_empty() {
+                rows.muted("This run has not found it.");
+            }
+            for (k, f) in own.iter().rev().enumerate() {
+                rows.find(item, f, 2000 + k);
             }
         }
         if let Some(history) = entry.and_then(|e| e.history.as_ref()) {

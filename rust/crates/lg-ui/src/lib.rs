@@ -13,6 +13,7 @@ pub mod damage_graph;
 pub mod detail;
 pub mod dialogs;
 pub mod dps;
+pub mod focus;
 pub mod game_mode_wizard;
 pub mod game_modes;
 pub mod guide;

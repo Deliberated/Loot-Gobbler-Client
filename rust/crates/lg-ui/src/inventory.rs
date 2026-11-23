@@ -31,6 +31,8 @@ pub struct InventoryView {
     pub search: String,
     /// The game mode character whose finds are shown (0: everything).
     pub upe_char: i32,
+    /// The focus as last seen: when it changes, its run's finds are shown (and the whole collection again after it).
+    focus_seen: Option<i32>,
     pub st_filter: usize,
     pub st_class: Option<String>,
     /// The item whose history replaces the Recent list (Java `historyItem`).
@@ -103,6 +105,17 @@ impl InventoryView {
         let data = app.world.data();
         let all = ui.max_rect().shrink(8.0);
         let painter = ui.painter().clone();
+        // the focus: its run's own finds while it is on
+        let focus = crate::focus::current(app, c.props);
+        let focus_id = focus.map(|(r, _)| r.char_id);
+        if focus_id != self.focus_seen {
+            if let Some(id) = focus_id {
+                self.upe_char = id;
+            } else if self.focus_seen == Some(self.upe_char) {
+                self.upe_char = 0;
+            }
+            self.focus_seen = focus_id;
+        }
         // the white bag (opens the column of whose finds), then the pages
         let bag_r = Rect::from_min_size(pos2(all.left() + 8.0, all.top() + 1.0), vec2(34.0, 34.0));
         if let Some(t) = c.icons.object(ui.ctx(), data, WHITE_BAG, 34) {
@@ -132,7 +145,7 @@ impl InventoryView {
         }
         // the forge resources, right-aligned on the same row: the regular side at the right, the seasonal one before it
         let pages_end = all.left() + 8.0 + 34.0 + 8.0 + 330.0;
-        resource_row(ui, &p, c.icons, app, pos2(all.right(), all.top()), 36.0, pages_end);
+        resource_row(ui, &p, c.icons, app, pos2(all.right(), all.top()), 36.0, pages_end, focus.map(|(_, ch)| ch.seasonal));
         let mut body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
         let column = c.props.get("collectionUpeColumn") == Some("true");
         if column {
@@ -772,7 +785,7 @@ impl InventoryView {
                         "back-recent",
                     );
                 },
-                |ui, r| crate::item_history::show(ui, &p, app, icons, rarity, item, count, c_now, r),
+                |ui, r| crate::item_history::show(ui, &p, app, icons, rarity, item, count, c_now, r, app.upe.runs.get(&self.upe_char)),
             );
             if back {
                 self.history = None;
@@ -1474,12 +1487,12 @@ fn material(kind: i32) -> (String, Look) {
     }
 }
 
-/// Dust by kind: 4 is purple (its maximum grew with a Purple Dust Cap Extender); 1 and 5 are green and red, not
-/// known yet which is which (both were full when seen).
+/// Dust by kind: 1 green, 4 purple (its maximum grew with a Purple Dust Cap Extender), 5 red.
 fn dust(kind: i32) -> (String, Look) {
     match kind {
+        1 => ("Green dust".into(), Look::Sheet("enchantments16x16", 0, false)),
         4 => ("Purple dust".into(), Look::Sheet("enchantments16x16", 38, false)), // the Purple Dust Charm's sprite
-        1 | 5 => (format!("Green or red dust (kind {kind}: which one shows once it changes)"), Look::Unknown),
+        5 => ("Red dust".into(), Look::Sheet("enchantments16x16", 37, false)),    // kind 5 fell while red dust was spent (2026-11-22)
         k => (format!("Dust kind {k}"), Look::Unknown),
     }
 }
@@ -1492,27 +1505,73 @@ pub fn material_name(kind: i32) -> String {
 /// A dust kind's short name (for the game mode run's bank).
 pub fn dust_name(kind: i32) -> String {
     match kind {
+        1 => "green dust".into(),
         4 => "purple dust".into(),
+        5 => "red dust".into(),
         k => format!("dust {k}"),
     }
 }
 
-/// The forge resources of both sides (as last seen), right to left from `right`, not past `left_limit`.
-fn resource_row(ui: &Ui, p: &Palette, icons: &mut crate::icons::Icons, app: &lg_app::App, right: egui::Pos2, h: f32, left_limit: f32) {
+/// The Forgefire's flame (the game's, cut from its forge window).
+fn forgefire(ctx: &egui::Context) -> egui::TextureHandle {
+    let id = egui::Id::unique("lg-forgefire");
+    if let Some(t) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        return t;
+    }
+    let img = image::load_from_memory(include_bytes!("../../../assets/icon/forgefire.png")).map(|i| i.to_rgba8()).unwrap_or_default();
+    let t = ctx.load_texture(
+        "forgefire",
+        egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw()),
+        egui::TextureOptions::NEAREST,
+    );
+    ctx.data_mut(|d| d.insert_temp(id, t.clone()));
+    t
+}
+
+/// The order the game shows them in: materials blue, red, gold, silver; dust green, red, purple.
+pub(crate) const MATERIAL_ORDER: [i32; 4] = [4, 3, 2, 1];
+pub(crate) const DUST_ORDER: [i32; 3] = [1, 5, 4];
+
+/// Where a kind goes in its order (kinds not in it after those that are).
+pub(crate) fn place(order: &[i32], kind: i32) -> (usize, i32) {
+    (order.iter().position(|k| *k == kind).unwrap_or(order.len()), kind)
+}
+
+/// The forge resources of both sides (as last seen), right to left from `right`, not past `left_limit`. With a
+/// focus, only its side (`Some(true)` the seasonal one).
+#[allow(clippy::too_many_arguments)]
+fn resource_row(
+    ui: &Ui,
+    p: &Palette,
+    icons: &mut crate::icons::Icons,
+    app: &lg_app::App,
+    right: egui::Pos2,
+    h: f32,
+    left_limit: f32,
+    only_seasonal: Option<bool>,
+) {
     let painter = ui.painter().clone();
     let f = text(18.0);
     let small_f = widgets::small();
     const ICON: f32 = 22.0;
     let mut x = right.x - 4.0;
     let cy = right.y + h / 2.0;
-    for (label, side) in [("Regular", app.resources.regular.as_ref()), ("Seasonal", app.resources.seasonal.as_ref())] {
+    for (label, seasonal, side) in [("Regular", false, app.resources.regular.as_ref()), ("Seasonal", true, app.resources.seasonal.as_ref())]
+    {
         let Some(side) = side else { continue };
+        if only_seasonal.is_some_and(|s| s != seasonal) {
+            continue;
+        }
         let mut entries: Vec<(String, Look, i32, Option<i32>)> = Vec::new();
-        for (k, (v, max)) in &side.materials {
+        let mut materials: Vec<_> = side.materials.iter().collect();
+        materials.sort_by_key(|(k, _)| place(&MATERIAL_ORDER, **k));
+        for (k, (v, max)) in materials {
             let (n, look) = material(*k);
             entries.push((n, look, *v, Some(*max)));
         }
-        for (k, (v, max)) in &side.dust {
+        let mut dusts: Vec<_> = side.dust.iter().collect();
+        dusts.sort_by_key(|(k, _)| place(&DUST_ORDER, **k));
+        for (k, (v, max)) in dusts {
             if *v == 0 && matches!(k, 2 | 3) {
                 continue; // empty kinds the game does not show either
             }
@@ -1543,18 +1602,10 @@ fn resource_row(ui: &Ui, p: &Palette, icons: &mut crate::icons::Icons, app: &lg_
                     }
                 }
                 Look::Flame => {
-                    let c = r.center();
-                    let blue = Color32::from_rgb(0x3C, 0x8C, 0xFF);
-                    let outer = vec![
-                        pos2(c.x, r.top() + 1.0),
-                        pos2(r.right() - 4.0, c.y + 3.0),
-                        pos2(c.x, r.bottom() - 1.0),
-                        pos2(r.left() + 4.0, c.y + 3.0),
-                    ];
-                    painter.add(egui::Shape::convex_polygon(outer, blue, Stroke::NONE));
-                    let inner =
-                        vec![pos2(c.x, c.y - 2.0), pos2(c.x + 3.0, c.y + 4.0), pos2(c.x, r.bottom() - 3.0), pos2(c.x - 3.0, c.y + 4.0)];
-                    painter.add(egui::Shape::convex_polygon(inner, Color32::from_rgb(0xCF, 0xE8, 0xFF), Stroke::NONE));
+                    // the game's own flame (28 x 52): a little taller than the row's icons, it is narrow
+                    let t = forgefire(ui.ctx());
+                    let fh = ICON + 4.0;
+                    painter.image(t.id(), Rect::from_center_size(r.center(), vec2(fh * 28.0 / 52.0, fh)), uv(), Color32::WHITE);
                 }
                 Look::Unknown => {
                     painter.circle(r.center(), ICON / 2.0 - 3.0, p.header, Stroke::new(1.5, fixed::MUTED));
