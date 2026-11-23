@@ -61,8 +61,20 @@ fn main() {
     let tabs: Vec<String> = if tabs.is_empty() { lg_ui::shell::TABS.iter().map(|t| t.to_string()).collect() } else { tabs.to_vec() };
     std::fs::create_dir_all(out).expect("out dir");
     for tab in tabs {
-        // "card:<charId>": the loadout card "Copy as image" makes, alone
-        if let Some(id) = tab.strip_prefix("card:").and_then(|i| i.parse::<i32>().ok()) {
+        // "card:<charId>[:<mode>]": the loadout card "Copy as image" makes, alone; with a mode, the character in a
+        // marked run of it
+        let card = tab.strip_prefix("card:").map(|t| t.split_once(':').map_or((t, None), |(i, m)| (i, Some(m))));
+        if let Some((id, mode)) = card.and_then(|(i, m)| i.parse::<i32>().ok().map(|i| (i, m))) {
+            if let Some(mode) = mode {
+                let run = app.upe.runs.get(&id).or_else(|| app.upe.runs.values().next()).cloned();
+                if let Some(mut run) = run {
+                    run.char_id = id;
+                    run.mode = mode.to_string();
+                    run.marked = true;
+                    run.broken = None;
+                    app.upe.runs.insert(id, run);
+                }
+            }
             let mut win = lg_ui::window::Window::new(&assets, props.clone());
             win.palette = lg_ui::theme::palette(None);
             let ch = app.characters.get(id).expect("character");
@@ -114,7 +126,7 @@ fn main() {
         // "Server:online": connected to a made-up server, not logged in (the login form)
         app.server = Default::default();
         let dialog = match tab.as_str() {
-            "Server:forgot" => Some(lg_ui::window::ServerAsk::OpenForgot("Gunshit".into())),
+            "Server:forgot" => Some(lg_ui::window::ServerAsk::OpenForgot("Goldwhisker".into())),
             "Server:change" => Some(lg_ui::window::ServerAsk::OpenChange),
             _ => None,
         };
@@ -122,10 +134,10 @@ fn main() {
         if tab == "Guild:Member" {
             app.server.url = "https://loot.example.com".into();
             app.server.state = lg_app::server::State::Online;
-            app.server.user = Some(lg_app::server::User { id: 1, ign: "Gunshit".into(), ..Default::default() });
+            app.server.user = Some(lg_app::server::User { id: 1, ign: "Goldwhisker".into(), ..Default::default() });
             let member = lg_app::guild::Member {
                 id: 1,
-                ign: "Gunshit".into(),
+                ign: "Goldwhisker".into(),
                 guild_rank: 40,
                 last_active: now - 3_600_000,
                 items: app.collection.all().count() as i64,
@@ -137,7 +149,7 @@ fn main() {
                 ..Default::default()
             };
             let profile = lg_app::guild::MemberProfile {
-                guild: "Pluribus".into(),
+                guild: "Gilded Goblins".into(),
                 member,
                 characters: app.characters.all().cloned().collect(),
                 exalts: app.exalts.progress.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
@@ -151,7 +163,7 @@ fn main() {
             use lg_app::guild::{QuestMap, QuestMapClear, QuestMaps};
             app.server.url = "https://loot.example.com".into();
             app.server.state = lg_app::server::State::Online;
-            app.server.user = Some(lg_app::server::User { id: 1, ign: "Gunshit".into(), ..Default::default() });
+            app.server.user = Some(lg_app::server::User { id: 1, ign: "Goldwhisker".into(), ..Default::default() });
             let dungeons: Vec<String> = [
                 "Snake Pit",
                 "Spider Den",
@@ -172,7 +184,7 @@ fn main() {
                 variant,
                 dungeons: dungeons.clone(),
                 clears: (0..cleared)
-                    .map(|i| QuestMapClear { user_id: 1, ign: "Gunshit".into(), at: now - 86_400_000 + i as i64 * 3_600_000 })
+                    .map(|i| QuestMapClear { user_id: 1, ign: "Goldwhisker".into(), at: now - 86_400_000 + i as i64 * 3_600_000 })
                     .collect(),
                 starts_at: now - 2 * 86_400_000,
                 ends_at: if ended { now - 3_600_000 } else { now + 5 * 86_400_000 },
@@ -180,7 +192,7 @@ fn main() {
             };
             let styles = ["hex", "overworld", "oryx", "constellation", "neon", "adventure", "hunt", "hellforge"];
             app.server.guild.quest_maps = Some(Ok(QuestMaps {
-                guild: "Pluribus".into(),
+                guild: "Gilded Goblins".into(),
                 now,
                 current: Some(map(100, "parchment", 0, 3, false)),
                 past: styles
@@ -196,7 +208,7 @@ fn main() {
             use lg_app::guild::{CaravanCharacter, UpeBoard, UpeFind, UpeMember, UpeRun};
             app.server.url = "https://loot.example.com".into();
             app.server.state = lg_app::server::State::Online;
-            app.server.user = Some(lg_app::server::User { id: 1, ign: "Gunshit".into(), ..Default::default() });
+            app.server.user = Some(lg_app::server::User { id: 1, ign: "Goldwhisker".into(), ..Default::default() });
             let runs: Vec<UpeRun> = app
                 .upe
                 .runs
@@ -239,10 +251,84 @@ fn main() {
             mate.lost = false;
             mate.alive = true;
             app.server.guild.upe = Some(Ok(UpeBoard {
-                guild: "Pluribus".into(),
+                guild: "Gilded Goblins".into(),
                 members: vec![
-                    UpeMember { id: 1, ign: "Gunshit".into(), guild_rank: 40, runs },
+                    UpeMember { id: 1, ign: "Goldwhisker".into(), guild_rank: 40, runs },
                     UpeMember { id: 2, ign: "Valhirs".into(), guild_rank: 10, runs: vec![mate] },
+                ],
+            }));
+        }
+        // "Guild:Loot Caravan": logged in, this data's finds as yours, and guildmates who found a share of them (the
+        // last one few enough to walk)
+        if tab == "Guild:Loot Caravan" {
+            use lg_app::guild::{Caravan, CaravanCharacter, CaravanItem, CaravanMember};
+            app.server.url = "https://loot.example.com".into();
+            app.server.state = lg_app::server::State::Online;
+            app.server.user = Some(lg_app::server::User { id: 1, ign: "Goldwhisker".into(), ..Default::default() });
+            let mut finds: Vec<(i64, CaravanItem)> = app
+                .collection
+                .all()
+                .flat_map(|(id, e)| {
+                    e.history.iter().flatten().map(move |f| {
+                        (
+                            f.at,
+                            CaravanItem {
+                                item_id: id,
+                                enchants: f.enchants,
+                                bag: lg_app::guild::bag_name(&f.bag),
+                                time: f.time.clone(),
+                                r#where: f.r#where.clone(),
+                            },
+                        )
+                    })
+                })
+                .collect();
+            finds.sort_by_key(|f| std::cmp::Reverse(f.0));
+            let chars: Vec<CaravanCharacter> = {
+                let mut seen = std::collections::HashSet::new();
+                app.characters
+                    .all()
+                    .filter(|c| seen.insert(c.class_type))
+                    .map(|c| CaravanCharacter {
+                        class_type: c.class_type,
+                        class_name: c.class_name.clone(),
+                        skin: c.skin,
+                        tex1: c.tex1,
+                        tex2: c.tex2,
+                        fame: c.fame,
+                    })
+                    .collect()
+            };
+            let member = |id: i64, ign: &str, rank: i32, every: usize, cap: usize, ch: usize| {
+                let items: Vec<CaravanItem> = finds.iter().skip(id as usize - 1).step_by(every).take(cap).map(|f| f.1.clone()).collect();
+                let mut by_bag: Vec<(String, i64)> = Vec::new();
+                for i in &items {
+                    match by_bag.iter_mut().find(|b| b.0 == i.bag) {
+                        Some(b) => b.1 += 1,
+                        None => by_bag.push((i.bag.clone(), 1)),
+                    }
+                }
+                CaravanMember {
+                    id,
+                    ign: ign.into(),
+                    guild_rank: rank,
+                    by_bag,
+                    total: items.len() as i64,
+                    last_drop: items.first().map(|i| i.time.clone()),
+                    items: items.into_iter().take(120).collect(),
+                    tally: Vec::new(),
+                    character: chars.get(ch % chars.len().max(1)).cloned(),
+                }
+            };
+            app.server.guild.caravan = Some(Ok(Caravan {
+                guild: "Gilded Goblins".into(),
+                range: "all".into(),
+                members: vec![
+                    member(1, "Goldwhisker", 40, 1, 160, 0),
+                    member(2, "Valhirs", 30, 2, 90, 1),
+                    member(3, "Saltusk", 20, 3, 45, 2),
+                    member(4, "Fendor", 10, 5, 16, 3),
+                    member(5, "Orrbrix", 0, 9, 3, 4),
                 ],
             }));
         }
@@ -252,22 +338,72 @@ fn main() {
             use lg_app::guild::{Looks, RunLook};
             app.server.url = "https://loot.example.com".into();
             app.server.state = lg_app::server::State::Online;
-            app.server.user = Some(lg_app::server::User { id: 1, ign: "Gunshit".into(), ..Default::default() });
-            app.server.mates.names = ["valhirs".to_string()].into_iter().collect();
-            if let Some(v) = app.dungeon_visits.visits.iter().find(|v| v.start == start) {
-                let look = RunLook {
-                    player: "Valhirs".into(),
-                    class_type: 782,
-                    source: "visit".into(),
-                    max_hp: 980,
-                    hit_at: vec![62000, 63000, 63500, 202000, 202400, 302000],
-                    hit_damage: vec![120, 150, 200, 90, 310, 60],
-                    quick_used: Some(vec![2594, 2594, 2793]),
-                    quick_at: Some(vec![63000, 202500, 302100]),
-                    ..Default::default()
-                };
-                let key = format!("{}/{}", v.dungeon, v.start);
-                app.server.mates.looks.insert(key, Looks::Got([("valhirs".to_string(), vec![look])].into_iter().collect()));
+            app.server.user = Some(lg_app::server::User { id: 1, ign: "Goldwhisker".into(), ..Default::default() });
+            // a visit without an amulet save gets one: two big hits late in it, the amulet firing after them
+            if let Some(v) = app.dungeon_visits.visits.iter_mut().find(|v| v.start == start)
+                && v.amulet_saves.is_empty()
+                && v.duration_ms > 60_000
+            {
+                let at = (v.duration_ms * 7 / 8) as i32;
+                for (t, d) in [(at - 900, 480), (at - 150, 290)] {
+                    let i = v.hit_time.partition_point(|&x| x < t);
+                    v.hit_time.insert(i, t);
+                    v.hit_damage.insert(i, d);
+                    // by the enemy that hit you before them
+                    if i <= v.hit_enemy.len() {
+                        let e = v.hit_enemy[..i].iter().rev().copied().find(|&e| e > 0).unwrap_or(0);
+                        v.hit_enemy.insert(i, e);
+                    }
+                }
+                v.amulet_saves.push(at);
+            }
+            // the guildmates: the two players ranked highest on the visit's last boss beside you, else Valhirs
+            let visit = app.dungeon_visits.visits.iter().find(|v| v.start == start).cloned();
+            let mut mates: Vec<(String, i32, i32, i32, i32)> = visit
+                .as_ref()
+                .and_then(|v| lg_app::dungeon_visits::run_of(v, &app.dps_history))
+                .and_then(|r| r.main_boss())
+                .map(|b| {
+                    b.players.iter().filter(|p| !p.me).take(2).map(|p| (p.name.clone(), p.class_type, p.skin, p.tex1, p.tex2)).collect()
+                })
+                .unwrap_or_default();
+            if mates.is_empty() {
+                mates.push(("Valhirs".into(), 782, 0, 0, 0));
+            }
+            app.server.mates.names = mates.iter().map(|m| m.0.to_lowercase()).collect();
+            if let Some(v) = visit {
+                let span = v.duration_ms.max(60_000);
+                let looks = mates
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (name, class, skin, t1, t2))| {
+                        // hits spread over the visit, the second mate taking fewer, a quickslot used after the big ones
+                        let n = if i == 0 { 9 } else { 5 };
+                        let hit_at: Vec<i64> = (0..n).map(|k| span * (k as i64 * 2 + 1 + i as i64) / (n as i64 * 2 + 2)).collect();
+                        let hit_damage: Vec<i32> =
+                            (0..n).map(|k| [120, 260, 90, 340, 150, 210, 80, 400, 130][k % 9] - i as i32 * 30).collect();
+                        let look = RunLook {
+                            player: name.clone(),
+                            class_type: *class,
+                            skin: *skin,
+                            tex1: *t1,
+                            tex2: *t2,
+                            source: "visit".into(),
+                            max_hp: 980 - i as i32 * 120,
+                            quick_used: Some(if i == 0 { vec![2594, 2594, 2793] } else { vec![2594] }),
+                            quick_at: Some(if i == 0 {
+                                vec![hit_at[3] + 500, hit_at[7] + 500, hit_at[8] + 900]
+                            } else {
+                                vec![hit_at[3] + 700]
+                            }),
+                            hit_at,
+                            hit_damage,
+                            ..Default::default()
+                        };
+                        (name.to_lowercase(), vec![look])
+                    })
+                    .collect();
+                app.server.mates.looks.insert(format!("{}/{}", v.dungeon, v.start), Looks::Got(looks));
             }
         }
         // "Profile:mates": the overview with the players of your recent runs as guildmates
@@ -313,11 +449,11 @@ fn main() {
                         _ => "Java v0.9.2".into(),
                     },
                 };
-                app.server.user = Some(user(1, "Gunshit", "admin", true, "active"));
+                app.server.user = Some(user(1, "Goldwhisker", "admin", true, "active"));
                 let m = &mut app.server.moderation;
                 m.pending = vec![user(7, "Newbie", "user", false, "pending")];
                 m.members = vec![
-                    user(1, "Gunshit", "admin", true, "active"),
+                    user(1, "Goldwhisker", "admin", true, "active"),
                     user(2, "Helper", "admin", false, "active"),
                     user(3, "Watcher", "moderator", false, "active"),
                     user(4, "Quiet", "user", false, "active"),
@@ -325,7 +461,7 @@ fn main() {
                 m.tokens = vec![OpenToken {
                     id: 1,
                     note: "For Ana".into(),
-                    created_by: "Gunshit".into(),
+                    created_by: "Goldwhisker".into(),
                     created_at: 0,
                     expires_at: Some(1_795_300_000_000),
                 }];
@@ -365,6 +501,7 @@ fn main() {
                     }
                     if let Some(start) = mates_visit {
                         win.battles.selected = start;
+                        win.battles.reveal = true;
                     }
                     if let Some(d) = dialog.clone() {
                         win.ask(lg_ui::window::Ask::Server(d));

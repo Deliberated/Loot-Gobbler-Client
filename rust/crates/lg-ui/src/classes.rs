@@ -357,7 +357,7 @@ const STAGE_INSET: f32 = 6.0;
 fn stage_tip(before: i32, progress: i32) -> String {
     let lv = level(progress) as usize;
     let max = THRESHOLDS.len();
-    let day = if progress > before { format!("\n+{} in the last 24 hours", progress - before) } else { String::new() };
+    let day = if progress > before { format!("\n+{} in the last {RECENT_DAYS} days", progress - before) } else { String::new() };
     if lv >= max {
         return format!("All {max} exaltations{day}");
     }
@@ -365,8 +365,11 @@ fn stage_tip(before: i32, progress: i32) -> String {
     format!("{lv} of {max} exaltations  ·  {} to the next (at {next}){day}", next - progress)
 }
 
+/// What the class page counts as recent progress (blue on the bars).
+const RECENT_DAYS: i64 = 3;
+
 /// Java `StageBar`: a stat's progress from 0 to 75 to scale, a diamond at each exaltation, lit once reached; what
-/// came in the last 24 hours blue.
+/// came in the last RECENT_DAYS days blue.
 fn stage_bar(painter: &egui::Painter, r: Rect, before: i32, progress: i32) {
     let before = before.min(progress);
     let end = *THRESHOLDS.last().expect("thresholds") as f32;
@@ -429,9 +432,17 @@ fn class_body(ui: &Ui, p: &Palette, icons: &mut Icons, app: &lg_app::App, class:
         None => line(&mut y, "Not known yet: loads when you log in with the sniffer running.", &f, fixed::MUTED),
         Some(progress) => {
             let end = *THRESHOLDS.last().expect("thresholds");
+            let since = now - RECENT_DAYS * 24 * 3_600_000;
+            let before_of = |s: usize| app.exalts.progress_at(&app.dungeon_visits, class, STAT_INDEX[s] as i32, since);
+            // all the stats' progress in those days together, in the bars' blue
+            let gained: i32 =
+                (0..8).map(|s| (progress.get(STAT_INDEX[s]).copied().unwrap_or(0).min(end) - before_of(s).min(end)).max(0)).sum();
+            if gained > 0 {
+                line(&mut y, &format!("+{gained} in the last {RECENT_DAYS} days"), &f, STAGE_RECENT);
+            }
             for s in 0..8 {
                 let pr = progress.get(STAT_INDEX[s]).copied().unwrap_or(0);
-                let before = app.exalts.progress_at(&app.dungeon_visits, class, STAT_INDEX[s] as i32, now - 24 * 3_600_000);
+                let before = before_of(s);
                 if paint {
                     let rh = lh.max(18.0);
                     if let Some(t) = icons.object(ui.ctx(), data, STAT_POTION[s], 18) {

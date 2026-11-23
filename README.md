@@ -19,7 +19,7 @@ If even one of these questions resonates with you, the Loot Gobbler will make yo
 - How about **tracking your exaltation progress**?
 - Did I already mention syncing with your guildmates to **check the progress within your guild**, allowing for internal challenges?
 
-See the full set of features with screenshots for details.
+See the full set of features with screenshots on the [Loot Gobbler page](https://deliberated.github.io/Loot-Gobbler-Client/).
 
 
 ## Approach
@@ -28,7 +28,7 @@ The project was designed to give our guild a better game experience, no matter w
 It is a fork of **Tomato**, built on the **RealmShark** sniffing engine (both MIT, see `THIRD_PARTY_LICENSE-RealmShark.md`), and rewritten in Rust. Many of the original features have been revisited and redesigned.
 
 ## Comparison to Existing Tools
-There are great RotMG tools out there, and the Loot Gobbler does not try to replace them. It goes in its own direction: connecting the dots and showing you the big picture of **your** game. Where other tools do something really well, the Loot Gobbler brings in a similar feature, so you have less to switch between.
+There are great RotMG tools out there, and the Loot Gobbler does not try to replace them. It goes in its own direction: connecting the dots and showing you the big picture of **your** game. Where other tools do something really well, the Loot Gobbler brings in a similar style and features, so you have less to switch between.
 
 The two closest tools are RealmHound and Baghound. Like the Loot Gobbler, both are desktop apps that passively read the game's traffic (RealmShark lives on in all three).
 
@@ -36,6 +36,7 @@ The two closest tools are RealmHound and Baghound. Like the Loot Gobbler, both a
 |---|---|---|---|
 | Price | Free | Free | $6.6 per month |
 | Open source | Yes (MIT) | Yes (MIT) | No |
+| Language | Client in Rust, server in Go| Rust | Java
 | Platforms | Windows, Linux, (soon macOS) | Windows, macOS, Linux | Windows |
 | UPE / PPE runs | **Tracked per run:** its items, forge resources, missions, gift chest, and when and why a run was lost | — | — |
 | Your UT/ST collection | Every item, filled in as you find and store it, with its full history | Rare drops by dungeon | Top-tier drops, and what you still own |
@@ -47,8 +48,9 @@ The two closest tools are RealmHound and Baghound. Like the Loot Gobbler, both a
 | Overlay | Buffs, Moonlight Village, matrix and ami procs | Live combat and loot | — |
 | Fallen characters | Graveyard with kill history and full inventory view | — | Graveyard with killer and losses |
 | Discord | Loot cards | — | Loot cards |
+| Maintenance | **Actively developed**, shaped by our guild's feedback and open to everyone's issues and pull requests | **Actively developed**, with community contributions (macOS and Linux support came from contributors) | No code changes since May 2026, one developer, no outside contributions |
 | Sharing | **Your guild's own server:** guild quests, leaderboards, the loot caravan and member profiles | — | Public web profiles |
-| Syncing between PCs | Free, through your guild's server | — | Pro |
+| Syncing between PCs | Free, through your guild's server | — | Pro Feature |
 
 See the full feature comparison for more details.
 

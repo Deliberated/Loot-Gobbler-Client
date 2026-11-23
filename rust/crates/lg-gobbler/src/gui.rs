@@ -934,6 +934,7 @@ impl eframe::App for Gui {
                 None if t.starts_with("visit:") => {
                     self.window.open("Battles");
                     self.window.battles.selected = t[6..].parse().unwrap_or(-1);
+                    self.window.battles.reveal = true;
                 }
                 None if t.starts_with("member:") => {
                     self.window.open("Guild:Member");

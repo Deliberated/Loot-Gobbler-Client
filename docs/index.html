@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loot Gobbler</title>
+<meta name="description" content="Your right hand for your RotMG adventures: collection, UPE and PPE runs, loadouts, exaltations, dungeons and your guild, in one free app.">
+<meta property="og:title" content="Loot Gobbler">
+<meta property="og:description" content="Your right hand for your RotMG adventures. Free and open source, for Windows and Linux.">
+<meta property="og:image" content="img/characters.png">
+<link rel="icon" href="img/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jersey+10&family=Jersey+15&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="#top"><img class="pixel" src="img/icon.png" alt="">Loot Gobbler</a>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#focus">Focus</a>
+      <a href="#compare">Compare</a>
+      <a class="cta" href="#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<div class="hero">
+  <div class="wrap">
+    <img class="icon pixel" src="img/icon.png" alt="">
+    <h1>Loot Gobbler</h1>
+    <p class="tag">Your right hand for your RotMG adventures.</p>
+    <p class="sub">It keeps your collection in order, guards your UPE and PPE runs, suggests your loadout and enchants, follows your exaltations and dungeons, and brings your guild together. Written in Rust, so it won't bother your CPU.</p>
+    <div class="buttons">
+      <a class="btn gold" href="https://github.com/Deliberated/Loot-Gobbler-Client/releases/latest">Download for free</a>
+      <a class="btn ghost" href="https://github.com/Deliberated/Loot-Gobbler-Client">View on GitHub</a>
+    </div>
+    <ul class="facts">
+      <li>Free and open source</li>
+      <li>Windows and Linux</li>
+      <li>Only listens, never touches the game</li>
+    </ul>
+    <div class="window"><img src="img/characters.png" alt="The Loot Gobbler's Characters page: every character with its gear, tags, maxed stats and fame gained" width="1400" height="900"></div>
+  </div>
+</div>
+
+<section id="questions">
+  <div class="wrap">
+    <div class="kicker">Is it for you?</div>
+    <h2>If even one of these sounds like you</h2>
+    <div class="cards">
+      <div class="card"><h3>The collector</h3><p>You got an item and wondered whether you already have it.</p></div>
+      <div class="card"><h3>The UPE player</h3><p>You would love a third eye that watches every item of your run.</p></div>
+      <div class="card"><h3>The theorycrafter</h3><p>You want to fine-tune your loadout and the enchants on it.</p></div>
+      <div class="card"><h3>The grinder</h3><p>You want your exaltations, missions and fame at a glance.</p></div>
+      <div class="card"><h3>The dungeon runner</h3><p>You want to see how a run went, and how your guildmates did.</p></div>
+      <div class="card"><h3>The guildie</h3><p>You want quests, leaderboards and challenges with your guild.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="how" class="alt">
+  <div class="wrap">
+    <div class="kicker">How it works</div>
+    <h2>It listens. That's all.</h2>
+    <p class="lead">The Loot Gobbler reads what the game receives on your own PC, the way a network monitor does. It never sends, blocks or changes anything. Your records stay on your PC, and with a guild server you share them with the people you choose.</p>
+    <div class="diagram">
+      <svg viewBox="0 0 1100 430" role="img" aria-labelledby="how-t how-d">
+        <title id="how-t">How the Loot Gobbler works</title>
+        <desc id="how-d">The game talks to the RotMG servers. The Loot Gobbler only listens to that traffic on your PC and keeps your records there. Optionally it syncs with your guild's server, which your guildmates and other guilds connect to.</desc>
+        <defs>
+          <!-- slim arrow heads, the same size on every line -->
+          <marker id="ar" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="14" markerHeight="14" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M2 2L12.5 7L2 12L4.5 7z" fill="#e5b23a"/></marker>
+          <marker id="arm" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="14" markerHeight="14" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M2 2L12.5 7L2 12L4.5 7z" fill="#9a815a"/></marker>
+          <marker id="arg" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="14" markerHeight="14" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M2 2L12.5 7L2 12L4.5 7z" fill="#5fb06a"/></marker>
+        </defs>
+        <!-- your PC -->
+        <rect x="20" y="20" width="560" height="390" fill="#23180f" stroke="#6b4e2e" stroke-width="2" stroke-dasharray="8 6"/>
+        <text x="40" y="52" fill="#9a815a" font-size="22">YOUR PC</text>
+        <!-- RotMG servers -->
+        <rect x="660" y="70" width="190" height="90" fill="#3d2c1c" stroke="#6b4e2e" stroke-width="2"/>
+        <text class="h" x="755" y="112" fill="#f4e6c6" font-size="30" text-anchor="middle">RotMG servers</text>
+        <text x="755" y="140" fill="#9a815a" font-size="19" text-anchor="middle">run by DECA</text>
+        <!-- the game -->
+        <rect x="320" y="70" width="210" height="90" fill="#3d2c1c" stroke="#6b4e2e" stroke-width="2"/>
+        <text class="h" x="425" y="112" fill="#f4e6c6" font-size="30" text-anchor="middle">The game</text>
+        <text x="425" y="140" fill="#9a815a" font-size="19" text-anchor="middle">RotMG Exalt</text>
+        <line x1="534" y1="100" x2="654" y2="100" stroke="#9a815a" stroke-width="2.5" marker-end="url(#arm)"/>
+        <line x1="656" y1="130" x2="536" y2="130" stroke="#9a815a" stroke-width="2.5" marker-end="url(#arm)"/>
+        <!-- the gobbler -->
+        <rect x="60" y="230" width="250" height="120" fill="#2e2116" stroke="#e5b23a" stroke-width="3"/>
+        <image href="img/icon.png" x="76" y="250" width="40" height="40" style="image-rendering:pixelated"/>
+        <text class="h" x="126" y="282" fill="#e5b23a" font-size="34">Loot Gobbler</text>
+        <text x="80" y="318" fill="#d2b988" font-size="20">listens, sorts, remembers</text>
+        <path d="M425 166 C425 200 290 190 262 222" fill="none" stroke="#e5b23a" stroke-width="2.5" stroke-dasharray="7 6" stroke-linecap="round" marker-end="url(#ar)"/>
+        <text x="436" y="206" fill="#e5b23a" font-size="20">only listens</text>
+        <!-- records -->
+        <rect x="380" y="270" width="170" height="80" fill="#3d2c1c" stroke="#6b4e2e" stroke-width="2"/>
+        <text class="h" x="465" y="305" fill="#f4e6c6" font-size="28" text-anchor="middle">Your records</text>
+        <text x="465" y="332" fill="#9a815a" font-size="18" text-anchor="middle">stay on your PC</text>
+        <line x1="316" y1="310" x2="374" y2="310" stroke="#e5b23a" stroke-width="2.5" marker-end="url(#ar)"/>
+        <!-- guild server -->
+        <rect x="660" y="250" width="200" height="100" fill="#2e2116" stroke="#5fb06a" stroke-width="3"/>
+        <text class="h" x="760" y="288" fill="#5fb06a" font-size="30" text-anchor="middle">Guild server</text>
+        <text x="760" y="314" fill="#9a815a" font-size="18" text-anchor="middle">optional, selfhosted</text>
+        <text x="760" y="334" fill="#9a815a" font-size="18" text-anchor="middle">by your guild</text>
+        <line x1="556" y1="300" x2="654" y2="300" stroke="#5fb06a" stroke-width="2.5" marker-start="url(#arg)" marker-end="url(#arg)"/>
+        <text x="605" y="290" fill="#5fb06a" font-size="18" text-anchor="middle">sync</text>
+        <!-- guildmates and other guilds -->
+        <rect x="930" y="220" width="150" height="60" fill="#3d2c1c" stroke="#6b4e2e" stroke-width="2"/>
+        <text x="1005" y="257" fill="#f4e6c6" font-size="21" text-anchor="middle">Guildmates</text>
+        <rect x="930" y="320" width="150" height="60" fill="#3d2c1c" stroke="#6b4e2e" stroke-width="2"/>
+        <text x="1005" y="357" fill="#f4e6c6" font-size="21" text-anchor="middle">Other guilds</text>
+        <line x1="866" y1="284" x2="924" y2="255" stroke="#5fb06a" stroke-width="2.5" marker-start="url(#arg)" marker-end="url(#arg)"/>
+        <line x1="866" y1="321" x2="924" y2="347" stroke="#5fb06a" stroke-width="2.5" marker-start="url(#arg)" marker-end="url(#arg)"/>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="kicker">Your collection</div>
+    <h2>Every item, and where it sits</h2>
+    <p class="lead">Every UT and ST you find is added to your collection by itself. Pick any item and see every copy you hold, where each one sits and how it is enchanted. No more wondering whether you already have it, or digging through your vault for it.</p>
+    <div class="feature">
+      <div class="shot">
+        <img src="img/collection.png" alt="The Inventory page with the Tome of Holy Furor picked: its seven copies listed with where each one sits and its enchants" width="1400" height="1200" loading="lazy">
+        <span class="mark" style="left:8.6%;top:16%">1</span>
+        <span class="mark" style="left:28.5%;top:14%">2</span>
+        <span class="mark" style="left:31%;top:52.5%">3</span>
+        <span class="mark" style="left:76.5%;top:49%">4</span>
+        <span class="mark" style="left:74.5%;top:55.6%">5</span>
+        <span class="mark" style="left:73.5%;top:66%">6</span>
+        <span class="mark" style="left:69%;top:10.1%">7</span>
+      </div>
+      <ol class="notes">
+        <li><b>Whose items</b>Your whole account, or the finds of one game mode run alone.</li>
+        <li><b>Search and filters</b>By name or enchant, shiny, normal or reusable.</li>
+        <li><b>What you own</b>Lit up, with how many copies. Click one, like this Tome of Holy Furor.</li>
+        <li><b>All of them at once</b>Seven copies, and the dungeon it drops in.</li>
+        <li><b>Where each one sits</b>Backpack, vault chest or gift chest, on which character, seasonal or not.</li>
+        <li><b>Each copy's enchants</b>So you know which one to take along.</li>
+        <li><b>Forge resources</b>Materials, dust and Forgefire, seasonal and regular.</li>
+      </ol>
+    </div>
+    <div class="pair">
+      <div>
+        <div class="shot"><img src="img/st-sets.png" alt="The ST Sets page: every set with the pieces you own, and the sets that are almost complete" width="1400" height="900" loading="lazy"></div>
+        <p class="caption">Every ST set with the pieces you own, the ones almost complete, and your progress per class.</p>
+      </div>
+      <div>
+        <div class="shot"><img src="img/classes.png" alt="The Classes page with the Druid open: 22 exaltations gained in the last 3 days, shown in blue on its stat bars" width="1400" height="900" loading="lazy"><span class="frame" style="left:30.6%;top:35.6%;width:28.4%;height:12.2%"></span></div>
+        <p class="caption">Your exaltations per class and stat. This Druid gained 22 in the last 3 days, marked in blue.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="upe" class="alt">
+  <div class="wrap">
+    <div class="kicker">Game modes</div>
+    <h2>A third eye on your UPE</h2>
+    <p class="lead">Pick a game mode like UPE or PPE and the Loot Gobbler checks its rules as you play. It tracks every item the run farmed and every forge resource it may craft with, keeps its missions apart from the rest of your account, and tells you when and why a run was lost.</p>
+    <div class="feature flip">
+      <div class="shot">
+        <img src="img/game-modes.png" alt="The Game Modes page: the UPE rules, its variants and a run being played" width="1400" height="900" loading="lazy">
+        <span class="mark" style="left:39.3%;top:27.7%">1</span>
+        <span class="mark" style="left:42%;top:40%">2</span>
+        <span class="mark" style="left:30%;top:58%">3</span>
+        <span class="mark" style="left:51.5%;top:92%">4</span>
+      </div>
+      <ol class="notes">
+        <li><b>Variants</b>UPE, PUPE, STPE, Shiny UPE, Divine PE, and PPE, with a guild and a no-pet version.</li>
+        <li><b>What is allowed</b>At a glance: which gear counts and where it may come from.</li>
+        <li><b>The rules, checked for you</b>Vault items, trades, shop and rewards are watched, no spreadsheet needed.</li>
+        <li><b>Focus</b>Put a run in focus and the whole app shows only what that run earned.</li>
+      </ol>
+    </div>
+    <div class="diagram" style="margin-top:34px">
+      <svg viewBox="0 0 1100 250" role="img" aria-labelledby="upe-t upe-d">
+        <title id="upe-t">A UPE run, tracked</title>
+        <desc id="upe-d">A fresh character starts a run. Items from its own drops count for the run. An amulet equipped from the vault breaks the rules, and the run is marked as lost with the reason.</desc>
+        <line x1="70" y1="125" x2="1030" y2="125" stroke="#6b4e2e" stroke-width="4"/>
+        <!-- 1 -->
+        <circle cx="110" cy="125" r="26" fill="#2e2116" stroke="#e5b23a" stroke-width="3"/>
+        <text class="h" x="110" y="135" fill="#e5b23a" font-size="30" text-anchor="middle">1</text>
+        <text class="h" x="110" y="64" fill="#f4e6c6" font-size="28" text-anchor="middle">New character</text>
+        <text x="110" y="185" fill="#d2b988" font-size="19" text-anchor="middle">seen from its creation:</text>
+        <text x="110" y="208" fill="#d2b988" font-size="19" text-anchor="middle">the run starts</text>
+        <!-- 2 -->
+        <circle cx="400" cy="125" r="26" fill="#2e2116" stroke="#5fb06a" stroke-width="3"/>
+        <path d="M388 126l8 8l16 -18" fill="none" stroke="#5fb06a" stroke-width="5"/>
+        <text class="h" x="400" y="64" fill="#f4e6c6" font-size="28" text-anchor="middle">A UT drops</text>
+        <text x="400" y="185" fill="#d2b988" font-size="19" text-anchor="middle">from its own loot bag:</text>
+        <text x="400" y="208" fill="#5fb06a" font-size="19" text-anchor="middle">counts for the run</text>
+        <!-- 3 -->
+        <circle cx="690" cy="125" r="26" fill="#2e2116" stroke="#e0506a" stroke-width="3"/>
+        <path d="M680 115l20 20M700 115l-20 20" stroke="#e0506a" stroke-width="5"/>
+        <text class="h" x="690" y="64" fill="#f4e6c6" font-size="28" text-anchor="middle">Vault item equipped</text>
+        <text x="690" y="185" fill="#d2b988" font-size="19" text-anchor="middle">an amulet from the vault:</text>
+        <text x="690" y="208" fill="#e0506a" font-size="19" text-anchor="middle">against the rules</text>
+        <!-- 4 -->
+        <rect x="900" y="99" width="150" height="52" fill="#3d2c1c" stroke="#e0506a" stroke-width="3"/>
+        <text class="h" x="975" y="135" fill="#e0506a" font-size="28" text-anchor="middle">Run lost</text>
+        <text class="h" x="975" y="64" fill="#f4e6c6" font-size="28" text-anchor="middle">You know why</text>
+        <text x="975" y="185" fill="#d2b988" font-size="19" text-anchor="middle">"Equipped Amulet of</text>
+        <text x="975" y="208" fill="#d2b988" font-size="19" text-anchor="middle">Dispersion from the vault"</text>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<section id="focus">
+  <div class="wrap">
+    <div class="kicker">Focus</div>
+    <h2>One run, the whole app</h2>
+    <p class="lead">Put a game mode run in focus and the whole Loot Gobbler follows it. A gold line runs above the tabs with the run hanging from it, and every page shows that run alone: the items it farmed, the forge resources it may craft with, and the missions it can still do without breaking its rules.</p>
+    <div class="feature">
+      <div class="shot">
+        <img src="img/focus-items.png" alt="The Inventory with a UPE Priest in focus: only the items this run farmed, and its own forge resources" width="1400" height="900" loading="lazy">
+        <span class="mark" style="left:83.5%;top:9.5%">1</span>
+        <span class="mark" style="left:9.5%;top:35.5%">2</span>
+        <span class="mark" style="left:69%;top:10.1%">3</span>
+        <span class="mark" style="left:73%;top:54.7%">4</span>
+      </div>
+      <ol class="notes">
+        <li><b>The focus</b>The run hangs from the gold line, always in sight. Click it to switch or leave.</li>
+        <li><b>Only this run</b>The collection shows just the items this character farmed itself.</li>
+        <li><b>What it may craft with</b>The forge resources it earned, kept apart from the rest of your account.</li>
+        <li><b>Its own finds</b>Every drop of the run, newest first.</li>
+      </ol>
+    </div>
+    <div class="pair">
+      <div>
+        <div class="shot"><img src="img/focus-quests.png" alt="The Quests page for the focus: only the missions this run can still do on its own" width="1400" height="900" loading="lazy"></div>
+        <p class="caption">"For the focus": only the missions the run can still do on its own, without being disqualified.</p>
+      </div>
+      <div class="diagram" style="display:grid;place-items:center">
+        <svg viewBox="0 0 520 300" role="img" aria-labelledby="fo-t">
+          <title id="fo-t">The focus line: the run in focus hangs below the gold line, the door to leave it beside it</title>
+          <rect x="0" y="40" width="520" height="8" fill="#e5b23a"/>
+          <rect x="0" y="40" width="520" height="8" fill="none" stroke="#f0c454" stroke-width="1" opacity=".6"/>
+          <rect x="60" y="48" width="130" height="50" fill="#3d2c1c" stroke="#6b4e2e" stroke-width="2"/>
+          <text x="125" y="80" fill="#9a815a" font-size="20" text-anchor="middle">another run</text>
+          <rect x="182" y="48" width="170" height="72" fill="#2e2116" stroke="#e5b23a" stroke-width="3"/>
+          <image href="img/icon.png" x="194" y="62" width="40" height="40" style="image-rendering:pixelated"/>
+          <text class="h" x="244" y="84" fill="#e5b23a" font-size="28">Priest</text>
+          <text x="244" y="106" fill="#d2b988" font-size="17">UPE · seasonal</text>
+          <rect x="344" y="48" width="130" height="50" fill="#3d2c1c" stroke="#6b4e2e" stroke-width="2"/>
+          <text x="409" y="80" fill="#9a815a" font-size="20" text-anchor="middle">another run</text>
+          <text class="h" x="260" y="190" fill="#f4e6c6" font-size="34" text-anchor="middle">Everything follows the focus</text>
+          <text x="260" y="226" fill="#d2b988" font-size="21" text-anchor="middle">Inventory · forge resources · quests</text>
+          <text x="260" y="256" fill="#d2b988" font-size="21" text-anchor="middle">item history · suggested loadout</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="characters">
+  <div class="wrap">
+    <div class="kicker">Characters and loadouts</div>
+    <h2>The best loadout from what you have</h2>
+    <p class="lead">Every character with its gear drawn as in the game, its maxed stats, its tags and the fame it gained. Open one and the Loot Gobbler suggests its best loadout from the items you own, enchants included, for what you care about most.</p>
+    <div class="feature flip">
+      <div class="shot">
+        <img src="img/loadout.png" alt="A Necromancer's suggested loadout: only the backpack, enchants suggested, DPS, HP per second and HP prioritised, the staff and one enchant locked" width="752" height="892" loading="lazy">
+        <span class="mark" style="left:49%;top:32.6%">1</span>
+        <span class="mark" style="left:49%;top:44%">2</span>
+        <span class="mark" style="left:23.5%;top:52%">3</span>
+        <span class="mark" style="left:54%;top:29%">4</span>
+        <span class="mark" style="left:78.5%;top:75%">4</span>
+        <span class="mark" style="left:84%;top:40%">5</span>
+        <span class="mark" style="left:89%;top:45.5%">6</span>
+      </div>
+      <ol class="notes">
+        <li><b>Scope: local</b>Only what this character carries. Or its vault too, or your whole account.</li>
+        <li><b>Suggest enchants</b>The enchants worth rolling, not just the items.</li>
+        <li><b>Your priorities</b>Here DPS, HP per second and HP. Each item shows its share.</li>
+        <li><b>Lock an item or an enchant</b>This staff stays, and so does Jester's Trick on the robe; everything else fits around them.</li>
+        <li><b>Suggested enchants</b>What to roll on each piece.</li>
+        <li><b>What they replace</b>The enchants you lose, struck through.</li>
+      </ol>
+    </div>
+    <div class="badge-row">
+      <div class="badge"><img src="img/card.png" alt="A character badge: a Druid with 37,364 fame in a Shiny UPE run, its gear with enchants, its backpack and its Coral Juice Refinery" width="896" height="380" loading="lazy"></div>
+      <div>
+        <h3>Show it off</h3>
+        <p>"Copy as image" turns any character into a badge: its skin, fame, gear with enchants, backpack and quickslot items, and the plate of its game mode, here a Shiny UPE run. Paste it into Discord or anywhere else.</p>
+        <p class="soon"><span>Coming soon</span>Discord loot push: every UT or ST that drops for you, posted by itself to your Discord as a loot card.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="battles" class="alt">
+  <div class="wrap">
+    <div class="kicker">Dungeons and damage</div>
+    <h2>How did that run go?</h2>
+    <p class="lead">Every dungeon you enter is kept: the fame you gained, the damage you dealt and took, what killed you, and the guildmates who fought with you, their damage, dodges and quickslots side by side.</p>
+    <div class="feature flip">
+      <div class="shot">
+        <img src="img/dungeon.png" alt="The Dungeons page: every dungeon played, grouped by day, and a Plagued Nest run with two guildmates, its damage graph with the amulet saving you, an exaltation, and the guild's rankings with a podium" width="1400" height="1420" loading="lazy">
+        <span class="mark" style="left:22%;top:56%">1</span>
+        <span class="mark" style="left:56%;top:16.2%">2</span>
+        <span class="mark" style="left:50%;top:48.6%">3</span>
+        <span class="mark" style="left:77.6%;top:49%">4</span>
+        <span class="mark" style="left:64.3%;top:60.6%">5</span>
+        <span class="mark" style="left:86%;top:73.9%">6</span>
+        <span class="mark" style="left:64.3%;top:85.9%">7</span>
+      </div>
+      <ol class="notes">
+        <li><b>Every dungeon you played</b>Grouped by day with its loot, rank, time and the guildmates who were there; the amulet shows where it saved you.</li>
+        <li><b>Fame gained</b>Right inside the dungeon, with your boss rank and DPS.</li>
+        <li><b>Damage over time</b>Dealt above, taken below, every big hit and quickslot marked.</li>
+        <li><b>Saved by your amulet</b>The blue line: the moment your Amulet of Restoration fired, right after two big hits.</li>
+        <li><b>Exaltations</b>The progress this run brought.</li>
+        <li><b>You and your guildmates</b>Critical hits, the biggest slap, shots dodged and quickslots used, side by side.</li>
+        <li><b>The podium</b>Who did best in the run, you and two guildmates.</li>
+      </ol>
+    </div>
+    <div class="pair">
+      <div>
+        <div class="shot"><img src="img/dps.png" alt="The DPS page: each boss's damage table and the run history" width="1400" height="900" loading="lazy"></div>
+        <p class="caption">Boss damage tables for every run, your rank and DPS, and a history of all your runs.</p>
+      </div>
+      <div>
+        <div class="shot"><img src="img/fame-graph.png" alt="The overview's fame graph of the last 24 hours, the dungeons played above it" width="653" height="433" loading="lazy"></div>
+        <p class="caption">Your last 24 hours: fame gained, exaltations, and every dungeon with the guildmates who joined you.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="overlays">
+  <div class="wrap">
+    <div class="kicker">Overlays and sounds</div>
+    <h2>What you need, right above the game</h2>
+    <p class="lead">Small windows sit above the game and show only what matters in the moment: your rank on the boss, your mana, your item cooldowns, and whether your amulet is ready. Sounds tell you the rest without looking away.</p>
+    <div class="feature">
+      <div class="shot">
+        <img src="img/overlays.png" alt="The Overlay page: the dungeon, mana, DPS and buffs overlays, each with a preview, an on and off switch and its opacity" width="1400" height="1065" loading="lazy">
+        <span class="mark" style="left:62%;top:29.3%">1</span>
+        <span class="mark" style="left:18.6%;top:47.7%">2</span>
+        <span class="mark" style="left:30.7%;top:68.5%">3</span>
+        <span class="mark" style="left:21.4%;top:91.1%">4</span>
+        <span class="mark" style="left:87.5%;top:18.8%">5</span>
+      </div>
+      <ol class="notes">
+        <li><b>Dungeon overlay</b>The portal, your rank once you hit the boss, the amulet and matrix while they recharge, and Moonlight Village's lantern and phases.</li>
+        <li><b>Mana</b>Your mana as a bar, with what you have and your maximum.</li>
+        <li><b>DPS</b>Your place on the boss, with the player above you and the one below.</li>
+        <li><b>Buffs</b>Your item cooldowns while they run: Coral Juice Refinery, Miniature Alien Generator, Protective Matrix and the Amulet of Restoration.</li>
+        <li><b>Only what you want</b>Each one on or off by itself, with its own opacity. Drag it where you want and it stays there.</li>
+      </ol>
+    </div>
+    <div class="feature flip" style="margin-top:40px">
+      <div class="shot">
+        <img src="img/item-sounds.png" alt="Settings, Item Sounds: a sound when the Amulet of Restoration breaks and when it is charged again, and sounds for other item cooldowns" width="1400" height="780" loading="lazy">
+        <span class="mark" style="left:25.7%;top:6%">1</span>
+        <span class="mark" style="left:28.5%;top:21%">2</span>
+        <span class="mark" style="left:51.4%;top:32.7%">3</span>
+        <span class="mark" style="left:77.1%;top:8.5%">4</span>
+        <span class="mark" style="left:18.5%;top:36.5%">5</span>
+      </div>
+      <ol class="notes">
+        <li><b>Your amulet saved you</b>A sound the moment your Amulet of Restoration breaks, so you know you are on borrowed time.</li>
+        <li><b>And it is back</b>Another when it is charged again, 30 minutes later.</li>
+        <li><b>Your own sound</b>Pick a built-in one or choose any file of your own.</li>
+        <li><b>Its own volume</b>Every sound as loud as you like it.</li>
+        <li><b>More cooldowns</b>Coral Juice Refinery, Miniature Alien Generator and the Protective Matrix get theirs too.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section id="guild" class="alt">
+  <div class="wrap">
+    <div class="kicker">Your guild</div>
+    <h2>Play together, even apart</h2>
+    <p class="lead">With a Loot Gobbler server, your guild shares its progress: a weekly quest map everyone moves along, leaderboards, a UPE race, member profiles and the loot caravan of everyone's finds. The server is free, and your guild runs its own.</p>
+    <div class="feature">
+      <div class="shot">
+        <img src="img/quest-map.png" alt="The guild's quest map: stages of dungeons the guild clears together" width="1400" height="900" loading="lazy">
+        <span class="mark" style="left:39.4%;top:46.7%">1</span>
+        <span class="mark" style="left:11%;top:64%">2</span>
+        <span class="mark" style="left:91%;top:58.5%">3</span>
+        <span class="mark" style="left:2.4%;top:81.5%">4</span>
+      </div>
+      <ol class="notes">
+        <li><b>The week's stage</b>The first guildie to clear it moves everyone on.</li>
+        <li><b>Cleared together</b>Each stage ticked off on the map.</li>
+        <li><b>A guild medal</b>For finishing the whole map.</li>
+        <li><b>Who did it</b>Every clear with its guildie and time.</li>
+      </ol>
+    </div>
+    <div class="pair">
+      <div>
+        <div class="shot"><img src="img/member.png" alt="A member's profile: their characters, collection and exaltations" width="1400" height="900" loading="lazy"></div>
+        <p class="caption">Member profiles: everyone's characters, collection and exaltations.</p>
+      </div>
+      <div>
+        <div class="shot"><img src="img/guild-upe.png" alt="The guild's UPE comparison" width="1400" height="900" loading="lazy"></div>
+        <p class="caption">The UPE race: whose run gathered the most, and why a lost run was lost.</p>
+      </div>
+    </div>
+    <div class="feature flip" style="margin-top:40px">
+      <div class="shot">
+        <img src="img/caravan.png" alt="The loot caravan: every guild member drives a wagon piled with the items they found, the highest score leading behind the pack ox, below it one member's points, bags and best finds" width="1400" height="1035" loading="lazy">
+        <span class="mark" style="left:10.7%;top:42.5%">1</span>
+        <span class="mark" style="left:31.4%;top:29%">2</span>
+        <span class="mark" style="left:89.6%;top:50.2%">3</span>
+        <span class="mark" style="left:37.1%;top:88.5%">4</span>
+        <span class="mark" style="left:68.6%;top:71.9%">5</span>
+      </div>
+      <ol class="notes">
+        <li><b>The loot caravan</b>Every guildie drives a wagon. The highest score leads, right behind the pack ox.</li>
+        <li><b>Piled high</b>Each wagon carries the items its driver found, sitting up front as their most played character.</li>
+        <li><b>On foot</b>Fewer than five items? You walk behind with a backpack, for now.</li>
+        <li><b>Click a member</b>Their points, most played character, and finds per bag colour.</li>
+        <li><b>Best finds</b>Their rarest drops, with where and when they dropped.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section id="quests">
+  <div class="wrap">
+    <div class="kicker">Missions</div>
+    <h2>Your season, mission by mission</h2>
+    <p class="lead">The battle pass and every season mission with its goals, progress and rewards, for the character you play or for all of them.</p>
+    <div class="shot"><img src="img/quests.png" alt="The Quests page: season missions with progress bars and rewards" width="1400" height="900" loading="lazy"></div>
+  </div>
+</section>
+
+<section id="compare" class="alt">
+  <div class="wrap">
+    <div class="kicker">Compare</div>
+    <h2>How it stacks up</h2>
+    <p class="lead">There are great RotMG tools out there, and the Loot Gobbler does not try to replace them. It goes its own way: where each of your items sits, and your game modes kept apart from the rest of your account.</p>
+    <div class="table">
+      <table>
+        <thead><tr><th></th><th>Loot Gobbler</th><th>RealmHound</th><th>Baghound</th></tr></thead>
+        <tbody>
+          <tr><th>Price</th><td class="us">Free</td><td>Free</td><td>Free; sync and full history paid</td></tr>
+          <tr><th>Open source</th><td class="us">Yes (MIT)</td><td>Yes (MIT)</td><td class="no">No</td></tr>
+          <tr><th>Platforms</th><td class="us">Windows, Linux</td><td>Windows, macOS, Linux</td><td>Windows</td></tr>
+          <tr><th>UPE / PPE runs</th><td class="us">Tracked per run, with why a run was lost</td><td class="no">—</td><td class="no">—</td></tr>
+          <tr><th>UT/ST collection</th><td class="us">Every item, with its full history</td><td>Rare drops by dungeon</td><td>Top-tier drops</td></tr>
+          <tr><th>Loadout and enchants</th><td class="us">Suggested loadout from your items</td><td>DPS calculator</td><td class="no">—</td></tr>
+          <tr><th>Dungeon history</th><td class="us">With your guildmates side by side</td><td>Per boss</td><td>Per boss</td></tr>
+          <tr><th>Exaltations</th><td class="us">Per class and stat</td><td>Per class and stat</td><td class="no">—</td></tr>
+          <tr><th>Overlay</th><td class="us">Buffs, Moonlight Village, matrix and ami procs</td><td>Live combat and loot</td><td class="no">—</td></tr>
+          <tr><th>Guild</th><td class="us">Own server: quests, leaderboards, profiles</td><td class="no">—</td><td>Public web profiles</td></tr>
+          <tr><th>Maintenance</th><td class="us">Actively developed, guild-tested</td><td>Actively developed, community-driven</td><td>No code changes since May 2026</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small">Compared with what each tool's own pages say (November 2026). The full comparison, including web tools like Realm Tools and Realm of Loot, is in the <a href="https://github.com/Deliberated/Loot-Gobbler-Client#comparison-to-existing-tools">README</a>.</p>
+  </div>
+</section>
+
+<section id="download">
+  <div class="wrap">
+    <div class="kicker">Download</div>
+    <h2>Get the Loot Gobbler</h2>
+    <p class="lead">Free, and it tells you when a new version is out. Coming from the Java Loot Gobbler? Its first start offers to take over your records and settings.</p>
+    <div class="downloads">
+      <a class="dl" href="https://github.com/Deliberated/Loot-Gobbler-Client/releases/latest">
+        <h3>Windows</h3>
+        <p><code>LootGobbler.exe</code> or the portable zip. Needs <span style="color:var(--gold)">Npcap</span> (default options).</p>
+      </a>
+      <a class="dl" href="https://github.com/Deliberated/Loot-Gobbler-Client/releases/latest">
+        <h3>Linux</h3>
+        <p><code>.rpm</code> or the portable <code>.tar.gz</code>. Sets itself up with one password prompt.</p>
+      </a>
+      <a class="dl" href="https://github.com/Deliberated/Loot-Gobbler-Server">
+        <h3>Guild server</h3>
+        <p>Optional. One Docker container for your guild's quests, leaderboards and sync.</p>
+      </a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>The Loot Gobbler is a fan-made project, not made, endorsed or supported by DECA Live Operations. Realm of the Mad God and its art belong to their owners. Passive tools like this are not officially approved by DECA: use it at your own risk.</div>
+    <div>Open source under the MIT License · built on RealmShark and Tomato by X-com · <a href="https://github.com/Deliberated/Loot-Gobbler-Client">GitHub</a></div>
+  </div>
+</footer>
+<script>
+// every app picture opens full size
+document.querySelectorAll('.shot img, .window img').forEach(function (img) {
+  var a = document.createElement('a'); a.href = img.getAttribute('src'); a.target = '_blank'; a.rel = 'noopener'; a.title = 'Open full size';
+  img.parentNode.insertBefore(a, img); a.appendChild(img);
+});
+</script>
+
+</body>
+</html>

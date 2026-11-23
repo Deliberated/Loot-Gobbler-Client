@@ -32,6 +32,8 @@ pub struct BattlesView {
     pub page: usize,
     /// The visit shown on the right (its start), -1: the newest.
     pub selected: i64,
+    /// Scroll the list to the selected visit once (it was opened from elsewhere, like the Profile's portals).
+    pub reveal: bool,
     pub collapsed: Vec<String>,
     pub dps: crate::dps::DpsView,
     /// The Newcomer's Guide: an example dungeon (Pirate Cave) while none is logged, shown only, never stored.
@@ -210,6 +212,7 @@ impl BattlesView {
         let mut toggled = None;
         let pending = std::cell::RefCell::new(Vec::new());
         let collapsed = self.collapsed.clone();
+        let reveal = std::mem::take(&mut self.reveal);
         let icons = &mut *c.icons;
         widgets::section(
             ui,
@@ -310,6 +313,9 @@ impl BattlesView {
                         let tr = Rect::from_min_size(pos2(x + col as f32 * (tw + GAP), y), vec2(tw, th));
                         if tile(ui, &p, icons, app, v, current, shown == Some(v.start), tr) {
                             picked = Some(v.start);
+                        }
+                        if reveal && shown == Some(v.start) {
+                            ui.scroll_to_rect(tr, Some(egui::Align::Center));
                         }
                         row_h = th;
                         col += 1;
