@@ -754,13 +754,30 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
         }
         (under - ICON - GAP).max(r.top() + 18.0)
     };
-    // an open stack's column: each run one above the other (room for the guildmates above a portal when any has
-    // them), the latest at the bottom where the stack stands; and the area that keeps it open
-    let step_of =
-        |s: &std::ops::Range<usize>| ICON + 6.0 + if members[s.clone()].iter().any(|m| !m.mates.is_empty()) { MATE + 1.0 } else { 0.0 };
-    let column_of = |s: &std::ops::Range<usize>, x: f32, y: f32| {
-        let top = y - (s.len() - 1) as f32 * step_of(s) - if members[s.start].mates.is_empty() { 0.0 } else { MATE + 1.0 };
-        Rect::from_min_max(pos2(x - ICON / 2.0 - 6.0, top - 6.0), pos2(x + ICON / 2.0 + 6.0, y + ICON + 4.0))
+    // an open stack's panel, right above it: its runs side by side, in up to three rows, as wide as the graph allows
+    // (room for the guildmates above a portal when any has them); and each run's cell in it, oldest first
+    let cell_w = ICON + 10.0;
+    let cell_h_of =
+        |s: &std::ops::Range<usize>| ICON + 8.0 + if members[s.clone()].iter().any(|m| !m.mates.is_empty()) { MATE + 1.0 } else { 0.0 };
+    let panel_of = |s: &std::ops::Range<usize>, x: f32, y: f32| {
+        let n = s.len();
+        let fit = (((r.width() - 16.0) / cell_w).floor() as usize).max(1);
+        let cols = n.min(fit).max(n.div_ceil(3)).min(fit);
+        let rows = n.div_ceil(cols);
+        let (pw, ph) = (cols as f32 * cell_w + 12.0, rows as f32 * cell_h_of(s) + 10.0);
+        let cx = x.clamp(r.left() + pw / 2.0, r.right() - pw / 2.0);
+        // its bottom a little over the stack (over the older ones peeking out)
+        let bottom = y - 10.0;
+        (Rect::from_min_max(pos2(cx - pw / 2.0, bottom - ph), pos2(cx + pw / 2.0, bottom)), cols)
+    };
+    let cell_of = |s: &std::ops::Range<usize>, panel: Rect, cols: usize, k: usize| {
+        let ch = cell_h_of(s);
+        let (c, row) = ((k % cols) as f32, (k / cols) as f32);
+        // the last row centred when not full
+        let in_row = if (k / cols + 1) * cols > s.len() { s.len() - (k / cols) * cols } else { cols };
+        let row_w = in_row as f32 * cell_w;
+        let left = panel.center().x - row_w / 2.0;
+        pos2(left + c * cell_w + cell_w / 2.0, panel.top() + 5.0 + row * ch + ch - 4.0 - ICON)
     };
     let dock_id = ui.scope_id().with("fame-dock");
     let was_open: Option<i64> = ui.data(|d| d.get_temp(dock_id)).flatten();
@@ -769,7 +786,7 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
         let y = rest_y(x);
         let key = members[s.start].start;
         let rest = Rect::from_min_max(pos2(x - ICON / 2.0 - 6.0, y - 8.0), pos2(x + ICON / 2.0, y + ICON));
-        let keep = was_open == Some(key) && hover.is_some_and(|q| column_of(s, x, y).expand(4.0).contains(q));
+        let keep = was_open == Some(key) && hover.is_some_and(|q| panel_of(s, x, y).0.union(rest).expand(4.0).contains(q));
         if keep || hover.is_some_and(|q| rest.contains(q)) {
             open = Some(key);
         }
@@ -812,26 +829,35 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
         // the growing follows the mouse
         ui.ctx().request_repaint();
     }
-    // the open (or opening, or closing) stacks over the rest: folded open upwards, the one under the mouse a little
-    // bigger
+    // the open (or opening, or closing) stacks over the rest: folded open in a panel above, the one under the mouse a
+    // little bigger
     for (s, x, t) in opening {
         let y = rest_y(x);
-        let step = step_of(&s);
-        let col = column_of(&s, x, y);
-        let back = Rect::from_min_max(pos2(col.left(), col.bottom() - col.height() * (0.3 + 0.7 * t)), col.max);
-        // solid over what is above the graph
+        let (panel, cols) = panel_of(&s, x, y);
         let ground = Color32::from_rgb(p.header.r(), p.header.g(), p.header.b());
-        painter.rect(back, 6.0, ground.gamma_multiply(t), egui::Stroke::new(1.0, p.gold.gamma_multiply(0.6 * t)), egui::StrokeKind::Inside);
-        // the latest at the bottom, the older ones above it
-        for (k, i) in s.clone().rev().enumerate() {
+        let grown = Rect::from_center_size(
+            panel.center() + (pos2(x, y) - panel.center()) * (1.0 - t),
+            vec2(panel.width() * (0.3 + 0.7 * t), panel.height() * (0.3 + 0.7 * t)),
+        );
+        painter.rect(
+            grown,
+            6.0,
+            ground.gamma_multiply(t),
+            egui::Stroke::new(1.0, p.gold.gamma_multiply(0.6 * t)),
+            egui::StrokeKind::Inside,
+        );
+        let ch = cell_h_of(&s);
+        for (k, i) in s.clone().enumerate() {
             let m = &members[i];
-            let sy = y - k as f32 * step;
-            let my = y + (sy - y) * t;
-            let under = t > 0.99 && hover.is_some_and(|q| col.contains(q) && q.y > sy - (step - ICON) && q.y <= sy + ICON + 3.0);
-            let goal = if under { 1.18 } else { 1.0 };
-            let mag = ui.ctx().animate_value_with_time(dock_id.with(("col", m.start)), goal, 0.08);
-            let size = ICON * mag;
-            let at = Rect::from_min_size(pos2(x - size / 2.0, my + ICON - size), vec2(size, size));
+            let c = cell_of(&s, panel, cols, k);
+            let cell = Rect::from_min_max(pos2(c.x - cell_w / 2.0, c.y + ICON + 4.0 - ch), pos2(c.x + cell_w / 2.0, c.y + ICON + 4.0));
+            let under = t > 0.99 && hover.is_some_and(|q| cell.contains(q));
+            let mag = ui.ctx().animate_value_with_time(dock_id.with(("cell", m.start)), if under { 1.2 } else { 1.0 }, 0.08);
+            let size = ICON * (0.6 + 0.4 * t) * mag;
+            // from the stack out to its cell
+            let at_x = x + (c.x - x) * t;
+            let at_y = y + (c.y - y) * t;
+            let at = Rect::from_min_size(pos2(at_x - size / 2.0, at_y + ICON - size), vec2(size, size));
             portal(&painter, m, at, &count_f, gold);
             if under {
                 tip = Some(m.tip.clone());
