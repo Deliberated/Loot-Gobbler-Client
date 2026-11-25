@@ -810,8 +810,18 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Opt
                 };
                 let mut ty = r.top();
                 let which = if current { None } else { Some(run.start) };
-                for (bi, b) in run.bosses.iter().enumerate() {
-                    let Some(place) = b.players.iter().position(|x| x.me) else { continue };
+                // the main boss (the one with the most life; a guild hall's last block), else the last you hit
+                let main = if run.guild_hall {
+                    run.bosses.len().checked_sub(1)
+                } else {
+                    run.main_boss().map(|m| run.bosses.iter().position(|x| std::ptr::eq(x, m)).unwrap_or(0))
+                };
+                let with_me = |i: &usize| run.bosses[*i].players.iter().any(|x| x.me);
+                let shown =
+                    main.filter(with_me).map(|i| (i, true)).or_else(|| (0..run.bosses.len()).rev().find(with_me).map(|i| (i, false)));
+                if let Some((bi, is_main)) = shown {
+                    let b = &run.bosses[bi];
+                    let place = b.players.iter().position(|x| x.me).unwrap_or(0);
                     let block_top = ty;
                     let me = &b.players[place];
                     let dps = f64::from(me.damage) / (b.fight_ms as f64 / 1000.0).max(1.0);
@@ -823,28 +833,63 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Opt
                         num(dps.round() as i64)
                     );
                     jtext::draw(&painter, pos2(r.left(), ty), Align2::LEFT_TOP, &t, &f, p.ink);
-                    ty += fh + 2.0;
-                    // an excerpt: you and the one above and below (the next two when you are first or last)
+                    ty += fh + 6.0;
+                    // a small table: you and the one above and below (the next two when you are first or last)
                     let n = b.players.len();
                     let from = place.saturating_sub(1).min(n.saturating_sub(3));
-                    let sm = f.clone();
-                    let sh = fh + 1.0;
-                    for (k, pl) in b.players.iter().enumerate().skip(from).take(3) {
-                        let color = if pl.me { p.gold } else { p.ink_soft };
-                        let x = r.left() + 12.0;
-                        jtext::draw(&painter, pos2(x, ty), Align2::LEFT_TOP, &format!("#{}", k + 1), &sm, color);
-                        jtext::draw(&painter, pos2(x + 40.0, ty), Align2::LEFT_TOP, &pl.name, &sm, color);
-                        let dmg = format!("{} DMG", num(i64::from(pl.damage)));
-                        jtext::draw(&painter, pos2(x + 300.0, ty), Align2::RIGHT_TOP, &dmg, &sm, color);
-                        let pct = format!("{:.1}%", crate::dps::share(b, pl));
-                        jtext::draw(&painter, pos2(x + 370.0, ty), Align2::RIGHT_TOP, &pct, &sm, color);
-                        ty += sh;
+                    let rows: Vec<(usize, &lg_app::dps_history::PlayerRow)> = b.players.iter().enumerate().skip(from).take(3).collect();
+                    let tw = r.width().min(440.0);
+                    let (head_h, row_h, pad) = (24.0, 26.0, 8.0);
+                    let table = Rect::from_min_size(pos2(r.left(), ty), vec2(tw, head_h + rows.len() as f32 * row_h + 6.0));
+                    painter.rect(table, 4.0, mix(Color32::BLACK, p.header, 0.3), Stroke::new(1.0, p.line), StrokeKind::Inside);
+                    let (pct_r, dmg_r) = (table.right() - pad, table.right() - pad - 70.0);
+                    let hf = text(15.0);
+                    let hy = table.top() + head_h / 2.0;
+                    jtext::draw(
+                        &painter,
+                        pos2(table.left() + pad, hy),
+                        Align2::LEFT_CENTER,
+                        if is_main { "MAIN BOSS" } else { "LAST BOSS" },
+                        &hf,
+                        fixed::MUTED,
+                    );
+                    jtext::draw(&painter, pos2(dmg_r, hy), Align2::RIGHT_CENTER, "DMG", &hf, fixed::MUTED);
+                    jtext::draw(&painter, pos2(pct_r, hy), Align2::RIGHT_CENTER, "%", &hf, fixed::MUTED);
+                    let top_dmg = rows.iter().map(|(_, pl)| pl.damage).max().unwrap_or(1).max(1);
+                    let mut ry = table.top() + head_h;
+                    for (k, pl) in &rows {
+                        let row = Rect::from_min_size(pos2(table.left() + 3.0, ry), vec2(table.width() - 6.0, row_h - 2.0));
+                        // a bar as long as the damage (the most of the three: all of it); yours in gold
+                        let bar = Rect::from_min_size(row.min, vec2(row.width() * pl.damage.max(0) as f32 / top_dmg as f32, row.height()));
+                        let tint = if pl.me { mix(p.gold, p.header, 0.3) } else { mix(p.ink, p.header, 0.09) };
+                        painter.rect_filled(bar, 2.0, tint);
+                        let cy = row.center().y;
+                        let ink = if pl.me { p.gold } else { p.ink };
+                        let name_x = table.left() + pad + 34.0;
+                        if pl.me {
+                            jtext::draw_bold(&painter, pos2(table.left() + pad, cy), Align2::LEFT_CENTER, &format!("#{}", k + 1), &f, ink);
+                            jtext::draw_bold(&painter, pos2(name_x, cy), Align2::LEFT_CENTER, &pl.name, &f, ink);
+                        } else {
+                            jtext::draw(&painter, pos2(table.left() + pad, cy), Align2::LEFT_CENTER, &format!("#{}", k + 1), &f, ink);
+                            jtext::draw(&painter, pos2(name_x, cy), Align2::LEFT_CENTER, &pl.name, &f, ink);
+                        }
+                        jtext::draw(&painter, pos2(dmg_r, cy), Align2::RIGHT_CENTER, &num(i64::from(pl.damage)), &f, ink);
+                        jtext::draw(
+                            &painter,
+                            pos2(pct_r, cy),
+                            Align2::RIGHT_CENTER,
+                            &format!("{:.1}%", crate::dps::share(b, pl)),
+                            &f,
+                            p.gold,
+                        );
+                        ry += row_h;
                     }
+                    ty = table.bottom();
                     // anywhere on it: that boss under DPS
-                    let hit = Rect::from_min_max(pos2(r.left() - 4.0, block_top - 2.0), pos2(r.right(), ty + 2.0));
+                    let hit = Rect::from_min_max(pos2(r.left() - 4.0, block_top - 2.0), pos2(table.right() + 4.0, ty + 2.0));
                     let resp = ui.interact(hit, ui.scope_id().with(("boss-fight", bi)), egui::Sense::click());
                     if resp.hovered() {
-                        painter.rect_filled(hit, 4.0, p.gold.gamma_multiply(0.06));
+                        painter.rect_stroke(table, 4.0, Stroke::new(1.0, p.gold), StrokeKind::Inside);
                     }
                     if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         *asked.borrow_mut() = Some((which, Some(bi)));
