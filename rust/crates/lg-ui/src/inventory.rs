@@ -235,8 +235,15 @@ impl InventoryView {
             })
             .collect();
         runs.sort_by_key(|r| std::cmp::Reverse(r.char_id));
-        if self.upe_char != 0 && !runs.iter().any(|r| r.char_id == self.upe_char) {
-            self.upe_char = 0; // its run is not in the column (any more)
+        // your favourite characters that are alive and have no run in the column: their own finds
+        let mut favourites: Vec<&lg_app::characters::Char> =
+            app.characters.all().filter(|ch| ch.favorite && ch.alive && !runs.iter().any(|r| r.char_id == ch.char_id)).collect();
+        favourites.sort_by_key(|ch| std::cmp::Reverse(ch.last_played));
+        if self.upe_char != 0
+            && !runs.iter().any(|r| r.char_id == self.upe_char)
+            && !favourites.iter().any(|ch| ch.char_id == self.upe_char)
+        {
+            self.upe_char = 0; // it is not in the column (any more)
         }
         // the gold frame of the entry shown: drawn under the entries once their places are known, gliding from the
         // one shown before to the one clicked
@@ -308,8 +315,26 @@ impl InventoryView {
                 entry(&mut y, tex, &ch.class_name, r.char_id, faded, &tip);
             }
         }
-        if runs.is_empty() {
-            jtext::draw(&painter, pos2(x + w / 2.0, y + 8.0), Align2::CENTER_TOP, "No game mode runs yet", &f, fixed::MUTED);
+        if !favourites.is_empty() {
+            y += 10.0;
+            let t = jtext::draw(&painter, pos2(x + 6.0, y), Align2::LEFT_TOP, "Favourites", &f, p.gold);
+            y = t.bottom() + 2.0;
+            painter.rect_filled(Rect::from_min_size(pos2(x + 6.0, y), vec2(w - 8.0 - 12.0, 2.0)), 0.0, p.gold);
+            y += 2.0 + 4.0;
+            for ch in &favourites {
+                let skin = if ch.skin > 0 { ch.skin } else { ch.class_type };
+                let tex = c.icons.skin(ui.ctx(), data, skin, ch.tex1, ch.tex2, 40);
+                let n: i32 = found_by(app, ch.char_id).values().map(|v| v.0).sum();
+                let tip: Vec<widgets::TipLine> = vec![
+                    vec![(ch.class_name.clone(), None, true), (if ch.seasonal { " (seasonal)" } else { "" }.to_string(), None, false)],
+                    vec![(format!("{n} item{} found while played", if n == 1 { "" } else { "s" }), None, false)],
+                    vec![("Drops count for the character you were playing when they came.".to_string(), Some(fixed::MUTED), false)],
+                ];
+                entry(&mut y, tex, &ch.class_name, ch.char_id, false, &tip);
+            }
+        }
+        if runs.is_empty() && favourites.is_empty() {
+            jtext::draw(&painter, pos2(x + w / 2.0, y + 8.0), Align2::CENTER_TOP, "No game mode runs or favourites yet", &f, fixed::MUTED);
         }
         if let Some(to) = target.get() {
             // a third of the way every 15 ms, however long the frame took
@@ -449,7 +474,11 @@ impl InventoryView {
         let (main, side) = widgets::side_split(ui, c.p, c.props, "collectionGrid", body, 380.0, 200.0, 560.0, Some((base, CELL)));
         let cols = ((main.width() - base + 0.001) / CELL).floor().max(1.0);
         let title = if self.upe_char != 0 {
-            let name = app.characters.get(self.upe_char).map_or("UPE".to_string(), |ch| format!("{} (UPE)", ch.class_name));
+            let name = match (app.characters.get(self.upe_char), app.upe.runs.get(&self.upe_char)) {
+                (Some(ch), Some(r)) => format!("{} ({})", ch.class_name, lg_app::upe::label(&r.mode)),
+                (Some(ch), None) => format!("{} (found while played)", ch.class_name),
+                _ => "UPE".to_string(),
+            };
             format!("Collection · {name}")
         } else {
             "Collection".to_string()
@@ -1399,7 +1428,7 @@ fn day_label(date: &str, now_local: &str) -> String {
 /// the last find's time and date.
 fn gathered(app: &lg_app::App, char_id: i32) -> HashMap<i32, (i32, i32, String, String)> {
     let mut out: HashMap<i32, (i32, i32, String, String)> = HashMap::new();
-    let Some(run) = app.upe.runs.get(&char_id) else { return out };
+    let Some(run) = app.upe.runs.get(&char_id) else { return found_by(app, char_id) };
     let data = app.world.data();
     for g in &run.gathered {
         if !data.items.collectible.contains(&g.item) {
@@ -1411,6 +1440,61 @@ fn gathered(app: &lg_app::App, char_id: i32) -> HashMap<i32, (i32, i32, String, 
         e.1 = e.1.max(g.enchants.as_ref().map_or(0, |v| v.len() as i32));
         e.2 = time[..10.min(time.len())].to_string();
         e.3 = time;
+    }
+    out
+}
+
+/// A character's own finds (a favourite in the column, no game mode run): the drops that came while it was played.
+/// A drop belongs to the characters played around then (a stretch of play by its fame samples, a little slack at
+/// either end; a lone sample is no play); where two were, to the one with a sample nearest the drop. As `gathered`:
+/// item -> (copies, best enchantments, date, time of the newest).
+fn found_by(app: &lg_app::App, char_id: i32) -> HashMap<i32, (i32, i32, String, String)> {
+    const SLACK_MS: i64 = 2 * 60_000;
+    let mut out: HashMap<i32, (i32, i32, String, String)> = HashMap::new();
+    if app.characters.get(char_id).is_none() {
+        return out;
+    }
+    // every character's stretches of play, and its sample times (sorted) to settle a tie
+    let played: Vec<(i32, Vec<lg_app::characters::Session>, Vec<i64>)> = app
+        .characters
+        .all()
+        .map(|c| {
+            let sessions: Vec<_> = lg_app::characters::Characters::sessions(c, 0).into_iter().filter(|s| s.end > s.start).collect();
+            let mut times: Vec<i64> = c.samples.iter().map(|s| s.t).collect();
+            times.sort_unstable();
+            (c.char_id, sessions, times)
+        })
+        .filter(|(_, s, _)| !s.is_empty())
+        .collect();
+    let nearest = |times: &[i64], t: i64| {
+        let i = times.partition_point(|x| *x < t);
+        [i.checked_sub(1), Some(i)].into_iter().flatten().filter_map(|k| times.get(k)).map(|x| (x - t).abs()).min().unwrap_or(i64::MAX)
+    };
+    let data = app.world.data();
+    for (id, e) in app.collection.all() {
+        if !data.items.collectible.contains(&id) {
+            continue;
+        }
+        for f in e.history.iter().flatten() {
+            if f.source != lg_app::collection::DROP {
+                continue;
+            }
+            let owner = played
+                .iter()
+                .filter(|(_, sessions, _)| sessions.iter().any(|s| f.at >= s.start - SLACK_MS && f.at <= s.end + SLACK_MS))
+                .min_by_key(|(_, _, times)| nearest(times, f.at))
+                .map(|(c, _, _)| *c);
+            if owner != Some(char_id) {
+                continue;
+            }
+            let v = out.entry(id).or_insert((0, 0, String::new(), String::new()));
+            v.0 += 1;
+            v.1 = v.1.max(f.enchants.max(0));
+            if f.time > v.3 {
+                v.2 = f.time[..10.min(f.time.len())].to_string();
+                v.3 = f.time.clone();
+            }
+        }
     }
     out
 }
