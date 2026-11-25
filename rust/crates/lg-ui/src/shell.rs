@@ -792,11 +792,11 @@ impl Shell {
         let mut xs = vec![0.0; laid.len()];
         let mut x = start + DOOR_VIS;
         for &i in &seq {
-            let id = ui.scope_id().with(("focus-x", self.focus_boxes[i].id));
-            // gliding to its place; the one dragged right under the pointer
+            // each right after the ones before as wide as they are now, so place and size change together (one
+            // diagonal move); the one dragged right under the pointer
             xs[i] = match (dragged, drag_left) {
-                (Some((di, _)), Some(left)) if di == i => ctx.animate_value_with_time(id, left, 0.0),
-                _ => ctx.animate_value_with_time(id, x, 0.22),
+                (Some((di, _)), Some(left)) if di == i => left,
+                _ => x,
             };
             x += laid[i].w - OVERLAP;
         }
@@ -849,7 +849,8 @@ impl Shell {
             } else {
                 resp.on_hover_text(format!("Focus on this {} (drag to move it)", b.sub))
             };
-            let edge = mix(p.gold.gamma_multiply(if resp.hovered() { 0.8 } else { 0.45 }), p.gold, l.t);
+            // every box with the gold outline; the one picked thicker (below), a hovered one lit
+            let edge = if resp.hovered() && l.t < 0.5 { p.gold_hover } else { p.gold };
             standing(&painter, r, base, mix(mix(p.sand, p.header, 0.5), p.header, l.t), Stroke::new(1.5 + 1.0 * l.t, edge), l.t);
             let ir = Rect::from_min_size(pos2(r.left() + 6.0, r.center().y - l.icon / 2.0), vec2(l.icon, l.icon));
             if let Some(t) = b.icon {

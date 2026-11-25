@@ -239,13 +239,12 @@ impl InventoryView {
             })
             .collect();
         runs.sort_by_key(|r| std::cmp::Reverse(r.char_id));
-        // your favourite characters that are alive and have no run in the column: their own finds
-        let mut favourites: Vec<&lg_app::characters::Char> =
-            app.characters.all().filter(|ch| ch.favorite && ch.alive && !runs.iter().any(|r| r.char_id == ch.char_id)).collect();
-        favourites.sort_by_key(|ch| std::cmp::Reverse(ch.last_played));
+        // the characters in the focus row (added with their eye) that have no run in the column: their own finds
+        let in_focus: Vec<&lg_app::characters::Char> =
+            crate::focus::char_candidates(app, c.props).into_iter().filter(|ch| !runs.iter().any(|r| r.char_id == ch.char_id)).collect();
         if self.upe_char != 0
             && !runs.iter().any(|r| r.char_id == self.upe_char)
-            && !favourites.iter().any(|ch| ch.char_id == self.upe_char)
+            && !in_focus.iter().any(|ch| ch.char_id == self.upe_char)
             && self.focus_seen != Some(self.upe_char)
         {
             self.upe_char = 0; // it is not in the column (any more)
@@ -338,13 +337,16 @@ impl InventoryView {
                 entry(&mut y, tex, &ch.class_name, r.char_id, faded, &tip);
             }
         }
-        if !favourites.is_empty() {
+        for (heading, group) in [("Focus", &in_focus)] {
+            if group.is_empty() {
+                continue;
+            }
             y += 10.0;
-            let t = jtext::draw(&painter, pos2(x + 6.0, y), Align2::LEFT_TOP, "Favourites", &f, p.gold);
+            let t = jtext::draw(&painter, pos2(x + 6.0, y), Align2::LEFT_TOP, heading, &f, p.gold);
             y = t.bottom() + 2.0;
             painter.rect_filled(Rect::from_min_size(pos2(x + 6.0, y), vec2(w - 8.0 - 12.0, 2.0)), 0.0, p.gold);
             y += 2.0 + 4.0;
-            for ch in &favourites {
+            for ch in group.iter() {
                 let skin = if ch.skin > 0 { ch.skin } else { ch.class_type };
                 let tex = c.icons.skin(ui.ctx(), data, skin, ch.tex1, ch.tex2, 40);
                 let n: i32 = found_by(app, ch.char_id).values().map(|v| v.0).sum();
@@ -356,8 +358,8 @@ impl InventoryView {
                 entry(&mut y, tex, &ch.class_name, ch.char_id, false, &tip);
             }
         }
-        if runs.is_empty() && favourites.is_empty() {
-            jtext::draw(&painter, pos2(x + w / 2.0, y + 8.0), Align2::CENTER_TOP, "No game mode runs or favourites yet", &f, fixed::MUTED);
+        if runs.is_empty() && in_focus.is_empty() {
+            jtext::draw(&painter, pos2(x + w / 2.0, y + 8.0), Align2::CENTER_TOP, "No game mode runs or focus yet", &f, fixed::MUTED);
         }
         if let Some(to) = target.get() {
             // a third of the way every 15 ms, however long the frame took
@@ -1709,7 +1711,7 @@ fn gathered(app: &lg_app::App, char_id: i32) -> HashMap<i32, (i32, i32, String, 
     out
 }
 
-/// A character's own finds (a favourite in the column, no game mode run): the drops that came while it was played.
+/// A character's own finds (a focus character in the column, no game mode run): the drops that came while it was played.
 /// A drop belongs to the characters played around then (a stretch of play by its fame samples, a little slack at
 /// either end; a lone sample is no play); where two were, to the one with a sample nearest the drop. As `gathered`:
 /// item -> (copies, best enchantments, date, time of the newest).
