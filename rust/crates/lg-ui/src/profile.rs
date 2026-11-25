@@ -264,13 +264,6 @@ impl Profile {
             ],
         );
         ui.add_space(20.0);
-        // suggestions of what to do next (each a box; their content comes later)
-        heading(ui, &p, "What you can do");
-        ui.add_space(8.0);
-        let ideas: Vec<widgets::Card<'_, ()>> =
-            (0..SUGGESTIONS).map(|_| -> widgets::Card<'_, ()> { Box::new(|ui: &mut Ui, _: &mut ()| suggestion(ui, &p)) }).collect();
-        row(ui, &p, 12.0, &mut (), ideas);
-        ui.add_space(20.0);
         heading(ui, &p, "Last 24 hours");
         ui.add_space(8.0);
         today_tiles(ui, &p, app, &runs, &drops, now, since);
@@ -381,6 +374,20 @@ fn player_card(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, now: i64,
         ui.add_space(16.0);
         fame_gain(ui, p, app, icons, chars, m, now);
     }
+    // suggestions of what to do next, two by two (their content comes later)
+    ui.add_space(16.0);
+    caption(ui, p, "WHAT YOU CAN DO");
+    ui.add_space(6.0);
+    let (gap, h) = (10.0, 64.0);
+    let w = ((ui.available_width() - gap) / 2.0).floor();
+    let top = ui.cursor().min;
+    for k in 0..SUGGESTIONS {
+        let (col, rw) = ((k % 2) as f32, (k / 2) as f32);
+        let r = egui::Rect::from_min_size(pos2(top.x + col * (w + gap), top.y + rw * (h + gap)), vec2(w, h));
+        suggestion(ui.painter(), p, r);
+    }
+    let rows = SUGGESTIONS.div_ceil(2) as f32;
+    ui.allocate_exact_size(vec2(2.0 * w + gap, rows * (h + gap) - gap), Sense::hover());
     // the Newcomer's Guide frames all of the card
     let m = ui.max_rect();
     crate::guide::mark(
@@ -740,16 +747,16 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
 /// How many suggestion boxes the overview shows.
 const SUGGESTIONS: usize = 4;
 
-/// A suggestion box: a quill and "Coming soon" for now.
-fn suggestion(ui: &mut Ui, p: &Palette) {
-    let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 64.0), egui::Sense::hover());
-    quill(ui.painter(), egui::pos2(r.left() + 30.0, r.center().y), p.ink_soft, p.gold);
+/// A suggestion box in `r`: a quill and "Coming soon" for now.
+fn suggestion(painter: &egui::Painter, p: &Palette, r: egui::Rect) {
+    painter.rect(r, 0.0, p.header, egui::Stroke::new(1.0, p.line), egui::StrokeKind::Inside);
+    quill(painter, egui::pos2(r.left() + 30.0, r.center().y), p.ink_soft, p.gold);
     crate::jtext::draw(
-        ui.painter(),
+        painter,
         egui::pos2(r.left() + 66.0, r.center().y),
         egui::Align2::LEFT_CENTER,
         "Coming soon",
-        &widgets::head_px(26.0),
+        &widgets::head_px(24.0),
         p.ink_soft,
     );
 }

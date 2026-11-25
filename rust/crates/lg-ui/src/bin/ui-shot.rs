@@ -554,6 +554,47 @@ fn main() {
                 harness.step();
             }
         }
+        // UI_SHOT_DRAG="x,y": press there, move 40 px right a step at a time, and tell whether the window was asked to
+        // start moving (the title bar's drag)
+        if let Some((dx, dy)) = std::env::var("UI_SHOT_DRAG").ok().and_then(|v| {
+            let (a, b) = v.split_once(',')?;
+            Some((a.trim().parse::<f32>().ok()?, b.trim().parse::<f32>().ok()?))
+        }) {
+            let at = egui::pos2(dx, dy);
+            let started = |h: &egui_kittest::Harness<'_>| {
+                h.output().viewport_output.values().any(|v| v.commands.iter().any(|c| matches!(c, egui::ViewportCommand::StartDrag)))
+            };
+            harness.input_mut().events.push(egui::Event::PointerMoved(at));
+            harness.step();
+            harness.input_mut().events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            });
+            harness.step();
+            let mut moved = started(&harness);
+            for k in 1..=8 {
+                harness.input_mut().events.push(egui::Event::PointerMoved(at + egui::vec2(5.0 * k as f32, 0.0)));
+                harness.step();
+                moved |= started(&harness);
+            }
+            harness.input_mut().events.push(egui::Event::PointerButton {
+                pos: at + egui::vec2(40.0, 0.0),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            });
+            harness.run_steps(3);
+            println!("drag at ({dx}, {dy}): window drag {}", if moved { "STARTED" } else { "not started" });
+            drop(harness);
+            for a in win.take_asks() {
+                if let lg_ui::window::Ask::Set(k, v) = a {
+                    println!("  set {k} = {v}");
+                }
+            }
+            continue;
+        }
         let img = harness.render().expect("render");
         let path = std::path::Path::new(out).join(format!("{}.png", tab.replace(' ', "_").replace(':', "-")));
         img.save(&path).expect("save");
