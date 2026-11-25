@@ -703,16 +703,37 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
         );
         members.push(Member { start: first.start, open: last.start, n: group.len(), x, icon, mates: mate_icons, tip });
     }
-    // portals that would overlap make one stack, its latest on top; hovered, it opens up side by side (as a dock)
+    // the portals spread over the graph, each near where you left; only ones at about the same time make a stack
+    // (its latest on top), which opens up side by side on hover; a portal under the mouse grows (as in a dock)
+    const SP: f32 = ICON + 6.0;
     let mut stacks: Vec<std::ops::Range<usize>> = Vec::new();
     for i in 0..members.len() {
         match stacks.last_mut() {
-            Some(s) if members[i].x - members[s.end - 1].x < ICON + 8.0 => s.end = i + 1,
+            Some(s) if members[i].x - members[s.end - 1].x < ICON * 0.6 => s.end = i + 1,
             _ => stacks.push(i..i + 1),
         }
     }
-    let rest_y = |s: &std::ops::Range<usize>| {
-        let (x0, x1) = (members[s.start].x - ICON / 2.0, members[s.end - 1].x + ICON / 2.0);
+    // more than fit side by side: the two closest in time become one stack, until they fit
+    let room = ((right - left) / SP).floor().max(1.0) as usize;
+    while stacks.len() > room {
+        let apart = |k: usize| members[stacks[k + 1].start].x - members[stacks[k].end - 1].x;
+        let Some(k) = (0..stacks.len() - 1).min_by(|a, b| apart(*a).total_cmp(&apart(*b))) else { break };
+        let next = stacks.remove(k + 1);
+        stacks[k].end = next.end;
+    }
+    // where each stands: at its time, pushed right past the one before, then back left from the graph's end
+    let mut px: Vec<f32> = stacks.iter().map(|s| members[s.end - 1].x).collect();
+    let (lo, hi) = (left + ICON / 2.0, right - ICON / 2.0);
+    for k in 0..px.len() {
+        let min = if k == 0 { lo } else { px[k - 1] + SP };
+        px[k] = px[k].max(min);
+    }
+    for k in (0..px.len()).rev() {
+        let max = if k + 1 == px.len() { hi } else { px[k + 1] - SP };
+        px[k] = px[k].min(max);
+    }
+    let rest_y = |x: f32| {
+        let (x0, x1) = (x - ICON / 2.0 - 6.0, x + ICON / 2.0);
         let (c0, c1) = (((x0 - r.left()).max(0.0) as usize).min(w - 1), ((x1 - r.left()).max(0.0) as usize).min(w - 1));
         let mut under = line_top[c0..=c1].iter().copied().fold(f32::INFINITY, f32::min);
         if !under.is_finite() {
@@ -723,9 +744,9 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
     // each portal's room in an open stack: closer together when many would not fit
     let slot_of = |n: usize| (ICON + 8.0).min((r.width() - 16.0) / n.max(1) as f32);
     // an open stack's row: its centre (inside the graph) and the area that keeps it open
-    let row_of = |s: &std::ops::Range<usize>, y: f32| {
-        let wide = s.len() as f32 * slot_of(s.len());
-        let cx = members[s.end - 1].x.clamp(r.left() + wide / 2.0 + 6.0, r.right() - wide / 2.0 - 6.0);
+    let row_of = |n: usize, x: f32, y: f32| {
+        let wide = n as f32 * slot_of(n);
+        let cx = x.clamp(r.left() + wide / 2.0 + 6.0, r.right() - wide / 2.0 - 6.0);
         let area =
             Rect::from_min_max(pos2(cx - wide / 2.0 - 6.0, y - ICON * 0.5 - MATE - 8.0), pos2(cx + wide / 2.0 + 6.0, y + ICON + 4.0));
         (cx, area)
@@ -733,12 +754,11 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
     let dock_id = ui.scope_id().with("fame-dock");
     let was_open: Option<i64> = ui.data(|d| d.get_temp(dock_id)).flatten();
     let mut open: Option<i64> = None;
-    for s in stacks.iter().filter(|s| s.len() > 1) {
-        let y = rest_y(s);
+    for (s, &x) in stacks.iter().zip(&px).filter(|(s, _)| s.len() > 1) {
+        let y = rest_y(x);
         let key = members[s.start].start;
-        let top = &members[s.end - 1];
-        let rest = Rect::from_min_max(pos2(members[s.start].x - ICON / 2.0 - 6.0, y - 8.0), pos2(top.x + ICON / 2.0, y + ICON));
-        let keep = was_open == Some(key) && hover.is_some_and(|q| row_of(s, y).1.contains(q));
+        let rest = Rect::from_min_max(pos2(x - ICON / 2.0 - 6.0, y - 8.0), pos2(x + ICON / 2.0, y + ICON));
+        let keep = was_open == Some(key) && hover.is_some_and(|q| row_of(s.len(), x, y).1.contains(q));
         if keep || hover.is_some_and(|q| rest.contains(q)) {
             open = Some(key);
         }
@@ -746,23 +766,28 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
     ui.data_mut(|d| d.insert_temp(dock_id, open));
     let mut clicked: Option<i64> = None;
     let mut opening = Vec::new();
-    for s in &stacks {
+    for (s, &x) in stacks.iter().zip(&px) {
         let key = members[s.start].start;
         let t = ui.ctx().animate_bool_with_time(dock_id.with(key), open == Some(key), 0.16);
         if t > 0.0 && s.len() > 1 {
-            opening.push((s.clone(), t));
+            opening.push((s.clone(), x, t));
             continue;
         }
+        let y = rest_y(x);
+        // the mouse near it, in its row (and no stack open): it grows, the nearer the more
+        let near = hover.filter(|q| open.is_none() && q.y > y - ICON && q.y < y + ICON + 6.0);
+        let goal = near.map_or(1.0, |q| 1.0 + 0.3 * (-((q.x - x) / SP).powi(2)).exp());
+        let mag = ui.ctx().animate_value_with_time(dock_id.with(("mag", key)), goal, 0.08);
+        let size = ICON * mag;
         // the stack: the older ones peeking out behind the latest
-        let y = rest_y(s);
         let top = &members[s.end - 1];
         let behind = (s.len() - 1).min(2);
         for j in (1..=behind).rev() {
             let m = &members[s.end - 1 - j];
-            let at = Rect::from_min_size(pos2(top.x - ICON / 2.0 - 3.0 * j as f32, y - 3.0 * j as f32), vec2(ICON, ICON));
+            let at = Rect::from_min_size(pos2(x - size / 2.0 - 3.0 * j as f32, y + ICON - size - 3.0 * j as f32), vec2(size, size));
             painter.image(m.icon.id(), at, uv(), Color32::from_gray(140));
         }
-        let at = Rect::from_min_size(pos2(top.x - ICON / 2.0, y), vec2(ICON, ICON));
+        let at = Rect::from_min_size(pos2(x - size / 2.0, y + ICON - size), vec2(size, size));
         let hit = portal(&painter, top, at, &count_f, gold);
         if s.len() == 1 && hover.is_some_and(|q| hit.contains(q)) {
             tip = Some(top.tip.clone());
@@ -772,20 +797,24 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
             }
         }
     }
+    if hover.is_some() {
+        // the growing follows the mouse
+        ui.ctx().request_repaint();
+    }
     // the open (or opening, or closing) stacks over the rest: side by side, the one under the mouse biggest
-    for (s, t) in opening {
-        let y = rest_y(&s);
-        let (cx, area) = row_of(&s, y);
+    for (s, top_x, t) in opening {
+        let y = rest_y(top_x);
+        let (cx, area) = row_of(s.len(), top_x, y);
         let slot = slot_of(s.len());
         let wide = s.len() as f32 * slot;
         let back = Rect::from_min_max(pos2(cx - wide / 2.0 - 4.0, area.top() + 2.0), pos2(cx + wide / 2.0 + 4.0, y + ICON + 3.0));
         let back = Rect::from_center_size(back.center(), vec2(back.width() * (0.4 + 0.6 * t), back.height()));
         painter.rect(back, 6.0, p.header.gamma_multiply(t), egui::Stroke::new(1.0, p.line.gamma_multiply(t)), egui::StrokeKind::Inside);
-        let top_x = members[s.end - 1].x;
         for (k, i) in s.clone().enumerate() {
             let m = &members[i];
             let sx = cx - wide / 2.0 + slot * (k as f32 + 0.5);
-            let mag = hover.filter(|q| area.contains(*q)).map_or(1.0, |q| 1.0 + 0.45 * (-((q.x - sx) / (slot.max(ICON) * 1.1)).powi(2)).exp());
+            let mag =
+                hover.filter(|q| area.contains(*q)).map_or(1.0, |q| 1.0 + 0.45 * (-((q.x - sx) / (slot.max(ICON) * 1.1)).powi(2)).exp());
             let size = ICON * (1.0 + (mag - 1.0) * t);
             let x = top_x + (sx - top_x) * t;
             let at = Rect::from_min_size(pos2(x - size / 2.0, y + ICON - size), vec2(size, size));
