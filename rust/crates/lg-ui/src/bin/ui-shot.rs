@@ -562,6 +562,7 @@ fn main() {
             for _ in 0..60 {
                 harness.step();
             }
+            println!("cursor at ({}, {}): {:?}", at.x, at.y, harness.output().platform_output.cursor_icon);
         }
         // UI_SHOT_DRAG="x,y": press there, move 40 px right a step at a time, and tell whether the window was asked to
         // start moving (the title bar's drag)

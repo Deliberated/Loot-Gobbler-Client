@@ -719,3 +719,23 @@ pub fn app_window(ctx: &egui::Context, p: &Palette, id: &str, title: &str, size:
     ctx.data_mut(|d| d.insert_temp(pos_id, pos));
     open
 }
+
+/// Where an id is kept (in the context's data) of a clickable area that is not to show the hand: the title bar.
+pub const NO_HAND: &str = "lg-no-hand";
+
+/// The hand over anything clickable: when the pointer is over a widget that takes clicks (and is enabled) and no view
+/// chose a cursor this frame, the pointing hand. Called once a frame, after everything is drawn.
+pub fn pointing_hand(ctx: &egui::Context) {
+    if ctx.output(|o| o.cursor_icon) != egui::CursorIcon::Default {
+        return;
+    }
+    let skip = ctx.data(|d| d.get_temp::<egui::Id>(egui::Id::unique(NO_HAND)));
+    let hovered: Vec<egui::Id> = ctx.interaction_snapshot(|s| s.hovered.iter().copied().collect());
+    let clickable = hovered
+        .into_iter()
+        .filter(|id| Some(*id) != skip)
+        .any(|id| ctx.read_response(id).is_some_and(|r| r.sense.senses_click() && r.enabled()));
+    if clickable {
+        ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+}

@@ -169,6 +169,8 @@ impl Shell {
         painter.rect_filled(menu, 0.0, p.sand);
         let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
         let bar = ui.interact(menu, ui.scope_id().with("title-bar"), Sense::click_and_drag());
+        // the title bar is clickable (double click) but drags the window: no hand over it
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(crate::widgets::NO_HAND), bar.id));
         if bar.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }

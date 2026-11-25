@@ -711,5 +711,7 @@ impl Window {
             }
             ui.ctx().request_repaint();
         }
+        // anything clickable under the pointer shows the hand, wherever a view did not choose a cursor itself
+        crate::widgets::pointing_hand(ui.ctx());
     }
 }
