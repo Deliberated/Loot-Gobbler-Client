@@ -370,25 +370,26 @@ pub fn badge(painter: &Painter, ctx: &egui::Context, icons: &mut Icons, data: &G
 
 /// The mana bar (Java `ManaBar`): 170 x 22, filled as far as your mana goes, "MP points / maximum" on it.
 pub fn mana_bar(painter: &Painter, at: Pos2, mp: i32, max: i32) -> egui::Vec2 {
-    let size = vec2(170.0, 22.0);
+    // as the Java app's shows: a softer blue, rounder, a little bigger, the text a cool light grey
+    let size = vec2(176.0, 24.0);
     let r = Rect::from_min_size(at, size - vec2(1.0, 1.0));
-    painter.rect_filled(r, 3.0, Color32::from_rgb(0x16, 0x1B, 0x30));
+    painter.rect_filled(r, 5.0, Color32::from_rgb(0x16, 0x1B, 0x30));
     let share = if max <= 0 { 0.0 } else { (f64::from(mp) / f64::from(max)).clamp(0.0, 1.0) };
     let fw = (f64::from(r.width()) * share).round() as f32;
     if fw > 0.0 {
         gradient_round_rect(
             painter,
             Rect::from_min_size(r.min, vec2(fw, r.height())),
-            3.0,
-            Color32::from_rgb(0x4C, 0x86, 0xF0),
-            Color32::from_rgb(0x1E, 0x4C, 0xB8),
+            5.0,
+            Color32::from_rgb(0x5A, 0x7C, 0xDC),
+            Color32::from_rgb(0x3A, 0x58, 0xBC),
         );
     }
     let t = format!("MP {} / {}", mp.max(0), max.max(0));
     let f = font(18.0);
     let c = at + size / 2.0;
     jtext::draw_bold(painter, c + vec2(1.0, 1.0), Align2::CENTER_CENTER, &t, &f, Color32::from_black_alpha(150));
-    jtext::draw_bold(painter, c, Align2::CENTER_CENTER, &t, &f, TEXT);
+    jtext::draw_bold(painter, c, Align2::CENTER_CENTER, &t, &f, Color32::from_rgb(0xDC, 0xE0, 0xEE));
     size
 }
 

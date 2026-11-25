@@ -11,6 +11,10 @@ use lg_app::App;
 use lg_app::properties::Properties;
 use std::collections::HashMap;
 
+/// Room around what an overlay draws, inside its window: soft edges and outlines stay whole (at the border they were
+/// cut flat).
+const PAD: f32 = 2.0;
+
 const OVERLAYS: [(&str, &str); 4] =
     [("dungeon", "Not in a dungeon"), ("mana", "No character"), ("dps", "No boss fight"), ("buffs", "No cooldowns running")];
 const MATRIX_COOLDOWN_MS: i64 = 180_000;
@@ -149,7 +153,7 @@ fn content(
     now: i64,
 ) -> Option<Vec2> {
     let data = app.world.data();
-    let at = pos2(0.0, 0.0);
+    let at = pos2(PAD, PAD);
     match id {
         "dungeon" => {
             let v = app.dungeon_visits.current.as_ref()?;
@@ -283,14 +287,15 @@ impl OverlayWindows {
                 let got = content(id, &painter, &vctx, icons, app, props, now);
                 new_size = match got {
                     Some(s) => s,
-                    None => idle(&painter, pos2(0.0, 0.0), idle_text),
-                };
+                    None => idle(&painter, pos2(PAD, PAD), idle_text),
+                } + egui::vec2(2.0 * PAD, 2.0 * PAD);
                 // dragging anywhere moves it; where it is let go is kept
                 let resp =
                     ui.interact(Rect::from_min_size(Pos2::ZERO, new_size), ui.scope_id().with("drag"), egui::Sense::click_and_drag());
                 // the system moves it from the press on, so it stays where it was grabbed (from the drag's start it
                 // lagged the few pixels moved before)
-                if resp.hovered() && vctx.input(|i| i.pointer.primary_pressed()) {
+                // any press in it: the whole window is the overlay (hover from the frame before could miss it)
+                if vctx.input(|i| i.pointer.primary_pressed()) {
                     vctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
                 if resp.drag_stopped() || resp.clicked() {
