@@ -11,9 +11,9 @@ pub const TABS: [&str; 9] = ["Profile", "Inventory", "Characters", "Game Modes",
 /// Height of the menu bar, the tab row (without its bottom line) and the status bar.
 const MENU_H: f32 = 44.0; // as tall as Java's FlatLaf title bar
 const TAB_H: f32 = 46.0;
-/// The focus line above the tabs.
+/// The focus line under the tabs.
 const FOCUS_LINE: f32 = 4.0;
-/// The focus boxes hanging from it: the others, and the one picked (taller, wider, above them).
+/// The focus boxes standing on it: the others, and the one picked (taller, wider, above them).
 const BOX_H: f32 = 34.0;
 const BOX_ON_H: f32 = 44.0;
 const STATUS_H: f32 = 43.0;
@@ -342,9 +342,9 @@ impl Shell {
 
         // the tab row: drag a tab to reorder them; the others glide out of its way (Java `TabBar`)
         self.order_changed = false;
-        // the focus line between the title bar and the tabs: full gold while a focus is on, dimmed without
-        let line = Rect::from_min_size(pos2(all.left(), menu.bottom()), vec2(all.width(), FOCUS_LINE));
-        let row = Rect::from_min_size(pos2(all.left(), line.bottom()), vec2(all.width(), TAB_H));
+        // the tabs right under the title bar; under them the focus line: full gold while a focus is on, dimmed without
+        let row = Rect::from_min_size(pos2(all.left(), menu.bottom()), vec2(all.width(), TAB_H));
+        let line = Rect::from_min_size(pos2(all.left(), row.bottom()), vec2(all.width(), FOCUS_LINE));
         painter.rect_filled(row, 0.0, p.sand);
         let font = theme::head(17.0);
         let widths: Vec<f32> = self.order.iter().map(|t| text_width(ui, &t.to_uppercase(), &font) + s(26.0)).collect();
@@ -445,7 +445,6 @@ impl Shell {
                 self.selected = title.clone();
             }
         }
-        painter.rect_filled(Rect::from_min_size(pos2(all.left(), row.bottom()), vec2(all.width(), 1.0)), 0.0, p.line);
         // the notifications bell at the right end of the tab row
         let bell = Rect::from_min_size(pos2(row.right() - 36.0, row.top()), vec2(36.0, TAB_H));
         let bell_resp = ui.interact(bell, ui.scope_id().with("bell"), Sense::click());
@@ -463,7 +462,7 @@ impl Shell {
             painter.circle_filled(pos2(x + 4.0, y + 4.0), 6.0, p.sand);
             painter.circle_filled(pos2(x + 4.0, y + 4.0), 4.0, Color32::from_rgb(0xE5, 0x48, 0x4D));
         }
-        self.focus_row(ui, p, line, row, bell.left() - 6.0);
+        self.focus_row(ui, p, line, bell.left() - 6.0);
         if self.bell_open {
             // Java's popup menu under the bell, its right edge at the bell's
             let area = egui::Area::new(egui::Id::unique("bell-menu"))
@@ -597,7 +596,7 @@ impl Shell {
         // a build from source until the app is released (Java `stable`)
         crate::widgets::tip(ui, vr, "version-tip", "Development build (run from source, not a published release)");
 
-        let content = Rect::from_min_max(pos2(all.left(), row.bottom() + 1.0), pos2(all.right(), bar.top()));
+        let content = Rect::from_min_max(pos2(all.left(), line.bottom()), pos2(all.right(), bar.top()));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(content));
         child.set_clip_rect(content);
         view(&mut child, &self.selected.clone());
@@ -633,15 +632,15 @@ fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgba_premultiplied(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()), m(a.a(), b.a()))
 }
 
-/// A box hanging from the focus line: square at the top (cut at `top`), rounded below; with `shadow` it is raised.
-fn hanging(painter: &egui::Painter, r: Rect, top: f32, fill: Color32, stroke: Stroke, shadow: f32) {
-    let clip = painter.with_clip_rect(Rect::from_min_max(pos2(r.left() - 12.0, top), pos2(r.right() + 12.0, r.bottom() + 12.0)));
-    let round = egui::CornerRadius { nw: 0, ne: 0, sw: 8, se: 8 };
-    let shape = Rect::from_min_max(pos2(r.left(), top - 10.0), r.max);
+/// A box standing on the focus line: square at the bottom (cut at `base`), rounded above; with `shadow` it is raised.
+fn standing(painter: &egui::Painter, r: Rect, base: f32, fill: Color32, stroke: Stroke, shadow: f32) {
+    let clip = painter.with_clip_rect(Rect::from_min_max(pos2(r.left() - 12.0, r.top() - 12.0), pos2(r.right() + 12.0, base)));
+    let round = egui::CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 };
+    let shape = Rect::from_min_max(r.min, pos2(r.right(), base + 10.0));
     for i in (1..=6).rev() {
         let a = (shadow * 70.0 * (1.0 - (i - 1) as f32 / 6.0)).round() as u8;
         if a > 0 {
-            clip.rect_filled(shape.translate(vec2(0.0, 2.0)).expand(i as f32), round, Color32::from_black_alpha(a / 3));
+            clip.rect_filled(shape.translate(vec2(0.0, -2.0)).expand(i as f32), round, Color32::from_black_alpha(a / 3));
         }
     }
     clip.rect(shape, round, fill, stroke, StrokeKind::Inside);
@@ -670,9 +669,9 @@ fn paint_door(painter: &egui::Painter, c: Pos2, open: bool, ink: Color32, fill: 
 }
 
 impl Shell {
-    /// The focus line, and hanging from it before `right` (the bell) the focus boxes, the door tucked behind the one
+    /// The focus line, and standing on it before `right` (the bell) the focus boxes, the door tucked behind the one
     /// picked (the first without a focus); the one picked taller, wider and above the others.
-    fn focus_row(&mut self, ui: &Ui, p: &Palette, line: Rect, row: Rect, right: f32) {
+    fn focus_row(&mut self, ui: &Ui, p: &Palette, line: Rect, right: f32) {
         const OVERLAP: f32 = 8.0;
         const DOOR_VIS: f32 = 34.0;
         const TUCK: f32 = 14.0;
@@ -695,7 +694,8 @@ impl Shell {
         if self.focus_boxes.is_empty() {
             return;
         }
-        let top = row.top();
+        // the boxes stand on the line (their bottom at its top)
+        let base = line.top();
         // each box: how far it is the one picked (animated), its sizes and width
         struct Laid {
             t: f32,
@@ -733,18 +733,18 @@ impl Shell {
         }
         let door_x = ctx.animate_value_with_time(ui.scope_id().with("focus-door-x"), door_x, 0.15);
         // the door, behind them all: its visible part left of the box it belongs to, the icon in its middle
-        let door_r = Rect::from_min_max(pos2(door_x - if anchor > 0 { OVERLAP } else { 0.0 }, top), pos2(xs[anchor] + TUCK, top + BOX_H));
+        let door_r = Rect::from_min_max(pos2(door_x - if anchor > 0 { OVERLAP } else { 0.0 }, base - BOX_H), pos2(xs[anchor] + TUCK, base));
         let door_resp = ui
             .interact(
-                Rect::from_min_max(pos2(door_x, top), pos2(xs[anchor], top + BOX_H)),
+                Rect::from_min_max(pos2(door_x, base - BOX_H), pos2(xs[anchor], base)),
                 ui.scope_id().with("focus-door"),
                 Sense::click(),
             )
             .on_hover_text(if on.is_some() { "Leave the focus: everything shown as before" } else { "No focus: everything is shown" });
         let door_ink = if on.is_some() { if door_resp.hovered() { p.gold_hover } else { p.gold } } else { fixed::MUTED };
         let door_edge = if on.is_some() { p.gold } else { p.gold.gamma_multiply(0.45) };
-        hanging(&painter, door_r, top, mix(p.sand, p.header, 0.35), Stroke::new(1.5, door_edge), 0.0);
-        paint_door(&painter, pos2((door_x + xs[anchor]) / 2.0, top + BOX_H / 2.0), on.is_some(), door_ink, p.header);
+        standing(&painter, door_r, base, mix(p.sand, p.header, 0.35), Stroke::new(1.5, door_edge), 0.0);
+        paint_door(&painter, pos2((door_x + xs[anchor]) / 2.0, base - BOX_H / 2.0), on.is_some(), door_ink, p.header);
         if on.is_some() && door_resp.clicked() {
             self.clicked_focus = Some(None);
         }
@@ -754,14 +754,14 @@ impl Shell {
         for i in order {
             let (b, l) = (&self.focus_boxes[i], &laid[i]);
             let h = BOX_H + (BOX_ON_H - BOX_H) * l.t;
-            let r = Rect::from_min_size(pos2(xs[i], top), vec2(l.w, h));
+            let r = Rect::from_min_size(pos2(xs[i], base - h), vec2(l.w, h));
             let picked = on == Some(b.id);
             let resp = ui
                 .interact(r, ui.scope_id().with(("focus-box-click", b.id)), Sense::click())
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
             let resp = if picked { resp.on_hover_text("The focus") } else { resp.on_hover_text(format!("Focus on this {}", b.sub)) };
             let edge = mix(p.gold.gamma_multiply(if resp.hovered() { 0.8 } else { 0.45 }), p.gold, l.t);
-            hanging(&painter, r, top, mix(mix(p.sand, p.header, 0.5), p.header, l.t), Stroke::new(1.5 + 1.0 * l.t, edge), l.t);
+            standing(&painter, r, base, mix(mix(p.sand, p.header, 0.5), p.header, l.t), Stroke::new(1.5 + 1.0 * l.t, edge), l.t);
             let ir = Rect::from_min_size(pos2(r.left() + 6.0, r.center().y - l.icon / 2.0), vec2(l.icon, l.icon));
             if let Some(t) = b.icon {
                 painter.image(
