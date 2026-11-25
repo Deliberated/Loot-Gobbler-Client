@@ -82,6 +82,10 @@ pub struct Shell {
     pub focus_boxes: Vec<FocusBox>,
     pub focus_on: Option<i32>,
     pub clicked_focus: Option<Option<i32>>,
+    /// A focus box being dragged to another place: its id and where it was grabbed (from its left edge).
+    focus_drag: Option<(i32, f32)>,
+    /// The boxes' new order after a drag ended (their ids), this frame.
+    pub focus_order: Option<Vec<i32>>,
 }
 
 /// One focus in the row under the line: a run's character.
@@ -128,6 +132,8 @@ impl Default for Shell {
             focus_boxes: Vec::new(),
             focus_on: None,
             clicked_focus: None,
+            focus_drag: None,
+            focus_order: None,
         }
     }
 }
@@ -151,6 +157,7 @@ impl Shell {
         self.clicked_notification = None;
         self.clicked_info = None;
         self.clicked_focus = None;
+        self.focus_order = None;
         let all = ui.max_rect();
         let painter = ui.painter().clone();
         painter.rect_filled(all, 0.0, p.sand);
@@ -716,28 +723,47 @@ impl Shell {
                 Laid { t, icon, w: 6.0 + icon + 8.0 + tw + 12.0 + 4.0 * t, title, sub }
             })
             .collect();
-        // the door always at the left, before the first box
-        let anchor = 0;
+        // all at the right end, the door at their left; a box dragged follows the pointer, the others make room
         let total = DOOR_VIS + laid.iter().map(|l| l.w).sum::<f32>() - OVERLAP * (laid.len() - 1) as f32;
-        let mut x = right - total;
-        let mut xs = Vec::with_capacity(laid.len());
-        let mut door_x = x;
-        for (i, l) in laid.iter().enumerate() {
-            if i == anchor {
-                door_x = x;
-                x += DOOR_VIS;
+        let start = right - total;
+        let door_x = start;
+        let mut seq: Vec<usize> = (0..laid.len()).collect();
+        let pointer = ui.input(|i| i.pointer.interact_pos());
+        let dragged = self.focus_drag.and_then(|(id, grab)| self.focus_boxes.iter().position(|b| b.id == id).map(|i| (i, grab)));
+        let mut drag_left = None;
+        if let (Some((di, grab)), Some(q)) = (dragged, pointer) {
+            let left = (q.x - grab).clamp(start + DOOR_VIS - laid[di].w / 2.0, right - laid[di].w / 2.0);
+            drag_left = Some(left);
+            // its new place: before the first other box whose middle is right of its own middle
+            seq.retain(|i| *i != di);
+            let mid = left + laid[di].w / 2.0;
+            let mut x = start + DOOR_VIS;
+            let mut k = seq.len();
+            for (n, &i) in seq.iter().enumerate() {
+                if x + laid[i].w / 2.0 > mid {
+                    k = n;
+                    break;
+                }
+                x += laid[i].w - OVERLAP;
             }
-            // gliding to its place when the door moves
-            let gx = ctx.animate_value_with_time(ui.scope_id().with(("focus-x", self.focus_boxes[i].id)), x, 0.15);
-            xs.push(gx);
-            x += l.w - OVERLAP;
+            seq.insert(k, di);
         }
-        let door_x = ctx.animate_value_with_time(ui.scope_id().with("focus-door-x"), door_x, 0.15);
+        let mut xs = vec![0.0; laid.len()];
+        let mut x = start + DOOR_VIS;
+        for &i in &seq {
+            let id = ui.scope_id().with(("focus-x", self.focus_boxes[i].id));
+            // gliding to its place; the one dragged right under the pointer
+            xs[i] = match (dragged, drag_left) {
+                (Some((di, _)), Some(left)) if di == i => ctx.animate_value_with_time(id, left, 0.0),
+                _ => ctx.animate_value_with_time(id, x, 0.15),
+            };
+            x += laid[i].w - OVERLAP;
+        }
         // the door, behind them all: its visible part left of the box it belongs to, the icon in its middle
-        let door_r = Rect::from_min_max(pos2(door_x - if anchor > 0 { OVERLAP } else { 0.0 }, base - BOX_H), pos2(xs[anchor] + TUCK, base));
+        let door_r = Rect::from_min_max(pos2(door_x, base - BOX_H), pos2(door_x + DOOR_VIS + TUCK, base));
         let door_resp = ui
             .interact(
-                Rect::from_min_max(pos2(door_x, base - BOX_H), pos2(xs[anchor], base)),
+                Rect::from_min_max(pos2(door_x, base - BOX_H), pos2(door_x + DOOR_VIS, base)),
                 ui.scope_id().with("focus-door"),
                 Sense::click(),
             )
@@ -745,22 +771,43 @@ impl Shell {
         let door_ink = if on.is_some() { if door_resp.hovered() { p.gold_hover } else { p.gold } } else { fixed::MUTED };
         let door_edge = if on.is_some() { p.gold } else { p.gold.gamma_multiply(0.45) };
         standing(&painter, door_r, base, mix(p.sand, p.header, 0.35), Stroke::new(1.5, door_edge), 0.0);
-        paint_door(&painter, pos2((door_x + xs[anchor]) / 2.0, base - BOX_H / 2.0), on.is_some(), door_ink, p.header);
+        paint_door(&painter, pos2(door_x + DOOR_VIS / 2.0, base - BOX_H / 2.0), on.is_some(), door_ink, p.header);
         if on.is_some() && door_resp.clicked() {
             self.clicked_focus = Some(None);
         }
-        // the boxes left to right, each over the one before; the one picked last, above them all
-        let mut order: Vec<usize> = (0..laid.len()).filter(|i| on != Some(self.focus_boxes[*i].id)).collect();
-        order.extend((0..laid.len()).filter(|i| on == Some(self.focus_boxes[*i].id)));
+        // the boxes left to right, each over the one before; the one picked above them, the one dragged on top
+        let drag_i = dragged.map(|(i, _)| i);
+        let mut order: Vec<usize> = seq.iter().copied().filter(|i| on != Some(self.focus_boxes[*i].id) && Some(*i) != drag_i).collect();
+        order.extend(seq.iter().copied().filter(|i| on == Some(self.focus_boxes[*i].id) && Some(*i) != drag_i));
+        order.extend(drag_i);
+        let ids: Vec<i32> = seq.iter().map(|i| self.focus_boxes[*i].id).collect();
         for i in order {
             let (b, l) = (&self.focus_boxes[i], &laid[i]);
             let h = BOX_H + (BOX_ON_H - BOX_H) * l.t;
             let r = Rect::from_min_size(pos2(xs[i], base - h), vec2(l.w, h));
             let picked = on == Some(b.id);
             let resp = ui
-                .interact(r, ui.scope_id().with(("focus-box-click", b.id)), Sense::click())
+                .interact(r, ui.scope_id().with(("focus-box-click", b.id)), Sense::click_and_drag())
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
-            let resp = if picked { resp.on_hover_text("The focus") } else { resp.on_hover_text(format!("Focus on this {}", b.sub)) };
+            // drag it sideways to give it another place in the row
+            if resp.drag_started()
+                && let Some(q) = pointer
+            {
+                self.focus_drag = Some((b.id, q.x - r.left()));
+            }
+            if resp.dragged() {
+                ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+                ctx.request_repaint();
+            }
+            if resp.drag_stopped() && self.focus_drag.is_some_and(|(id, _)| id == b.id) {
+                self.focus_drag = None;
+                self.focus_order = Some(ids.clone());
+            }
+            let resp = if picked {
+                resp.on_hover_text("The focus (drag to move it)")
+            } else {
+                resp.on_hover_text(format!("Focus on this {} (drag to move it)", b.sub))
+            };
             let edge = mix(p.gold.gamma_multiply(if resp.hovered() { 0.8 } else { 0.45 }), p.gold, l.t);
             standing(&painter, r, base, mix(mix(p.sand, p.header, 0.5), p.header, l.t), Stroke::new(1.5 + 1.0 * l.t, edge), l.t);
             let ir = Rect::from_min_size(pos2(r.left() + 6.0, r.center().y - l.icon / 2.0), vec2(l.icon, l.icon));

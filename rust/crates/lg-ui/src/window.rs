@@ -514,6 +514,9 @@ impl Window {
                 icon: self.icons.skin(ui.ctx(), data, skin, ch.tex1, ch.tex2, 72).map(|t| t.id()),
             });
         }
+        // in the order they were dragged into (the ones not placed yet after them, as they come)
+        let placed: Vec<i32> = self.props.get("focusOrder").unwrap_or("").split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        self.shell.focus_boxes.sort_by_key(|b| placed.iter().position(|id| *id == b.id).unwrap_or(usize::MAX));
         self.shell.focus_on = crate::focus::focused_char(app, &self.props).map(|c| c.char_id);
         let Window { shell, icons, en, loadout, props, profile, characters, inventory, game_modes, battles, social, guild, asks, .. } =
             self;
@@ -567,6 +570,9 @@ impl Window {
             if let Some(v) = &app.dungeon_visits.current {
                 self.battles.selected = v.start;
             }
+        }
+        if let Some(ids) = self.shell.focus_order.take() {
+            self.asks.push(Ask::Set("focusOrder".into(), crate::focus::chars_value(&ids)));
         }
         if let Some(pick) = self.shell.clicked_focus {
             self.asks.push(Ask::Set(crate::focus::KEY.into(), crate::focus::value_for(app, pick)));
