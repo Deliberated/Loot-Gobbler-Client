@@ -37,8 +37,6 @@ pub struct InventoryView {
     pub st_class: Option<String>,
     /// The ST set clicked on its card: the side shows what forging its missing pieces takes (its name).
     pub st_selected: Option<String>,
-    /// The key clicked on the Keys page: the side shows where each copy is.
-    pub key_selected: Option<i32>,
     /// The item whose history replaces the Recent list (Java `historyItem`).
     pub history: Option<i32>,
     /// An item opened from another tab, to be scrolled to and pulsed once the grid is drawn (Java `showItem`).
@@ -943,16 +941,20 @@ impl InventoryView {
 
 impl InventoryView {
     /// The Log page: every item you hold, newest find first: when first found, what, how many (Java `logView`).
-    /// Inventory > Keys: every dungeon key you hold (an item labelled KEY), on your characters and in your vaults,
-    /// most held first; a click shows where each copy is. With a character picked in the column, only its keys.
+    /// Inventory > Keys: every dungeon key and mystery key you hold, on your characters and in your vaults, the
+    /// regular side and the seasonal one apart (a gold bar over each, as Battles' days), most held first; each card
+    /// says where its copies are. With a character picked in the column, only its keys.
     fn keys(&mut self, ui: &mut Ui, c: &mut Ctx, body: Rect) {
         const CARD_MIN_WIDTH: f32 = 250.0;
         const GAP: f32 = 8.0;
+        const PLACES: usize = 4;
         let p = *c.p;
         let app = c.app;
         let data = app.world.data();
+        let is_key =
+            |id: i32| data.items.item(id).is_some_and(|i| i.labels.contains("KEY") || i.name.to_lowercase().ends_with("mystery key"));
         let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
-        let mut copies = app.holdings.copies_of(&living, |id| data.items.item(id).is_some_and(|i| i.labels.contains("KEY")));
+        let mut copies = app.holdings.copies_of(&living, is_key);
         if self.upe_char != 0 {
             for v in copies.values_mut() {
                 v.retain(|h| h.char_id == self.upe_char);
@@ -960,18 +962,22 @@ impl InventoryView {
             copies.retain(|_, v| !v.is_empty());
         }
         let name = |id: i32| data.items.item(id).map_or(format!("Item {id}"), |i| i.name.clone());
-        let mut keys: Vec<(i32, Vec<lg_app::loadout::Held>)> = copies.into_iter().collect();
-        keys.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(name(a.0).cmp(&name(b.0))));
-        if self.key_selected.is_some_and(|k| !keys.iter().any(|(id, _)| *id == k)) {
-            self.key_selected = None;
-        }
+        // per side: each key with that side's copies (a place whose side is not known counts as regular)
+        let side_of = |seasonal: bool| {
+            let mut keys: Vec<(i32, Vec<lg_app::loadout::Held>)> = copies
+                .iter()
+                .map(|(id, held)| (*id, held.iter().filter(|h| (h.seasonal == Some(true)) == seasonal).cloned().collect::<Vec<_>>()))
+                .filter(|(_, held)| !held.is_empty())
+                .collect();
+            keys.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(name(a.0).cmp(&name(b.0))));
+            keys
+        };
+        let groups = [("Regular", side_of(false)), ("Seasonal", side_of(true))];
         let overhead = 2.0 + 12.0;
         let base = overhead + 20.0 - GAP;
         let (main, side) = widgets::side_split(ui, c.p, c.props, "keys", body, 280.0, 220.0, 200.0, Some((base, CARD_MIN_WIDTH + GAP)));
-        let cols = (((main.width() - base + 0.001) / (CARD_MIN_WIDTH + GAP)).floor()).max(1.0);
+        let cols = (((main.width() - base + 0.001) / (CARD_MIN_WIDTH + GAP)).floor()).max(1.0) as usize;
         let icons = &mut *c.icons;
-        let selected = self.key_selected;
-        let mut pick: Option<Option<i32>> = None;
         let title = if self.upe_char != 0 {
             app.characters.get(self.upe_char).map_or("Keys".to_string(), |ch| format!("Keys · {}", ch.class_name))
         } else {
@@ -988,84 +994,113 @@ impl InventoryView {
                 egui::ScrollArea::vertical().id_salt("keys").show(ui, |ui| {
                     let top = ui.cursor().min;
                     let painter = ui.painter().clone();
-                    let cw = ((r.width() - 12.0 - 20.0 - (cols - 1.0) * GAP) / cols).floor();
-                    let lh = jtext::height(&painter, &text(18.0));
-                    let ch = 8.0 + 40.0 + 8.0;
-                    if keys.is_empty() {
+                    let x = top.x + 10.0;
+                    let full = r.width() - 12.0 - 20.0;
+                    let cw = ((full - (cols as f32 - 1.0) * GAP) / cols as f32).floor();
+                    let (f18, f16) = (text(18.0), text(16.0));
+                    let (lh, lh16) = (jtext::height(&painter, &f18), jtext::height(&painter, &f16));
+                    let mut y = top.y + 4.0;
+                    if groups.iter().all(|(_, k)| k.is_empty()) {
                         let msg = if app.holdings.known() {
-                            "No dungeon keys on your characters or in your vaults."
+                            "No keys on your characters or in your vaults."
                         } else {
                             "Shown once Loot Gobbler has seen your characters (log in) and your vault."
                         };
-                        jtext::draw(&painter, top + vec2(10.0, 10.0), Align2::LEFT_TOP, msg, &text(18.0), fixed::MUTED);
+                        jtext::draw(&painter, pos2(x, y + 6.0), Align2::LEFT_TOP, msg, &f18, fixed::MUTED);
                     }
-                    for (i, (id, held)) in keys.iter().enumerate() {
-                        let (col, row) = (i as f32 % cols, (i as f32 / cols).floor());
-                        let cr = Rect::from_min_size(pos2(top.x + 10.0 + col * (cw + GAP), top.y + 10.0 + row * (ch + GAP)), vec2(cw, ch));
-                        let on = selected == Some(*id);
-                        let resp = ui
-                            .interact(cr, ui.scope_id().with(("key-card", *id)), Sense::click())
-                            .on_hover_cursor(egui::CursorIcon::PointingHand);
-                        painter.rect_filled(cr, 0.0, if on { mix(p.gold, p.paper, 0.6) } else { p.header });
-                        painter.rect_stroke(
-                            cr,
-                            0.0,
-                            Stroke::new(
-                                if on || resp.hovered() { 2.0 } else { 1.0 },
-                                if on || resp.hovered() { p.gold } else { Color32::BLACK },
-                            ),
-                            StrokeKind::Inside,
+                    for (label, keys) in &groups {
+                        if keys.is_empty() {
+                            continue;
+                        }
+                        // the group's bar, as a day in Battles: its name in gold, a gold line under it
+                        let n: usize = keys.iter().map(|(_, h)| h.len()).sum();
+                        y += 6.0;
+                        let t = jtext::draw(&painter, pos2(x + 6.0, y), Align2::LEFT_TOP, label, &f18, p.gold);
+                        jtext::draw(
+                            &painter,
+                            pos2(t.right() + 10.0, t.center().y),
+                            Align2::LEFT_CENTER,
+                            &format!("{n} key{}", if n == 1 { "" } else { "s" }),
+                            &f16,
+                            fixed::MUTED,
                         );
-                        if let Some(t) = icons.object(ui.ctx(), data, *id, 40) {
-                            painter.image(
-                                t.id(),
-                                Rect::from_min_size(pos2(cr.left() + 8.0, cr.top() + 8.0), vec2(40.0, 40.0)),
-                                uv(),
-                                Color32::WHITE,
-                            );
-                        }
-                        // the count at the right, the name and where they are (vault / characters, seasonal) beside the icon
-                        let count = format!("{}", held.len());
-                        let cf = widgets::head_px(30.0);
-                        let cwid = jtext::width(&painter, &count, &cf);
-                        jtext::draw(&painter, pos2(cr.right() - 10.0, cr.center().y), Align2::RIGHT_CENTER, &count, &cf, p.gold);
-                        let tx = cr.left() + 8.0 + 40.0 + 10.0;
-                        let room = cr.right() - 10.0 - cwid - 10.0 - tx;
-                        let nm = widgets::fit(&painter, &name(*id), &text(18.0), room);
-                        jtext::draw(&painter, pos2(tx, cr.top() + 8.0), Align2::LEFT_TOP, &nm, &text(18.0), p.ink);
-                        let vault = held.iter().filter(|h| h.char_id == 0).count();
-                        let chars = held.len() - vault;
-                        let seasonal = held.iter().filter(|h| h.seasonal == Some(true)).count();
-                        let mut parts = Vec::new();
-                        if vault > 0 {
-                            parts.push(format!("{vault} in vault"));
-                        }
-                        if chars > 0 {
-                            parts.push(format!("{chars} on characters"));
-                        }
-                        if seasonal > 0 {
-                            parts.push(format!("{seasonal} seasonal"));
-                        }
-                        let sub = widgets::fit(&painter, &parts.join(" · "), &text(16.0), room);
-                        jtext::draw(&painter, pos2(tx, cr.top() + 8.0 + lh), Align2::LEFT_TOP, &sub, &text(16.0), fixed::MUTED);
-                        if resp.clicked() {
-                            pick = Some(if on { None } else { Some(*id) });
+                        y = t.bottom() + 4.0;
+                        painter.rect_filled(Rect::from_min_size(pos2(x + 4.0, y), vec2(full - 8.0, 2.0)), 0.0, p.gold);
+                        y += 2.0 + 10.0;
+                        // a key's places, the same ones together: "3x Vault · Gift chest"
+                        let places = |held: &[lg_app::loadout::Held]| {
+                            let mut out: Vec<(String, usize)> = Vec::new();
+                            for h in held {
+                                let pl = place_of(app, h);
+                                match out.iter_mut().find(|(x, _)| *x == pl) {
+                                    Some(e) => e.1 += 1,
+                                    None => out.push((pl, 1)),
+                                }
+                            }
+                            out
+                        };
+                        for row in keys.chunks(cols) {
+                            let lines = |held: &[lg_app::loadout::Held]| {
+                                let n = places(held).len();
+                                n.min(PLACES) + usize::from(n > PLACES)
+                            };
+                            let most = row.iter().map(|(_, h)| lines(h)).max().unwrap_or(0) as f32;
+                            let ch = 8.0 + (lh + 2.0 + most * lh16).max(40.0) + 8.0;
+                            for (k, (id, held)) in row.iter().enumerate() {
+                                let cr = Rect::from_min_size(pos2(x + k as f32 * (cw + GAP), y), vec2(cw, ch));
+                                painter.rect_filled(cr, 0.0, p.header);
+                                painter.rect_stroke(cr, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
+                                if let Some(t) = icons.object(ui.ctx(), data, *id, 40) {
+                                    painter.image(
+                                        t.id(),
+                                        Rect::from_min_size(pos2(cr.left() + 8.0, cr.top() + 8.0), vec2(40.0, 40.0)),
+                                        uv(),
+                                        Color32::WHITE,
+                                    );
+                                }
+                                // the count at the right, the name, and below it where the copies are
+                                let count = held.len().to_string();
+                                let cf = widgets::head_px(30.0);
+                                let cwid = jtext::width(&painter, &count, &cf);
+                                jtext::draw(&painter, pos2(cr.right() - 10.0, cr.top() + 8.0), Align2::RIGHT_TOP, &count, &cf, p.gold);
+                                let tx = cr.left() + 8.0 + 40.0 + 10.0;
+                                let room = cr.right() - 10.0 - cwid - 10.0 - tx;
+                                let nm = widgets::fit(&painter, &name(*id), &f18, room);
+                                jtext::draw(&painter, pos2(tx, cr.top() + 8.0), Align2::LEFT_TOP, &nm, &f18, p.ink);
+                                let mut ly = cr.top() + 8.0 + lh + 2.0;
+                                let place_room = room;
+                                let pl = places(held);
+                                for (place, n) in pl.iter().take(PLACES) {
+                                    let s = if *n > 1 { format!("{n}x {place}") } else { place.clone() };
+                                    let line = widgets::fit(&painter, &s, &f16, place_room);
+                                    jtext::draw(&painter, pos2(tx, ly), Align2::LEFT_TOP, &line, &f16, fixed::MUTED);
+                                    ly += lh16;
+                                }
+                                if pl.len() > PLACES {
+                                    let rest: usize = pl.iter().skip(PLACES).map(|(_, n)| n).sum();
+                                    let more = format!("and {rest} more elsewhere");
+                                    jtext::draw(&painter, pos2(tx, ly), Align2::LEFT_TOP, &more, &f16, fixed::MUTED);
+                                }
+                                widgets::tip(ui, cr, ("key-card", *id, *label), &name(*id));
+                            }
+                            y += ch + GAP;
                         }
                     }
-                    let rows = (keys.len() as f32 / cols).ceil();
-                    ui.allocate_exact_size(vec2(r.width() - 12.0, 20.0 + rows * (ch + GAP)), Sense::hover());
+                    ui.allocate_exact_size(vec2(r.width() - 12.0, y + 10.0 - top.y), Sense::hover());
                 });
             },
         );
-        if let Some(k) = pick {
-            self.key_selected = k;
-        }
-        // the side: how many, then where the key clicked is
+        // the side: how many, per side
         let painter = ui.painter().clone();
         let lh = jtext::height(&painter, &text(18.0));
         let head = widgets::section_head_height(&painter);
-        let total: usize = keys.iter().map(|(_, h)| h.len()).sum();
-        let sum = Rect::from_min_size(side.min, vec2(side.width(), head + 2.0 + 16.0 + 2.0 * (lh + 2.0)));
+        let rows: Vec<(String, usize)> = groups
+            .iter()
+            .flat_map(|(label, keys)| {
+                [(format!("{label} keys"), keys.iter().map(|(_, h)| h.len()).sum()), (format!("{label} kinds"), keys.len())]
+            })
+            .collect();
+        let sum = Rect::from_min_size(side.min, vec2(side.width(), head + 2.0 + 16.0 + rows.len() as f32 * (lh + 2.0)));
         widgets::section(
             ui,
             &p,
@@ -1076,40 +1111,10 @@ impl InventoryView {
             |ui, r| {
                 let painter = ui.painter();
                 let (x, mut y) = (r.left() + 10.0, r.top() + 8.0);
-                for (label, n) in [("Keys", total), ("Kinds", keys.len())] {
+                for (label, n) in &rows {
                     jtext::draw(painter, pos2(x, y), Align2::LEFT_TOP, label, &text(18.0), p.ink_soft);
                     jtext::draw(painter, pos2(r.right() - 22.0, y), Align2::RIGHT_TOP, &n.to_string(), &text(18.0), p.ink);
                     y += lh + 2.0;
-                }
-            },
-        );
-        let wr = Rect::from_min_max(pos2(side.left(), sum.bottom() + 8.0), side.max);
-        let chosen = self.key_selected.and_then(|k| keys.iter().find(|(id, _)| *id == k));
-        let icons = &mut *c.icons;
-        widgets::section(
-            ui,
-            &p,
-            wr,
-            "Where They Are",
-            fixed::BLUE,
-            |_, _| {},
-            |ui, r| {
-                let painter = ui.painter().clone();
-                let (x, mut y) = (r.left() + 10.0, r.top() + 8.0);
-                let Some((id, held)) = chosen else {
-                    jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, "Click a key to see where it is.", &text(18.0), fixed::MUTED);
-                    return;
-                };
-                if let Some(t) = icons.object(ui.ctx(), data, *id, 28) {
-                    painter.image(t.id(), Rect::from_min_size(pos2(x, y), vec2(28.0, 28.0)), uv(), Color32::WHITE);
-                }
-                let nm = widgets::fit(&painter, &name(*id), &text(18.0), r.width() - 20.0 - 36.0);
-                jtext::draw(&painter, pos2(x + 36.0, y + 14.0), Align2::LEFT_CENTER, &nm, &text(18.0), p.gold);
-                y += 28.0 + 8.0;
-                for h in held {
-                    let line = widgets::fit(&painter, &format!("· {}", place_of(app, h)), &text(16.0), r.width() - 20.0);
-                    let t = jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, &line, &text(16.0), p.ink);
-                    y = t.bottom() + 2.0;
                 }
             },
         );
