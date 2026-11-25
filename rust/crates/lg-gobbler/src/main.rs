@@ -151,13 +151,28 @@ fn main() -> ExitCode {
     // frames shown as soon as they are drawn: no waiting for the screen's refresh (vsync) and one frame in flight at
     // most, so hover and clicks show at once, as in the Java app. The window only redraws on input and while
     // something moves, so this costs nothing at rest
-    let wgpu_options = eframe::egui_wgpu::WgpuConfiguration {
+    #[allow(unused_mut)]
+    let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration {
         surface: eframe::egui_wgpu::SurfaceConfig {
             present_mode: eframe::wgpu::PresentMode::AutoNoVsync,
             desired_maximum_frame_latency: Some(1),
         },
         ..Default::default()
     };
+    // Windows: DirectX 12 drawing through a DirectComposition visual, the only way there to windows that blend with
+    // what is behind them, so an overlay's opacity makes it see-through (from a plain window's swapchain, or Vulkan's,
+    // a less opaque overlay only got darker). WGPU_BACKEND / WGPU_DX12_PRESENTATION_SYSTEM still choose otherwise.
+    #[cfg(windows)]
+    {
+        let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+        if std::env::var_os("WGPU_BACKEND").is_none() {
+            setup.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
+        }
+        if std::env::var_os("WGPU_DX12_PRESENTATION_SYSTEM").is_none() {
+            setup.instance_descriptor.backend_options.dx12.presentation_system = eframe::wgpu::Dx12SwapchainKind::DxgiFromVisual;
+        }
+        wgpu_options.wgpu_setup = eframe::egui_wgpu::WgpuSetup::CreateNew(setup);
+    }
     let options =
         eframe::NativeOptions { viewport: gui::viewport(&lg_app::properties::Properties::load(&own)), wgpu_options, ..Default::default() };
     // Linux: X11 (XWayland under Wayland), as Java's Swing: only there can the overlays be placed and kept on top
