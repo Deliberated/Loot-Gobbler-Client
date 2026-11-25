@@ -439,7 +439,11 @@ fn recent_exalts(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, most: &
     ui.add_space(4.0);
     // Java `DpsLoggerView.EXALT_STATS`
     const STAT_NAMES: [&str; 8] = ["DEX", "SPD", "VIT", "WIS", "DEF", "ATT", "MP", "HP"];
-    for (id, got) in gained.iter().take(EXALT_CLASSES) {
+    for (k, (id, got)) in gained.iter().take(EXALT_CLASSES).enumerate() {
+        // the characters a little apart from each other
+        if k > 0 {
+            ui.add_space(8.0);
+        }
         let row = ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
             let tex = icons.object(ui.ctx(), data, *id, 32);
@@ -659,7 +663,8 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
         let end = end_of(last).min(tl.to);
         let gained: i64 = group.iter().filter_map(|v| fame_in(points, v.start, end_of(v))).sum();
         let count = if group.len() > 1 { format!("{}x", group.len()) } else { String::new() };
-        let count_w = if count.is_empty() { 0.0 } else { crate::jtext::width(&painter, &count, &count_f) + 2.0 };
+        // the count sits inside the portal: no room needed beside it
+        let count_w = 0.0;
         // the portal's centre where you left, kept clear of the group before it and inside the graph
         let x = tl.x(end, left, right).round().max(last_right + 6.0 + count_w + ICON / 2.0).min(right - ICON / 2.0);
         let (c0, c1) =
@@ -672,8 +677,12 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
         let mut box_r = Rect::from_min_size(pos2(x - ICON / 2.0, y), vec2(ICON, ICON));
         painter.image(icon.id(), box_r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);
         if !count.is_empty() {
-            crate::jtext::draw(&painter, pos2(box_r.left() - count_w, box_r.center().y), egui::Align2::LEFT_CENTER, &count, &count_f, gold);
-            box_r = box_r.union(Rect::from_min_size(pos2(box_r.left() - count_w, y), vec2(count_w, ICON)));
+            // gold in the portal's middle, outlined so it reads on any portal
+            let c = box_r.center();
+            for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (-1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0)] {
+                crate::jtext::draw(&painter, c + vec2(dx, dy), egui::Align2::CENTER_CENTER, &count, &count_f, egui::Color32::BLACK);
+            }
+            crate::jtext::draw(&painter, c, egui::Align2::CENTER_CENTER, &count, &count_f, gold);
         }
         // the guildmates' characters (of all the group's runs), in their look then, side by side right above it
         let mut mates: Vec<(String, i32, i32, i32, i32)> = Vec::new();
