@@ -128,12 +128,17 @@ pub fn gradient_round_rect(painter: &Painter, r: Rect, radius: f32, top: Color32
 /// What the dungeon box shows (Java `OverlayBadge`); all optional parts as the sample shows them.
 pub struct Badge<'a> {
     pub dungeon: &'a str,
+    /// How long you are in the dungeon ("4:12"), between the portal and the rank.
+    pub time: Option<String>,
     pub rank: Option<String>,
     pub amulet: bool,
     /// The matrix armor that fired, while it charges.
     pub matrix: Option<i32>,
     /// Moonlight Village: total flames, whether of the dancers, the latest phase's flames, held (FINAL).
     pub moonlight: Option<(i32, bool, String, bool)>,
+    /// Room kept for the rank and for the procs while they are not there yet (so the box does not jump), as far as
+    /// they are shown at all.
+    pub keep: (bool, bool),
 }
 
 const BADGE_ICON: f32 = 26.0;
@@ -198,6 +203,7 @@ pub fn badge(painter: &Painter, ctx: &egui::Context, icons: &mut Icons, data: &G
     enum Part {
         Portal,
         Sep,
+        Time(String),
         Rank(String),
         Item(i32),
         Total(i32),
@@ -207,6 +213,10 @@ pub fn badge(painter: &Painter, ctx: &egui::Context, icons: &mut Icons, data: &G
         Final,
     }
     let mut parts: Vec<(f32, f32, Part)> = vec![(BADGE_ICON, BADGE_ICON, Part::Portal)];
+    if let Some(t) = &b.time {
+        parts.push((1.0, 18.0, Part::Sep));
+        parts.push((jtext::bold_width(painter, t, &bold) + 2.0, jtext::height(painter, &bold), Part::Time(t.clone())));
+    }
     if let Some(r) = &b.rank {
         parts.push((1.0, 18.0, Part::Sep));
         parts.push((rank_w, jtext::height(painter, &bold), Part::Rank(r.clone())));
@@ -219,7 +229,16 @@ pub fn badge(painter: &Painter, ctx: &egui::Context, icons: &mut Icons, data: &G
         parts.push((1.0, 18.0, Part::Sep));
         parts.push((BADGE_AMULET, BADGE_AMULET, Part::Item(m)));
     }
-    let mut fixed_w = 14.0 + GAP + BADGE_ICON + sep + jtext::bold_width(painter, "#50/50", &bold) + sep + BADGE_AMULET + sep + BADGE_AMULET;
+    let mut fixed_w = 14.0 + GAP + BADGE_ICON;
+    if let Some(t) = &b.time {
+        fixed_w += sep + jtext::bold_width(painter, t, &bold) + 2.0;
+    }
+    if b.keep.0 {
+        fixed_w += sep + jtext::bold_width(painter, "#50/50", &bold);
+    }
+    if b.keep.1 {
+        fixed_w += sep + BADGE_AMULET + sep + BADGE_AMULET;
+    }
     if let Some((total, dancers, phase, held)) = &b.moonlight {
         let starts = if *dancers { DANCER_TIERS } else { UMI_TIERS };
         let t = tier_of(*total, *dancers);
@@ -260,7 +279,8 @@ pub fn badge(painter: &Painter, ctx: &egui::Context, icons: &mut Icons, data: &G
     let r = Rect::from_min_size(at, size);
     let box_r = Rect::from_min_size(at, size - vec2(1.0, 1.0));
     gradient_round_rect(painter, box_r, 5.0, shade(tint, 1.2), shade(tint, 0.8));
-    painter.rect_stroke(box_r, 5.0, Stroke::new(1.0, shade(tint, 1.9)), StrokeKind::Middle);
+    // the thin line around it in the portal's colour, lighter (Java's): crisp, inside the box
+    painter.rect_stroke(box_r, 5.0, Stroke::new(1.0, shade(tint, 1.9)), StrokeKind::Inside);
     let cy = r.top() + 4.0 + inner_h / 2.0;
     let mut x = r.left() + 2.0 + GAP;
     for (w, h, part) in &parts {
@@ -282,6 +302,9 @@ pub fn badge(painter: &Painter, ctx: &egui::Context, icons: &mut Icons, data: &G
                     0.0,
                     Color32::from_rgba_unmultiplied(242, 236, 220, 64),
                 );
+            }
+            Part::Time(t) => {
+                jtext::draw_bold(painter, pos2(x + w / 2.0, cy), Align2::CENTER_CENTER, t, &bold, Color32::from_rgb(0xC8, 0xC2, 0xB4));
             }
             Part::Rank(t) => {
                 jtext::draw_bold(painter, pos2(x + w / 2.0, cy), Align2::CENTER_CENTER, t, &bold, TEXT);

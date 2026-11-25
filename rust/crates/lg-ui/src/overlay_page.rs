@@ -49,6 +49,17 @@ fn key(o: &Overlay, what: &str) -> String {
     if o.id == "dungeon" { format!("overlay{what}") } else { format!("overlay.{}.{what}", o.id) }
 }
 
+/// The dungeon overlay's parts that can be left out (its ticks), and the settings saying so.
+pub const RANK: &str = "Rank";
+pub const PROCS: &str = "Procs";
+pub const TIME: &str = "Time";
+const DUNGEON_PARTS: [(&str, &str); 3] = [(TIME, "Time in dungeon"), (RANK, "Rank"), (PROCS, "Procs (amulet, matrix)")];
+
+/// Whether the dungeon overlay shows that part ("Rank", "Procs", "Time"): yes unless ticked off.
+pub fn dungeon_part(props: &lg_app::properties::Properties, part: &str) -> bool {
+    props.get(&key_of("dungeon", &format!("Show{part}"))) != Some("false")
+}
+
 pub fn opacity(props: &lg_app::properties::Properties, id: &str) -> i32 {
     let o = OVERLAYS.iter().find(|o| o.id == id).expect("overlay");
     props.get(&key(o, "Opacity")).and_then(|v| v.trim().parse::<i32>().ok()).map_or(DEFAULT_OPACITY, |v| v.clamp(MIN_OPACITY, 100))
@@ -125,7 +136,7 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
                     }
                     let mut faded = clip.clone();
                     faded.set_opacity(op as f32 / 100.0);
-                    samples(&faded, ui.ctx(), icons, data, o.id, pos2(x + 24.0, y + 16.0), now);
+                    samples(&faded, ui.ctx(), icons, data, props, o.id, pos2(x + 24.0, y + 16.0), now);
                     y += stage_h + 8.0;
                     // the opacity: "Opacity", a slider, the value
                     let row_h = 30.0;
@@ -152,6 +163,25 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
                         }
                     }
                     y += row_h;
+                    // the dungeon overlay: which of its parts show
+                    if o.id == "dungeon" {
+                        let mut tx = x;
+                        for (part, label) in DUNGEON_PARTS {
+                            let on = dungeon_part(props, part);
+                            let br = crate::social::pixel_check(&painter, &p, pos2(tx, y + 6.0), on);
+                            let lr = jtext::draw(&painter, pos2(br.right() + 8.0, br.center().y), Align2::LEFT_CENTER, label, &f, p.ink);
+                            let hit = Rect::from_min_max(br.min, pos2(lr.right(), br.bottom()));
+                            if ui
+                                .interact(hit, ui.scope_id().with(("dungeon-part", part)), Sense::click())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                asks.borrow_mut().push(crate::window::Ask::Set(key_of("dungeon", &format!("Show{part}")), (!on).to_string()));
+                            }
+                            tx = lr.right() + 28.0;
+                        }
+                        y += 30.0 + 4.0;
+                    }
                     y - r.top() + 10.0 - 10.0
                 },
             );
@@ -177,6 +207,7 @@ fn samples(
     ctx: &egui::Context,
     icons: &mut crate::icons::Icons,
     data: &lg_gamedata::GameData,
+    props: &lg_app::properties::Properties,
     id: &str,
     at: egui::Pos2,
     now: i64,
@@ -186,14 +217,26 @@ fn samples(
             let cap = text(17.0);
             let ch = jtext::height(painter, &cap) + 4.0;
             let caption = Color32::from_rgb(0xC8, 0xC2, 0xB4);
-            let any =
-                Badge { dungeon: "Ocean Trench", rank: Some("#3/8".into()), amulet: true, matrix: Some(HEAVY_MATRIX), moonlight: None };
+            // the samples with the parts ticked
+            let show = |part: &str| dungeon_part(props, part);
+            let (procs, time, rank) = (show(PROCS), show(TIME), show(RANK));
+            let any = Badge {
+                dungeon: "Ocean Trench",
+                time: time.then(|| "4:12".to_string()),
+                rank: rank.then(|| "#3/8".to_string()),
+                amulet: procs,
+                matrix: procs.then_some(HEAVY_MATRIX),
+                moonlight: None,
+                keep: (rank, procs),
+            };
             let mv = Badge {
                 dungeon: "Moonlight Village",
-                rank: Some("#2/6".into()),
-                amulet: true,
-                matrix: Some(HEAVY_MATRIX),
+                time: time.then(|| "11:47".to_string()),
+                rank: rank.then(|| "#2/6".to_string()),
+                amulet: procs,
+                matrix: procs.then_some(HEAVY_MATRIX),
                 moonlight: Some((54, true, "6".into(), true)),
+                keep: (rank, procs),
             };
             // both stand on the stage's row, centred on the tallest
             let mv_h = mv_height(painter);

@@ -124,7 +124,15 @@ fn idle(painter: &egui::Painter, at: Pos2, t: &str) -> Vec2 {
 }
 
 /// Paints one overlay's live content at the window's corner; gives its size.
-fn content(id: &str, painter: &egui::Painter, ctx: &egui::Context, icons: &mut Icons, app: &App, now: i64) -> Option<Vec2> {
+fn content(
+    id: &str,
+    painter: &egui::Painter,
+    ctx: &egui::Context,
+    icons: &mut Icons,
+    app: &App,
+    props: &Properties,
+    now: i64,
+) -> Option<Vec2> {
     let data = app.world.data();
     let at = pos2(0.0, 0.0);
     match id {
@@ -140,7 +148,13 @@ fn content(id: &str, painter: &egui::Painter, ctx: &egui::Context, icons: &mut I
             let matrix =
                 (c.matrix_fired >= v.start && now - c.matrix_fired < MATRIX_COOLDOWN_MS && c.matrix_type >= 0).then_some(c.matrix_type);
             let moonlight = (v.dungeon == "Moonlight Village").then(|| moonlight(v));
-            let b = Badge { dungeon: &v.dungeon, rank, amulet, matrix, moonlight };
+            // the parts the overlay page's ticks leave out
+            let show = |part: &str| crate::overlay_page::dungeon_part(props, part);
+            let time = show(crate::overlay_page::TIME).then(|| crate::battles::duration((now - v.start).max(0)));
+            let (rank, amulet, matrix) = if show(crate::overlay_page::PROCS) { (rank, amulet, matrix) } else { (rank, false, None) };
+            let rank = rank.filter(|_| show(crate::overlay_page::RANK));
+            let keep = (show(crate::overlay_page::RANK), show(crate::overlay_page::PROCS));
+            let b = Badge { dungeon: &v.dungeon, time, rank, amulet, matrix, moonlight, keep };
             Some(overlays::badge(painter, ctx, icons, data, &b, at))
         }
         "mana" => app.vitals.fresh(now).then(|| overlays::mana_bar(painter, at, app.vitals.mp, app.vitals.max_mp)),
@@ -257,7 +271,7 @@ impl OverlayWindows {
                 } else {
                     painter.set_opacity(op);
                 }
-                let got = content(id, &painter, &vctx, icons, app, now);
+                let got = content(id, &painter, &vctx, icons, app, props, now);
                 new_size = match got {
                     Some(s) => s,
                     None => idle(&painter, pos2(0.0, 0.0), idle_text),
