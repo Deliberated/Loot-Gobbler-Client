@@ -359,10 +359,10 @@ impl Shell {
         let widths: Vec<f32> = self.order.iter().map(|t| text_width(ui, &t.to_uppercase(), &font) + s(26.0)).collect();
         let strip_w: f32 = widths.iter().sum();
         let now = ui.input(|i| i.time);
-        // the glide: 28 % of the way every 15 ms (Java's timer), for however long the frame took; counted in whole
-        // 15 ms steps, frames shorter than that (fast screens) moved nothing and left tabs halfway
+        // the glide: 40 % of the way every 15 ms (quicker than Java's 28 %: they dodge at once), for however long
+        // the frame took; counted in whole 15 ms steps, frames shorter than that (fast screens) moved nothing
         let dt = (now - self.tab_time).clamp(0.0, 1.0);
-        let step = (1.0 - 0.72f64.powf(dt / 0.015)) as f32;
+        let step = (1.0 - 0.6f64.powf(dt / 0.015)) as f32;
         self.tab_time = now;
         let mut target = 0.0;
         let mut moving = false;
@@ -401,29 +401,37 @@ impl Shell {
                 && let Some(q) = resp.interact_pointer_pos()
             {
                 self.dragged = Some((title.clone(), q.x - x, x - row.left()));
+                // a new drag: no way yet
+                ui.data_mut(|m| m.remove::<(f32, f32)>(ui.scope_id().with("tab-drag-dir")));
             }
             if resp.dragged()
                 && let Some(q) = ui.input(|i| i.pointer.interact_pos())
                 && let Some(d) = self.dragged.as_mut().filter(|d| d.0 == title)
             {
-                // it follows the mouse; past a neighbour's centre the order changes
+                // it follows the mouse; the neighbour on the side it moves to dodges once it reaches into it by a
+                // little (not only past its centre), so none hides under it
                 d.2 = (q.x - row.left() - d.1).clamp(0.0, (strip_w - w).max(0.0));
-                let center = d.2 + w / 2.0;
-                let mut index = 0;
-                let mut tx = 0.0;
-                for (t, tw) in self.order.iter().zip(&widths) {
-                    if *t != title && tx + tw / 2.0 < center {
-                        index += 1;
-                    }
-                    if *t != title {
-                        tx += tw;
-                    }
+                let (dl, dr) = (d.2, d.2 + w);
+                // which way it goes, over a few pixels (a twitch back does not swap again)
+                let dir_id = ui.scope_id().with("tab-drag-dir");
+                let (mut anchor, mut dir): (f32, f32) = ui.data(|m| m.get_temp(dir_id)).unwrap_or((d.2, 0.0));
+                if (d.2 - anchor).abs() > s(3.0) {
+                    dir = (d.2 - anchor).signum();
+                    anchor = d.2;
                 }
-                if let Some(i) = self.order.iter().position(|t| *t == title)
-                    && i != index
-                {
-                    let t = self.order.remove(i);
-                    self.order.insert(index.min(self.order.len()), t);
+                ui.data_mut(|m| m.insert_temp(dir_id, (anchor, dir)));
+                let reach = s(14.0);
+                // each tab's width by its title (the order changes below)
+                let width_of: std::collections::HashMap<String, f32> = self.order.iter().cloned().zip(widths.iter().copied()).collect();
+                while let Some(i) = self.order.iter().position(|t| *t == title) {
+                    let slot: f32 = self.order[..i].iter().map(|t| width_of.get(t).copied().unwrap_or(0.0)).sum();
+                    if dir > 0.0 && i + 1 < self.order.len() && dr > slot + w + reach {
+                        self.order.swap(i, i + 1);
+                    } else if dir < 0.0 && i > 0 && dl < slot - reach {
+                        self.order.swap(i, i - 1);
+                    } else {
+                        break;
+                    }
                 }
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
                 ui.ctx().request_repaint();
@@ -459,8 +467,10 @@ impl Shell {
         if let Some(r) = under {
             let (h, inset) = (s(4.0), s(6.0));
             let ctx = ui.ctx();
-            let l = ctx.animate_value_with_time(ui.scope_id().with("tab-bar-l"), r.left() + inset, 0.18);
-            let rr = ctx.animate_value_with_time(ui.scope_id().with("tab-bar-r"), r.right() - 1.0 - inset, 0.18);
+            // stiff: right with its tab while that is dragged, quick to another one clicked
+            let glide = if self.dragged.as_ref().is_some_and(|d| d.0 == self.selected) { 0.0 } else { 0.1 };
+            let l = ctx.animate_value_with_time(ui.scope_id().with("tab-bar-l"), r.left() + inset, glide);
+            let rr = ctx.animate_value_with_time(ui.scope_id().with("tab-bar-r"), r.right() - 1.0 - inset, glide);
             // with a focus on it stands on the (lit) focus line, its top corners rounded down into it; without, a pill
             // just above the line
             let focused = self.focus_on.is_some_and(|id| self.focus_boxes.iter().any(|b| b.id == id));
