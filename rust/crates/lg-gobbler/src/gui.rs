@@ -752,6 +752,12 @@ impl eframe::App for Gui {
         let ids = ["dungeon", "mana", "dps", "buffs"];
         let on_key = |id: &str| lg_ui::overlay_page::key_of(id, "On");
         self.window.shell.overlays_on = ids.iter().any(|id| self.window.props.get(&on_key(id)) == Some("true"));
+        // minimized or covered, the window still runs while the sniffer listens or an overlay is up: the packets are
+        // taken in as they come (else they pile up and are all worked through at once when it shows again, the
+        // window frozen meanwhile), sounds play, the overlays (windows of their own) follow, the records are saved
+        if self.capture.is_some() || self.window.shell.overlays_on {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
+        }
         self.sounds();
         self.chosen();
         self.granted();
