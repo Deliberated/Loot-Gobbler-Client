@@ -165,14 +165,17 @@ impl Icons {
     /// Java `ActiveDungeonBadge.fit`: an object's outlined icon (at `from` px) cut to its visible pixels and scaled
     /// (crisp) into a `size` square, centred, so all portals look alike.
     pub fn fitted(&mut self, ctx: &egui::Context, data: &GameData, id: i32, from: u32, size: u32) -> Option<TextureHandle> {
-        let key = format!("fit-{id}-{from}-{size}");
+        // made at the size it has on the screen (display scaling included): scaled once, every pixel the same size
+        // (scaled to `size` and stretched again by the screen's factor, the pixels came out uneven)
+        let px = ((size as f32 * ctx.pixels_per_point()).round() as u32).max(1);
+        let key = format!("fit-{id}-{from}-{px}");
         if let Some(t) = self.skins.get(&key) {
             return Some(t.clone());
         }
-        let out = self.fitted_image(data, id, from, size)?;
+        let out = self.fitted_image(data, id, from, px)?;
         let tex = ctx.load_texture(
             key.clone(),
-            ColorImage::from_rgba_unmultiplied([size as usize, size as usize], &out.rgba),
+            ColorImage::from_rgba_unmultiplied([px as usize, px as usize], &out.rgba),
             TextureOptions::NEAREST,
         );
         self.skins.insert(key, tex.clone());
@@ -433,4 +436,12 @@ impl Icons {
         self.cache.insert((id, size), Some(tex.clone()));
         Some(tex)
     }
+}
+
+/// Java `ProfileView.SMALL_PORTALS`: dungeons whose portal sprite is small, drawn this much bigger than their room
+/// (from its centre) so they look like the others.
+pub fn portal_scale(dungeon: &str) -> f32 {
+    const SMALL: [&str; 6] =
+        ["Plagued Nest", "Fungal Cavern", "Kogbold Steamworks", "Advanced Kogbold Steamworks", "Hidden Interregnum", "Stromwell's Rift II"];
+    if SMALL.contains(&dungeon) { 1.35 } else { 1.0 }
 }

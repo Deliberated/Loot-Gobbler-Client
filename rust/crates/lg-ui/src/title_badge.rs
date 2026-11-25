@@ -35,8 +35,9 @@ pub fn show(ui: &mut Ui, icons: &mut Icons, app: &lg_app::App, now: i64, at: Pos
     let data = app.world.data();
     let ctx = ui.ctx().clone();
     let painter = ui.painter().clone();
-    let f = text(18.0);
-    let big = text((18.0f32 * 1.3).floor());
+    // a little bigger than Java's 18 px, which its fonts drew larger
+    let f = text(20.0);
+    let big = text((20.0f32 * 1.3).floor());
     // the rank only once you have one (you hit the main boss)
     let run = if sample { None } else { app.dps_history.live.as_ref().filter(|r| !r.guild_hall && r.dungeon == name) };
     let rank = run
@@ -69,8 +70,10 @@ pub fn show(ui: &mut Ui, icons: &mut Icons, app: &lg_app::App, now: i64, at: Pos
     let cy = r.center().y - 1.0;
     let mut x = r.left() + 22.0;
     let icon_r = Rect::from_min_size(pos2(x, (cy - ICON / 2.0).round()), vec2(ICON, ICON));
-    if let Some(t) = icons.fitted(&ctx, data, portal, 64, ICON as u32) {
-        painter.image(t.id(), icon_r, crate::detail::uv(), Color32::WHITE);
+    // a small portal drawn bigger than its room, as in Java
+    let k = crate::icons::portal_scale(name);
+    if let Some(t) = icons.fitted(&ctx, data, portal, 64, (ICON * k).round() as u32) {
+        painter.image(t.id(), Rect::from_center_size(icon_r.center(), icon_r.size() * k), crate::detail::uv(), Color32::WHITE);
     }
     x += ICON + 10.0;
     let base = (cy + asc(&f) / 2.0).round();

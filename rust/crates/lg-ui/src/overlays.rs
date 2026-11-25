@@ -287,13 +287,10 @@ pub fn badge(painter: &Painter, ctx: &egui::Context, icons: &mut Icons, data: &G
         let top = (cy - h / 2.0).floor();
         match part {
             Part::Portal => {
-                if let Some(t) = icons.fitted(ctx, data, portal, 64, BADGE_ICON as u32) {
-                    painter.image(
-                        t.id(),
-                        Rect::from_min_size(pos2(x, top), vec2(BADGE_ICON, BADGE_ICON)),
-                        crate::detail::uv(),
-                        Color32::WHITE,
-                    );
+                let k = crate::icons::portal_scale(b.dungeon);
+                if let Some(t) = icons.fitted(ctx, data, portal, 64, (BADGE_ICON * k).round() as u32) {
+                    let room = Rect::from_min_size(pos2(x, top), vec2(BADGE_ICON, BADGE_ICON));
+                    painter.image(t.id(), Rect::from_center_size(room.center(), room.size() * k), crate::detail::uv(), Color32::WHITE);
                 }
             }
             Part::Sep => {

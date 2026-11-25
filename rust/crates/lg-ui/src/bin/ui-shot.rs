@@ -336,6 +336,10 @@ fn main() {
                 ],
             }));
         }
+        // "badge": inside a dungeon for 4:40 (the menu bar's dungeon box)
+        if tab == "badge" {
+            app.dungeon_visits.current = Some(lg_app::dungeon_visits::Visit::new("Snake Pit", now - 280_000));
+        }
         // "Battles:mates:<start>": that visit with a guildmate the server has (as the local test server answers)
         let mates_visit = tab.strip_prefix("Battles:mates:").and_then(|t| t.parse::<i64>().ok());
         if let Some(start) = mates_visit {
