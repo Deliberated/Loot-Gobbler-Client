@@ -65,6 +65,17 @@ impl Stock {
         Stock { copies }
     }
 
+    /// What a character (not a game mode run) can reach: what it carries, and the vault of its side (seasonal or
+    /// regular), from which it can take things.
+    pub fn reachable(app: &crate::App, char_id: i32, seasonal: bool) -> Stock {
+        let mut s = Stock::of(app, 0);
+        for c in s.copies.values_mut() {
+            c.retain(|h| h.char_id == char_id || (h.char_id == 0 && h.seasonal == Some(seasonal)));
+        }
+        s.copies.retain(|_, c| !c.is_empty());
+        s
+    }
+
     pub fn from_copies(copies: HashMap<i32, Vec<Held>>) -> Stock {
         Stock { copies }
     }

@@ -389,6 +389,7 @@ impl Shell {
             let it = drawn.remove(i);
             drawn.push(it);
         }
+        let mut under: Option<Rect> = None;
         for (title, w) in drawn {
             let label = title.to_uppercase();
             let x = row.left() + self.tab_x.get(&title).copied().unwrap_or(0.0);
@@ -441,7 +442,7 @@ impl Shell {
             painter.rect_filled(r, 0.0, bg);
             let underline = s(3.0);
             if on {
-                painter.rect_filled(Rect::from_min_max(pos2(r.left(), r.bottom() - underline), r.max), 0.0, p.gold);
+                under = Some(r);
             }
             painter.rect_filled(Rect::from_min_max(pos2(r.right() - 1.0, r.top()), r.max), 0.0, Color32::BLACK);
             let (tw, th) = (jtext::width(&painter, &label, &font), jtext::height(&painter, &font));
@@ -451,6 +452,15 @@ impl Shell {
             if resp.clicked() {
                 self.selected = title.clone();
             }
+        }
+        // the selected tab's bar: round-ended, gliding over to the tab clicked
+        if let Some(r) = under {
+            let (h, inset) = (s(4.0), s(6.0));
+            let ctx = ui.ctx();
+            let l = ctx.animate_value_with_time(ui.scope_id().with("tab-bar-l"), r.left() + inset, 0.18);
+            let rr = ctx.animate_value_with_time(ui.scope_id().with("tab-bar-r"), r.right() - 1.0 - inset, 0.18);
+            let bar = Rect::from_min_max(pos2(l, r.bottom() - h - s(1.0)), pos2(rr.max(l + h), r.bottom() - s(1.0)));
+            painter.rect_filled(bar, h / 2.0, p.gold);
         }
         // the notifications bell at the right end of the tab row
         let bell = Rect::from_min_size(pos2(row.right() - 36.0, row.top()), vec2(36.0, TAB_H));

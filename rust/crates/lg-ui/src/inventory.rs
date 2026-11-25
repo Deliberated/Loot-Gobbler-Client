@@ -1223,6 +1223,18 @@ impl InventoryView {
         let n_of = |s: &lg_gamedata::st_sets::StSet| s.owned(&has);
         let token_of =
             |s: &lg_gamedata::st_sets::StSet| s.pieces.iter().find_map(|id| data.set_tokens.get(id).map(|t| t.token)).unwrap_or(0);
+        // the missing pieces the forge can make now from what you hold (tokens, a spare ST to dismantle); with a focus,
+        // from what its character can reach: a game mode run only its own things, another character also its side's
+        // vault
+        let focus = crate::focus::focused_char(app, c.props);
+        let run_focus = crate::focus::current(app, c.props).is_some();
+        let stock = match focus {
+            Some(ch) if run_focus => lg_app::st_forge::Stock::of(app, ch.char_id),
+            Some(ch) => lg_app::st_forge::Stock::reachable(app, ch.char_id, ch.seasonal),
+            None => lg_app::st_forge::Stock::of(app, self.upe_char),
+        };
+        let craftable: std::collections::HashSet<i32> =
+            sets.iter().flat_map(|s| stock.plan(data, s, &has)).filter(|c| c.craftable).map(|c| c.piece).collect();
         let mut shown: Vec<&lg_gamedata::st_sets::StSet> = sets
             .iter()
             .filter(|s| {
@@ -1233,14 +1245,12 @@ impl InventoryView {
                     3 => token_of(s) != 0,
                     _ => true,
                 };
-                ok && self.st_class.as_ref().is_none_or(|k| *k == s.class_name)
+                // with a focus: its class's sets, and any other with a piece it can forge
+                let focus_ok = focus.is_none_or(|ch| s.class_name == ch.class_name || s.pieces.iter().any(|p| craftable.contains(p)));
+                ok && focus_ok && self.st_class.as_ref().is_none_or(|k| *k == s.class_name)
             })
             .collect();
         shown.sort_by(|a, b| n_of(b).cmp(&n_of(a)).then(a.title.cmp(&b.title)));
-        // the missing pieces the forge can make now from what you hold (tokens, a spare ST to dismantle)
-        let stock = lg_app::st_forge::Stock::of(app, self.upe_char);
-        let craftable: std::collections::HashSet<i32> =
-            sets.iter().flat_map(|s| stock.plan(data, s, &has)).filter(|c| c.craftable).map(|c| c.piece).collect();
         // low-high-low, once every 1.4 s
         let time = ui.input(|i| i.time);
         let blink = (0.5 - 0.5 * (std::f64::consts::TAU * time / 1.4).cos()) as f32;
@@ -1261,7 +1271,10 @@ impl InventoryView {
             ui,
             &p,
             main,
-            "Collection · ST Sets",
+            &match focus {
+                Some(ch) => format!("ST Sets · {}", ch.class_name),
+                None => "Collection · ST Sets".to_string(),
+            },
             fixed::GOLD,
             |ui, head| {
                 let painter = ui.painter().clone();
