@@ -110,10 +110,19 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
                 let cw = ((inner_w - (cols - 1.0) * GAP) / cols).floor();
                 let painter = ui.painter().clone();
                 let ch = card_height(&painter);
+                let picked = ui.ctx().data(|d| d.get_temp::<i32>(selected_id()));
                 for (i, info) in infos.iter().enumerate() {
                     let (col, row) = ((i as f32 % cols), (i as f32 / cols).floor());
                     let cr = Rect::from_min_size(pos2(top.x + 10.0 + col * (cw + GAP), top.y + 10.0 + row * (ch + GAP)), vec2(cw, ch));
                     card(ui, &p, icons, data, info, cr);
+                    // the class clicked: a gold frame with a soft glow around it
+                    if picked == Some(info.id) {
+                        for i in 1..=4 {
+                            let a = 0.35 * (1.0 - (i - 1) as f32 / 4.0);
+                            painter.rect_stroke(cr.expand(i as f32), 0.0, Stroke::new(1.0, p.gold.gamma_multiply(a)), StrokeKind::Outside);
+                        }
+                        painter.rect_stroke(cr, 0.0, Stroke::new(3.0, p.gold), StrokeKind::Inside);
+                    }
                     // click: the class on the right
                     let resp = ui
                         .interact(cr, ui.scope_id().with(("class-card", info.id)), Sense::click())
