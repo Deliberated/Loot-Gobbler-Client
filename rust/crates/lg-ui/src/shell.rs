@@ -459,8 +459,15 @@ impl Shell {
             let ctx = ui.ctx();
             let l = ctx.animate_value_with_time(ui.scope_id().with("tab-bar-l"), r.left() + inset, 0.18);
             let rr = ctx.animate_value_with_time(ui.scope_id().with("tab-bar-r"), r.right() - 1.0 - inset, 0.18);
-            let bar = Rect::from_min_max(pos2(l, r.bottom() - h - s(1.0)), pos2(rr.max(l + h), r.bottom() - s(1.0)));
-            painter.rect_filled(bar, h / 2.0, p.gold);
+            // with a focus on it stands on the (lit) focus line, its top corners rounded down into it; without, a pill
+            // just above the line
+            let focused = self.focus_on.is_some_and(|id| self.focus_boxes.iter().any(|b| b.id == id));
+            let t = ctx.animate_bool_with_time(ui.scope_id().with("tab-bar-focus"), focused, 0.18);
+            let gap = s(1.0) * (1.0 - t);
+            let bar = Rect::from_min_max(pos2(l, r.bottom() - h - gap), pos2(rr.max(l + h), r.bottom() - gap));
+            let round = (h / 2.0).round() as u8;
+            let low = ((1.0 - t) * f32::from(round)).round() as u8;
+            painter.rect_filled(bar, egui::CornerRadius { nw: round, ne: round, sw: low, se: low }, p.gold);
         }
         // the notifications bell at the right end of the tab row
         let bell = Rect::from_min_size(pos2(row.right() - 36.0, row.top()), vec2(36.0, TAB_H));
