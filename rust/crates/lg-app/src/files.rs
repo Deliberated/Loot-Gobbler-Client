@@ -143,6 +143,10 @@ impl App {
             write("exalts.json", progress)?;
             write("exalt_changes.json", array(self.exalts.changes.iter().map(exalt_change)))?;
         }
+        if std::mem::take(&mut self.collection.owners_dirty) {
+            let lines: String = self.collection.owners.iter().map(|(i, at, c)| format!("{i},{at},{c}{LINE_END}")).collect();
+            write(crate::collection::OWNERS_FILE, lines)?;
+        }
         if std::mem::take(&mut self.amulet_saves.dirty) {
             write("amulet_saves.json", amulet(&self.amulet_saves))?;
         }

@@ -1751,7 +1751,9 @@ fn found_by(app: &lg_app::App, char_id: i32) -> HashMap<i32, (i32, i32, String, 
                 .filter(|(_, sessions, _)| sessions.iter().any(|s| f.at >= s.start - SLACK_MS && f.at <= s.end + SLACK_MS))
                 .min_by_key(|(_, _, times)| nearest(times, f.at))
                 .map(|(c, _, _)| *c);
-            if owner != Some(char_id) {
+            // whose it was: noted when it came, else the one played around then
+            let noted = app.collection.owners.iter().find(|(i, at, _)| *i == id && *at == f.at).map(|o| o.2);
+            if noted.or(owner) != Some(char_id) {
                 continue;
             }
             let v = out.entry(id).or_insert((0, 0, String::new(), String::new()));

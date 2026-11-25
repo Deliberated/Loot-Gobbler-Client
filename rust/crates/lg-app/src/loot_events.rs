@@ -378,6 +378,11 @@ impl LootEvents {
             let mut f = Find::with_ids(collection::DROP, Some(ids), map, &bag_name, r.ctx.now, r.ctx.time);
             f.seasonal = seasonal;
             r.collection.record(v, f);
+            // whose drop it was: the character played now
+            if let Some(ch) = r.characters.playing() {
+                r.collection.owners.push((v, r.ctx.now, ch.char_id));
+                r.collection.owners_dirty = true;
+            }
         }
     }
 

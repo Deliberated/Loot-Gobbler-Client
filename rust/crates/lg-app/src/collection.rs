@@ -152,12 +152,27 @@ pub struct Collection {
     pub soon: bool,
     /// Drops since last taken (Java `onDrop`: the caravan puts them on your wagon at once).
     pub drops: Vec<(i32, Find)>,
+    /// Who was played when a drop came: (item, its find's time `at`, character). The app's own, beside the Java
+    /// app's files (`drop_owners.txt`, one "item,at,char" line each).
+    pub owners: Vec<(i32, i64, i32)>,
+    pub owners_dirty: bool,
 }
+
+/// The file of [`Collection::owners`].
+pub const OWNERS_FILE: &str = "drop_owners.txt";
 
 impl Collection {
     /// What the Java app kept (`collection.json`), read only. Unreadable: nothing.
     pub fn import(dir: &std::path::Path) -> Collection {
         let mut c = Collection::default();
+        if let Ok(text) = std::fs::read_to_string(dir.join(OWNERS_FILE)) {
+            for line in text.lines() {
+                let v: Vec<i64> = line.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                if let [item, at, char_id] = v[..] {
+                    c.owners.push((item as i32, at, char_id as i32));
+                }
+            }
+        }
         let Ok(text) = std::fs::read_to_string(dir.join("collection.json")) else { return c };
         if let Ok(list) = parse_entries(&text) {
             for (id, e) in list {

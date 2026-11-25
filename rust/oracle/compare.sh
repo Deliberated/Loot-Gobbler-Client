@@ -81,6 +81,8 @@ files_same=0
 for f in "$work"/rustfiles/*; do
     [ -e "$f" ] || continue
     n=$(basename "$f")
+    # a file only the Rust app keeps (e.g. drop_owners.txt): nothing of Java's to compare it with
+    [ -e "$work/run/$n" ] || continue
     if cmp -s "$f" "$work/run/$n"; then
         files_same=$((files_same + 1))
     else
