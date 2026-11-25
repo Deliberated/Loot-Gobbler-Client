@@ -252,6 +252,14 @@ impl InventoryView {
         // one shown before to the one clicked
         let frame_slot = painter.add(egui::Shape::Noop);
         let target = std::cell::Cell::new(None::<Rect>);
+        // a click follows the focus: a character in the focus row becomes the focus again; any other entry (All, a
+        // character not in the row) leaves it
+        let focusable: Vec<i32> = crate::focus::candidates(app)
+            .iter()
+            .map(|(r, _)| r.char_id)
+            .chain(crate::focus::char_candidates(app, c.props).iter().map(|ch| ch.char_id))
+            .collect();
+        let focus_on = self.focus_seen.is_some();
         let mut entry = |y: &mut f32, tex: Option<egui::TextureHandle>, name: &str, id: i32, faded: bool, tip: &[widgets::TipLine]| {
             let shown = self.upe_char == id;
             let lh = jtext::height(&painter, &f);
@@ -282,6 +290,16 @@ impl InventoryView {
                 .clicked()
             {
                 self.upe_char = id;
+                if id != 0 && focusable.contains(&id) {
+                    if self.focus_seen != Some(id) {
+                        crate::window::ask_later(
+                            ui.ctx(),
+                            crate::window::Ask::Set(crate::focus::KEY.into(), crate::focus::value_for(app, Some(id))),
+                        );
+                    }
+                } else if focus_on {
+                    crate::window::ask_later(ui.ctx(), crate::window::Ask::Set(crate::focus::KEY.into(), String::new()));
+                }
             }
             widgets::rich_tip(ui, r, ("upe-entry-tip", id), tip);
             *y += h + 6.0;
