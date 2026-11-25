@@ -470,7 +470,7 @@ impl Shell {
             } else {
                 // the top half of a pill, cut along its middle and sitting on the focus line: a quarter circle at
                 // each end, flat on the line
-                let (rad, base) = (s(5.0), r.bottom());
+                let (rad, base) = (s(3.5), r.bottom());
                 let rr = rr.max(l + 2.0 * rad);
                 let mut pts = Vec::new();
                 const STEPS: usize = 8;
