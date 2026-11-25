@@ -159,19 +159,27 @@ fn main() -> ExitCode {
         },
         ..Default::default()
     };
-    // Windows: OpenGL. The overlays are layered windows there (see lg-ui's overlay_windows): see-through where they
-    // draw nothing, at their opacity elsewhere; with DirectX 12 or Vulkan Windows shows those windows opaque. The
-    // main window is drawn the same way. WGPU_BACKEND still chooses otherwise.
+    // Windows: DirectX 12 through a DirectComposition visual, whose windows can be see-through pixel by pixel (the
+    // overlays: soft edges, the slider's opacity). OpenGL drew every colour too light. WGPU_BACKEND /
+    // WGPU_DX12_PRESENTATION_SYSTEM still choose otherwise.
     #[cfg(windows)]
     {
         let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
         if std::env::var_os("WGPU_BACKEND").is_none() {
-            setup.instance_descriptor.backends = eframe::wgpu::Backends::GL;
+            setup.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
+        }
+        if std::env::var_os("WGPU_DX12_PRESENTATION_SYSTEM").is_none() {
+            setup.instance_descriptor.backend_options.dx12.presentation_system = eframe::wgpu::Dx12SwapchainKind::DxgiFromVisual;
         }
         wgpu_options.wgpu_setup = eframe::egui_wgpu::WgpuSetup::CreateNew(setup);
     }
-    let options =
-        eframe::NativeOptions { viewport: gui::viewport(&lg_app::properties::Properties::load(&own)), wgpu_options, ..Default::default() };
+    let options = eframe::NativeOptions {
+        // see-through windows possible (eframe asks the swapchain for alpha only so): the overlays; the main window
+        // paints all of itself
+        viewport: gui::viewport(&lg_app::properties::Properties::load(&own)).with_transparent(true),
+        wgpu_options,
+        ..Default::default()
+    };
     // Linux: X11 (XWayland under Wayland), as Java's Swing: only there can the overlays be placed and kept on top
     #[cfg(target_os = "linux")]
     if std::env::var_os("DISPLAY").is_some() && std::env::var_os("LG_WAYLAND").is_none() {

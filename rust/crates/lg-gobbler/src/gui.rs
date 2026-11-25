@@ -734,9 +734,9 @@ impl eframe::App for Gui {
         lg_ui::widgets::java_wheel(raw_input);
     }
 
-    /// See-through where nothing is painted: the overlays show only their boxes.
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0; 4]
+    /// The main window's ground: whole (its window can be see-through, for the overlays'; theirs clear see-through).
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        visuals.panel_fill.to_normalized_gamma_f32()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

@@ -19,97 +19,112 @@ const MATRIX_COOLDOWN_MS: i64 = 180_000;
 #[derive(Default)]
 pub struct OverlayWindows {
     sizes: HashMap<&'static str, Vec2>,
-    /// Windows: the overlays made layered windows, and the alpha they were given (done again when it changes).
-    layered: HashMap<&'static str, u8>,
-    /// Windows: the size each overlay's window was cut for (see `cut_top`).
-    cut: HashMap<&'static str, (i32, i32)>,
+    /// Windows: each overlay's window as Windows knows it.
+    #[cfg(windows)]
+    native: HashMap<&'static str, Native>,
 }
 
-/// Windows: the colour an overlay's window is filled with first (its clear colour too), which the layered window then
-/// shows see-through: pure black, the one dark colour that reaches the screen unchanged (a near-black key came out a
-/// step off and stayed visible); the overlays draw black only half see-through, over other colours.
-const KEY: egui::Color32 = egui::Color32::BLACK;
-
-/// Windows: a frameless window keeps a 1 px strip of its frame along the top (winit keeps it for a drop shadow), drawn
-/// light, which neither the key colour nor the window's background reach: the window is cut to itself without that
-/// row. Done again when its size changes; gives the size it was cut for.
+/// Windows: an overlay window as Windows knows it: no caption, border colour or round corners of Windows' own; cut to
+/// its drawing area, so the strip of frame a frameless window keeps along its top does not show. What it draws is see-through where it draws nothing (a DirectComposition swapchain with alpha).
 #[cfg(windows)]
-fn cut_top(title: &str, done: Option<(i32, i32)>) -> Option<(i32, i32)> {
-    use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, SetWindowRgn};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowRect};
-    let wide: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
-    // SAFETY: plain Win32 calls on a window of this process, found by its title; the pointers outlive the calls, and
-    // the region belongs to the window once set
-    unsafe {
-        let h = FindWindowW(std::ptr::null(), wide.as_ptr());
-        if h.is_null() {
-            return None;
-        }
-        let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-        if GetWindowRect(h, &mut r) == 0 {
-            return None;
-        }
-        let size = (r.right - r.left, r.bottom - r.top);
-        if done != Some(size) {
-            SetWindowRgn(h, CreateRectRgn(0, 1, size.0, size.1), 1);
-        }
-        Some(size)
-    }
+#[derive(Default)]
+struct Native {
+    hwnd: isize,
+    cut: Option<(i32, i32, i32, i32)>,
 }
 
-/// Windows draws these windows opaque however they are made (wgpu or OpenGL): an overlay is made a layered window,
-/// as the Java app's are, its key colour see-through and the rest at its opacity (the slider), without the frame and
-/// round corners Windows 11 gives windows. False until its window exists.
 #[cfg(windows)]
-fn layer(title: &str, alpha: u8) -> bool {
-    use windows_sys::Win32::Graphics::Dwm::{
-        DWMNCRP_DISABLED, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE,
-        DWMWCP_DONOTROUND, DwmExtendFrameIntoClientArea, DwmSetWindowAttribute,
-    };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, LWA_ALPHA, LWA_COLORKEY, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-        SWP_NOSIZE, SWP_NOZORDER, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, WS_CAPTION, WS_EX_LAYERED, WS_THICKFRAME,
-    };
-    let wide: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
-    // SAFETY: plain Win32 calls on a window of this process, found by its title; the pointers outlive the calls
-    unsafe {
-        let h = FindWindowW(std::ptr::null(), wide.as_ptr());
-        if h.is_null() {
-            return false;
+impl Native {
+    /// Finds the window by its title and sets it up once; then clears what Windows painted. False while it does not
+    /// exist yet.
+    fn find(&mut self, title: &str) -> bool {
+        use windows_sys::Win32::Graphics::Dwm::{
+            DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute,
+        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            FindWindowW, GWL_STYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+            SetWindowLongPtrW, SetWindowPos, WS_CAPTION, WS_SYSMENU, WS_THICKFRAME,
+        };
+        if self.hwnd != 0 {
+            self.clear();
+            return true;
         }
-        // no caption or sizing frame: Windows drew a light line along the top of the frameless window otherwise
-        let style = GetWindowLongPtrW(h, GWL_STYLE);
-        let bare = style & !((WS_CAPTION | WS_THICKFRAME) as isize);
-        if bare != style {
-            SetWindowLongPtrW(h, GWL_STYLE, bare);
-            SetWindowPos(h, std::ptr::null_mut(), 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        let wide: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
+        // SAFETY: plain Win32 calls on a window of this process, found by its title; the pointers outlive the calls
+        unsafe {
+            let h = FindWindowW(std::ptr::null(), wide.as_ptr());
+            if h.is_null() {
+                return false;
+            }
+            // no caption (Windows paints one when the title is set or the window activated), no sizing frame
+            let style = GetWindowLongPtrW(h, GWL_STYLE);
+            let bare = style & !((WS_CAPTION | WS_SYSMENU | WS_THICKFRAME) as isize);
+            if bare != style {
+                SetWindowLongPtrW(h, GWL_STYLE, bare);
+                SetWindowPos(
+                    h,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+            let none: u32 = DWMWA_COLOR_NONE;
+            DwmSetWindowAttribute(h, DWMWA_BORDER_COLOR as u32, std::ptr::from_ref(&none).cast(), 4);
+            let corner = DWMWCP_DONOTROUND;
+            DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE as u32, std::ptr::from_ref(&corner).cast(), 4);
+            self.hwnd = h as isize;
         }
-        let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
-        if ex & WS_EX_LAYERED as isize == 0 {
-            SetWindowLongPtrW(h, GWL_EXSTYLE, ex | WS_EX_LAYERED as isize);
-        }
-        let key = u32::from(KEY.r()) | u32::from(KEY.g()) << 8 | u32::from(KEY.b()) << 16;
-        SetLayeredWindowAttributes(h, key, alpha, LWA_COLORKEY | LWA_ALPHA);
-        let none: u32 = DWMWA_COLOR_NONE;
-        DwmSetWindowAttribute(h, DWMWA_BORDER_COLOR as u32, std::ptr::from_ref(&none).cast(), 4);
-        // winit keeps a shadow on frameless windows by reaching the frame 1 px into the window: that drew a light line
-        // along the overlay's top; taken back, and no frame drawn by Windows at all (no shadow either)
-        // the window's own background black too: a pixel row the drawing left uncovered at the top showed it, white
-        windows_sys::Win32::UI::WindowsAndMessaging::SetClassLongPtrW(
-            h,
-            windows_sys::Win32::UI::WindowsAndMessaging::GCLP_HBRBACKGROUND,
-            windows_sys::Win32::Graphics::Gdi::GetStockObject(windows_sys::Win32::Graphics::Gdi::BLACK_BRUSH) as isize,
-        );
-        windows_sys::Win32::Graphics::Gdi::InvalidateRect(h, std::ptr::null(), 1);
-        let margins = windows_sys::Win32::UI::Controls::MARGINS { cxLeftWidth: 0, cxRightWidth: 0, cyTopHeight: 0, cyBottomHeight: 0 };
-        DwmExtendFrameIntoClientArea(h, &margins);
-        let policy = DWMNCRP_DISABLED;
-        DwmSetWindowAttribute(h, DWMWA_NCRENDERING_POLICY as u32, std::ptr::from_ref(&policy).cast(), 4);
-        let corner = DWMWCP_DONOTROUND;
-        DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE as u32, std::ptr::from_ref(&corner).cast(), 4);
+        self.clear();
+        true
     }
-    true
+
+    /// What Windows paints of the window itself (under the see-through drawing: its title, when it is set or the
+    /// window activated) cleared, each frame: black is see-through there.
+    fn clear(&self) {
+        use windows_sys::Win32::Foundation::RECT;
+        use windows_sys::Win32::Graphics::Gdi::{BLACK_BRUSH, FillRect, GetStockObject, GetWindowDC, ReleaseDC};
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+        let h = self.hwnd as _;
+        // SAFETY: the window found above, of this process; the DC is released again
+        unsafe {
+            let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            if GetWindowRect(h, &mut r) == 0 {
+                return;
+            }
+            let dc = GetWindowDC(h);
+            if !dc.is_null() {
+                let all = RECT { left: 0, top: 0, right: r.right - r.left, bottom: r.bottom - r.top };
+                FillRect(dc, &all, GetStockObject(BLACK_BRUSH));
+                ReleaseDC(h, dc);
+            }
+        }
+    }
+
+    /// The window cut to its drawing area (`w` x `h`), when that changed.
+    fn cut(&mut self, w: i32, h: i32) {
+        use windows_sys::Win32::Foundation::{POINT, RECT};
+        use windows_sys::Win32::Graphics::Gdi::{ClientToScreen, CreateRectRgn, SetWindowRgn};
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+        let hwnd = self.hwnd as _;
+        // SAFETY: the window found above, of this process; the region belongs to the window once set
+        unsafe {
+            let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            let mut c = POINT { x: 0, y: 0 };
+            if GetWindowRect(hwnd, &mut r) == 0 || ClientToScreen(hwnd, &mut c) == 0 {
+                return;
+            }
+            // where the client area starts in the window
+            let (dx, dy) = (c.x - r.left, c.y - r.top);
+            if self.cut == Some((dx, dy, w, h)) {
+                return;
+            }
+            SetWindowRgn(hwnd, CreateRectRgn(dx, dy, dx + w, dy + h), 1);
+            self.cut = Some((dx, dy, w, h));
+        }
+    }
 }
 
 /// The note box of an overlay with nothing to show (Java's `RoundBox` with the idle text).
@@ -231,8 +246,8 @@ impl OverlayWindows {
         for (k, (id, idle_text)) in OVERLAYS.iter().enumerate() {
             if props.get(&key_of(id, "On")) != Some("true") {
                 self.sizes.remove(id);
-                self.layered.remove(id);
-                self.cut.remove(id);
+                #[cfg(windows)]
+                self.native.remove(id);
                 continue;
             }
             let centred = *id == "buffs";
@@ -249,8 +264,6 @@ impl OverlayWindows {
             let op = opacity(props, id) as f32 / 100.0;
             let vid = egui::ViewportId::from_hash_of(("overlay", id));
             let title = format!("Loot Gobbler {id} overlay");
-            // Windows: the opacity is the layered window's (below), the drawing stays whole, on the key colour
-            let windows = cfg!(windows);
             let builder = egui::ViewportBuilder::default()
                 .with_title(title.clone())
                 .with_decorations(false)
@@ -266,11 +279,7 @@ impl OverlayWindows {
             ctx.show_viewport_immediate(vid, builder, |ui, _| {
                 let vctx = ui.ctx().clone();
                 let mut painter = ui.painter().clone();
-                if windows {
-                    painter.rect_filled(Rect::from_min_size(Pos2::ZERO, vctx.content_rect().size().max(size)), 0.0, KEY);
-                } else {
-                    painter.set_opacity(op);
-                }
+                painter.set_opacity(op);
                 let got = content(id, &painter, &vctx, icons, app, props, now);
                 new_size = match got {
                     Some(s) => s,
@@ -279,7 +288,9 @@ impl OverlayWindows {
                 // dragging anywhere moves it; where it is let go is kept
                 let resp =
                     ui.interact(Rect::from_min_size(Pos2::ZERO, new_size), ui.scope_id().with("drag"), egui::Sense::click_and_drag());
-                if resp.drag_started() {
+                // the system moves it from the press on, so it stays where it was grabbed (from the drag's start it
+                // lagged the few pixels moved before)
+                if resp.hovered() && vctx.input(|i| i.pointer.primary_pressed()) {
                     vctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
                 if resp.drag_stopped() || resp.clicked() {
@@ -298,12 +309,9 @@ impl OverlayWindows {
             self.sizes.insert(id, new_size);
             #[cfg(windows)]
             {
-                let alpha = (op * 255.0).round().clamp(0.0, 255.0) as u8;
-                if self.layered.get(id) != Some(&alpha) && layer(&title, alpha) {
-                    self.layered.insert(id, alpha);
-                }
-                if let Some(size) = cut_top(&title, self.cut.get(id).copied()) {
-                    self.cut.insert(id, size);
+                let n = self.native.entry(id).or_default();
+                if n.find(&title) {
+                    n.cut(new_size.x.ceil() as i32, new_size.y.ceil() as i32);
                 }
             }
             if let Some(p) = released {
