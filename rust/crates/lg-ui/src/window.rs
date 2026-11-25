@@ -277,7 +277,7 @@ impl Window {
                     Err(_) => self.inventory.search = p[5..].to_string(),
                 }
             }
-            ("Inventory", p) => self.inventory.page = ["", "st", "log"].iter().position(|x| *x == p).unwrap_or(0),
+            ("Inventory", p) => self.inventory.page = ["", "st", "keys", "log"].iter().position(|x| *x == p).unwrap_or(0),
             ("Characters", "classes") => self.characters.page = 1,
             ("Characters", "pets") => self.characters.page = 2,
             ("Characters", p) if p.starts_with("class:") => {
