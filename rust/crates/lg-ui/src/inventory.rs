@@ -499,7 +499,7 @@ impl InventoryView {
         let (main, side) = widgets::side_split(ui, c.p, c.props, "collectionGrid", body, 380.0, 200.0, 560.0, Some((base, CELL)));
         let cols = ((main.width() - base + 0.001) / CELL).floor().max(1.0);
         let title = if self.upe_char != 0 {
-            let name = match (app.characters.get(self.upe_char), app.upe.runs.get(&self.upe_char)) {
+            let name = match (app.characters.get(self.upe_char), app.upe.runs.get(&self.upe_char).filter(|r| r.marked)) {
                 (Some(ch), Some(r)) => format!("{} ({})", ch.class_name, lg_app::upe::label(&r.mode)),
                 (Some(ch), None) => format!("{} (found while played)", ch.class_name),
                 _ => "UPE".to_string(),
@@ -892,7 +892,20 @@ impl InventoryView {
                         "back-recent",
                     );
                 },
-                |ui, r| crate::item_history::show(ui, &p, app, icons, rarity, item, count, c_now, r, app.upe.runs.get(&self.upe_char)),
+                |ui, r| {
+                    crate::item_history::show(
+                        ui,
+                        &p,
+                        app,
+                        icons,
+                        rarity,
+                        item,
+                        count,
+                        c_now,
+                        r,
+                        app.upe.runs.get(&self.upe_char).filter(|r| r.marked),
+                    )
+                },
             );
             if back {
                 self.history = None;
@@ -1695,7 +1708,8 @@ fn day_label(date: &str, now_local: &str) -> String {
 /// the last find's time and date.
 fn gathered(app: &lg_app::App, char_id: i32) -> HashMap<i32, (i32, i32, String, String)> {
     let mut out: HashMap<i32, (i32, i32, String, String)> = HashMap::new();
-    let Some(run) = app.upe.runs.get(&char_id) else { return found_by(app, char_id) };
+    // a game mode run only when marked as one (the app keeps a record of every character it saw)
+    let Some(run) = app.upe.runs.get(&char_id).filter(|r| r.marked) else { return found_by(app, char_id) };
     let data = app.world.data();
     for g in &run.gathered {
         if !data.items.collectible.contains(&g.item) {
@@ -1743,7 +1757,17 @@ fn found_by(app: &lg_app::App, char_id: i32) -> HashMap<i32, (i32, i32, String, 
             continue;
         }
         for f in e.history.iter().flatten() {
+            // found in its own inventory (not dropped): whose it was is written with it
             if f.source != lg_app::collection::DROP {
+                if !f.is_removal() && f.seen.as_ref().is_some_and(|w| w.char_id == char_id) {
+                    let v = out.entry(id).or_insert((0, 0, String::new(), String::new()));
+                    v.0 += 1;
+                    v.1 = v.1.max(f.enchants.max(0));
+                    if f.time > v.3 {
+                        v.2 = f.time[..10.min(f.time.len())].to_string();
+                        v.3 = f.time.clone();
+                    }
+                }
                 continue;
             }
             let owner = played

@@ -26,6 +26,8 @@ pub struct LootEvents {
     slot_items: HashMap<usize, i32>,
     /// Bags that dropped for you: items taken out of them are drops.
     pub loot_bags: HashSet<i32>,
+    /// The character the game last reported as yours (whose drops are, while the one played is not known yet).
+    me: i32,
     /// The last move you asked for.
     last_swap: Option<lg_protocol::packets::InvSwap>,
 }
@@ -336,6 +338,16 @@ impl LootEvents {
             };
             f.seasonal = copy.seasonal;
             r.collection.record(now, f);
+            self.note_owner(r, now);
+        }
+    }
+
+    /// Whose drop of `item` (just recorded) it was: the character played now, else the one the game last reported.
+    fn note_owner(&self, r: &mut Records, item: i32) {
+        let ch = r.characters.playing().map_or(self.me, |c| c.char_id);
+        if ch > 0 {
+            r.collection.owners.push((item, r.ctx.now, ch));
+            r.collection.owners_dirty = true;
         }
     }
 
@@ -344,6 +356,7 @@ impl LootEvents {
         if char_id <= 0 {
             return;
         }
+        self.me = char_id;
         let before = r.holdings.slots(&format!("char:{char_id}"), holdings::SLOTS).map(Vec::len);
         let pack = pack.unwrap_or_else(|| before.map_or(0, |n| (n as i32 - 12).max(0)));
         if let Some(seen) = live_slots(stats_sent, 12 + pack.clamp(0, 16) as usize, entering) {
@@ -378,11 +391,7 @@ impl LootEvents {
             let mut f = Find::with_ids(collection::DROP, Some(ids), map, &bag_name, r.ctx.now, r.ctx.time);
             f.seasonal = seasonal;
             r.collection.record(v, f);
-            // whose drop it was: the character played now
-            if let Some(ch) = r.characters.playing() {
-                r.collection.owners.push((v, r.ctx.now, ch.char_id));
-                r.collection.owners_dirty = true;
-            }
+            self.note_owner(r, v);
         }
     }
 
