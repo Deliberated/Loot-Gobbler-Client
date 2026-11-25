@@ -564,7 +564,7 @@ fn fame_gain(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, chars: &Cha
 /// hour or more without a change cut out to a narrow break, and every dungeon above the line where you left it, the
 /// same dungeon several times in a row as one portal with "3x" before it (click: that dungeon under Battles).
 fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[(i64, i64)], now: i64) {
-    use crate::charts::{Timeline, changes, fame_at, fame_in, gap};
+    use crate::charts::{Timeline, changes, fame_in, gap};
     // GAP: the room between a portal and the line below it; AXIS: room for the break times
     const BREAK: f32 = 26.0;
     const ICON: f32 = 24.0;
@@ -605,8 +605,9 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
     for &(a, b) in &pieces {
         let clipped = painter.with_clip_rect(Rect::from_min_max(pos2(a, r.top()), pos2(b, r.bottom())));
         clipped.rect_filled(Rect::from_min_max(pos2(r.left(), r.top() + h + 2.0), pos2(r.right(), r.top() + h + 4.0)), 0.0, p.line);
-        clipped.add(egui::Shape::line(line.clone(), egui::Stroke::new(2.5, gold)));
     }
+    // the fame line runs on through the cut-outs: one line
+    painter.add(egui::Shape::line(line.clone(), egui::Stroke::new(2.5, gold)));
     // the line's highest point (smallest y) in every pixel column, so the dungeons sit evenly above it
     let w = r.width().max(1.0) as usize;
     let mut line_top = vec![f32::INFINITY; w];
@@ -652,8 +653,8 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
     }
     let count_f = text(16.0);
     let data = app.world.data();
-    let mut last_right = -10_000.0f32;
-    let mut clicked: Option<i64> = None;
+    // every group: its portal where you left (inside the graph), what it gave, who of your guild was with you
+    let mut members: Vec<Member> = Vec::new();
     for group in &groups {
         let (first, last) = (group[0], group[group.len() - 1]);
         let Some(icon) = data.dungeons.portal_by_name.get(&first.dungeon).and_then(|id| icons.object(ui.ctx(), data, *id, ICON as u32))
@@ -662,29 +663,8 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
         };
         let end = end_of(last).min(tl.to);
         let gained: i64 = group.iter().filter_map(|v| fame_in(points, v.start, end_of(v))).sum();
-        let count = if group.len() > 1 { format!("{}x", group.len()) } else { String::new() };
-        // the count sits inside the portal: no room needed beside it
-        let count_w = 0.0;
-        // the portal's centre where you left, kept clear of the group before it and inside the graph
-        let x = tl.x(end, left, right).round().max(last_right + 6.0 + count_w + ICON / 2.0).min(right - ICON / 2.0);
-        let (c0, c1) =
-            ((x - ICON / 2.0 - count_w - r.left()).max(0.0) as usize, ((x + ICON / 2.0 - r.left()).max(0.0) as usize).min(w - 1));
-        let mut under = line_top[c0.min(w - 1)..=c1].iter().copied().fold(f32::INFINITY, f32::min);
-        if !under.is_finite() {
-            under = y_of(fame_at(points, end).unwrap_or(0));
-        }
-        let y = (under - ICON - GAP).max(r.top() + 18.0);
-        let mut box_r = Rect::from_min_size(pos2(x - ICON / 2.0, y), vec2(ICON, ICON));
-        painter.image(icon.id(), box_r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);
-        if !count.is_empty() {
-            // gold in the portal's middle, outlined so it reads on any portal
-            let c = box_r.center();
-            for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (-1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0)] {
-                crate::jtext::draw(&painter, c + vec2(dx, dy), egui::Align2::CENTER_CENTER, &count, &count_f, egui::Color32::BLACK);
-            }
-            crate::jtext::draw(&painter, c, egui::Align2::CENTER_CENTER, &count, &count_f, gold);
-        }
-        // the guildmates' characters (of all the group's runs), in their look then, side by side right above it
+        let x = tl.x(end, left, right).round().clamp(left + ICON / 2.0, right - ICON / 2.0);
+        // the guildmates' characters (of all the group's runs), in their look then
         let mut mates: Vec<(String, i32, i32, i32, i32)> = Vec::new();
         for v in group {
             let current = app.dungeon_visits.current.as_ref().is_some_and(|c| c.start == v.start);
@@ -706,50 +686,167 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
                 }
             }
         }
-        const MATE: f32 = 16.0;
+        let mut mate_icons = Vec::new();
         let mut with = Vec::new();
-        let mut mx = x - mates.len() as f32 * MATE / 2.0;
         for (name, class, skin, t1, t2) in &mates {
-            if let Some(t) = icons.skin(ui.ctx(), data, if *skin > 0 { *skin } else { *class }, *t1, *t2, MATE as u32) {
-                painter.image(
-                    t.id(),
-                    Rect::from_min_size(pos2(mx, y - MATE - 1.0), vec2(MATE, MATE)),
-                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                    egui::Color32::WHITE,
-                );
-            }
-            mx += MATE;
+            mate_icons.push(icons.skin(ui.ctx(), data, if *skin > 0 { *skin } else { *class }, *t1, *t2, MATE as u32));
             let cls = data.classes.iter().find(|k| k.id == *class).map_or(String::new(), |k| format!(" ({})", k.name));
             with.push(format!("{name}{cls}"));
         }
-        if !mates.is_empty() {
-            box_r = box_r.union(Rect::from_min_size(
-                pos2(x - mates.len() as f32 * MATE / 2.0, y - MATE - 1.0),
-                vec2(mates.len() as f32 * MATE, MATE),
-            ));
+        let tip = format!(
+            "{}{}:  +{} fame{}  ·  {}",
+            if group.len() > 1 { format!("{}x ", group.len()) } else { String::new() },
+            first.dungeon,
+            num(gained),
+            if with.is_empty() { String::new() } else { format!("  ·  with {}", with.join(", ")) },
+            if group.len() > 1 { "click to open the last one in Battles" } else { "click to open it in Battles" }
+        );
+        members.push(Member { start: first.start, open: last.start, n: group.len(), x, icon, mates: mate_icons, tip });
+    }
+    // portals that would overlap make one stack, its latest on top; hovered, it opens up side by side (as a dock)
+    let mut stacks: Vec<std::ops::Range<usize>> = Vec::new();
+    for i in 0..members.len() {
+        match stacks.last_mut() {
+            Some(s) if members[i].x - members[s.end - 1].x < ICON + 8.0 => s.end = i + 1,
+            _ => stacks.push(i..i + 1),
         }
-        if hover.is_some_and(|q| box_r.contains(q)) {
-            let n = group.len();
-            tip = Some(format!(
-                "{}{}:  +{} fame{}  ·  {}",
-                if n > 1 { format!("{n}x ") } else { String::new() },
-                first.dungeon,
-                num(gained),
-                if with.is_empty() { String::new() } else { format!("  ·  with {}", with.join(", ")) },
-                if n > 1 { "click to open the last one in Battles" } else { "click to open it in Battles" }
-            ));
+    }
+    let rest_y = |s: &std::ops::Range<usize>| {
+        let (x0, x1) = (members[s.start].x - ICON / 2.0, members[s.end - 1].x + ICON / 2.0);
+        let (c0, c1) = (((x0 - r.left()).max(0.0) as usize).min(w - 1), ((x1 - r.left()).max(0.0) as usize).min(w - 1));
+        let mut under = line_top[c0..=c1].iter().copied().fold(f32::INFINITY, f32::min);
+        if !under.is_finite() {
+            under = r.top() + h;
+        }
+        (under - ICON - GAP).max(r.top() + 18.0)
+    };
+    // each portal's room in an open stack: closer together when many would not fit
+    let slot_of = |n: usize| (ICON + 8.0).min((r.width() - 16.0) / n.max(1) as f32);
+    // an open stack's row: its centre (inside the graph) and the area that keeps it open
+    let row_of = |s: &std::ops::Range<usize>, y: f32| {
+        let wide = s.len() as f32 * slot_of(s.len());
+        let cx = members[s.end - 1].x.clamp(r.left() + wide / 2.0 + 6.0, r.right() - wide / 2.0 - 6.0);
+        let area =
+            Rect::from_min_max(pos2(cx - wide / 2.0 - 6.0, y - ICON * 0.5 - MATE - 8.0), pos2(cx + wide / 2.0 + 6.0, y + ICON + 4.0));
+        (cx, area)
+    };
+    let dock_id = ui.scope_id().with("fame-dock");
+    let was_open: Option<i64> = ui.data(|d| d.get_temp(dock_id)).flatten();
+    let mut open: Option<i64> = None;
+    for s in stacks.iter().filter(|s| s.len() > 1) {
+        let y = rest_y(s);
+        let key = members[s.start].start;
+        let top = &members[s.end - 1];
+        let rest = Rect::from_min_max(pos2(members[s.start].x - ICON / 2.0 - 6.0, y - 8.0), pos2(top.x + ICON / 2.0, y + ICON));
+        let keep = was_open == Some(key) && hover.is_some_and(|q| row_of(s, y).1.contains(q));
+        if keep || hover.is_some_and(|q| rest.contains(q)) {
+            open = Some(key);
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(dock_id, open));
+    let mut clicked: Option<i64> = None;
+    let mut opening = Vec::new();
+    for s in &stacks {
+        let key = members[s.start].start;
+        let t = ui.ctx().animate_bool_with_time(dock_id.with(key), open == Some(key), 0.16);
+        if t > 0.0 && s.len() > 1 {
+            opening.push((s.clone(), t));
+            continue;
+        }
+        // the stack: the older ones peeking out behind the latest
+        let y = rest_y(s);
+        let top = &members[s.end - 1];
+        let behind = (s.len() - 1).min(2);
+        for j in (1..=behind).rev() {
+            let m = &members[s.end - 1 - j];
+            let at = Rect::from_min_size(pos2(top.x - ICON / 2.0 - 3.0 * j as f32, y - 3.0 * j as f32), vec2(ICON, ICON));
+            painter.image(m.icon.id(), at, uv(), Color32::from_gray(140));
+        }
+        let at = Rect::from_min_size(pos2(top.x - ICON / 2.0, y), vec2(ICON, ICON));
+        let hit = portal(&painter, top, at, &count_f, gold);
+        if s.len() == 1 && hover.is_some_and(|q| hit.contains(q)) {
+            tip = Some(top.tip.clone());
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             if resp.clicked() {
-                clicked = Some(last.start);
+                clicked = Some(top.open);
             }
         }
-        last_right = x + ICON / 2.0;
+    }
+    // the open (or opening, or closing) stacks over the rest: side by side, the one under the mouse biggest
+    for (s, t) in opening {
+        let y = rest_y(&s);
+        let (cx, area) = row_of(&s, y);
+        let slot = slot_of(s.len());
+        let wide = s.len() as f32 * slot;
+        let back = Rect::from_min_max(pos2(cx - wide / 2.0 - 4.0, area.top() + 2.0), pos2(cx + wide / 2.0 + 4.0, y + ICON + 3.0));
+        let back = Rect::from_center_size(back.center(), vec2(back.width() * (0.4 + 0.6 * t), back.height()));
+        painter.rect(back, 6.0, p.header.gamma_multiply(t), egui::Stroke::new(1.0, p.line.gamma_multiply(t)), egui::StrokeKind::Inside);
+        let top_x = members[s.end - 1].x;
+        for (k, i) in s.clone().enumerate() {
+            let m = &members[i];
+            let sx = cx - wide / 2.0 + slot * (k as f32 + 0.5);
+            let mag = hover.filter(|q| area.contains(*q)).map_or(1.0, |q| 1.0 + 0.45 * (-((q.x - sx) / (slot.max(ICON) * 1.1)).powi(2)).exp());
+            let size = ICON * (1.0 + (mag - 1.0) * t);
+            let x = top_x + (sx - top_x) * t;
+            let at = Rect::from_min_size(pos2(x - size / 2.0, y + ICON - size), vec2(size, size));
+            portal(&painter, m, at, &count_f, gold);
+            if t > 0.99 && hover.is_some_and(|q| area.contains(q) && (q.x - sx).abs() <= slot / 2.0) {
+                tip = Some(m.tip.clone());
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                if resp.clicked() {
+                    clicked = Some(m.open);
+                }
+            }
+        }
     }
     let resp = resp.on_hover_text(tip.unwrap_or_else(|| "Fame gained over the last 24 hours".into()));
     let _ = resp;
     if let Some(start) = clicked {
         crate::window::open_later(ui.ctx(), format!("Battles:visit:{start}"));
     }
+}
+
+/// The size of a guildmate's character above a portal.
+const MATE: f32 = 16.0;
+
+/// One portal of the fame graph (one dungeon, or the same one several times in a row).
+struct Member {
+    start: i64,
+    /// The visit a click opens: the group's last.
+    open: i64,
+    n: usize,
+    x: f32,
+    icon: egui::TextureHandle,
+    mates: Vec<Option<egui::TextureHandle>>,
+    tip: String,
+}
+
+fn uv() -> Rect {
+    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))
+}
+
+/// A portal in `at`: its count ("3x") in gold in the middle, the guildmates with you side by side right above it.
+/// Gives the area it covers.
+fn portal(painter: &egui::Painter, m: &Member, at: Rect, count_f: &egui::FontId, gold: Color32) -> Rect {
+    painter.image(m.icon.id(), at, uv(), Color32::WHITE);
+    if m.n > 1 {
+        let count = format!("{}x", m.n);
+        let c = at.center();
+        for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (-1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0)] {
+            crate::jtext::draw(painter, c + vec2(dx, dy), egui::Align2::CENTER_CENTER, &count, count_f, Color32::BLACK);
+        }
+        crate::jtext::draw(painter, c, egui::Align2::CENTER_CENTER, &count, count_f, gold);
+    }
+    if m.mates.is_empty() {
+        return at;
+    }
+    let mut mx = at.center().x - m.mates.len() as f32 * MATE / 2.0;
+    let my = at.top() - MATE - 1.0;
+    for t in m.mates.iter().flatten() {
+        painter.image(t.id(), Rect::from_min_size(pos2(mx, my), vec2(MATE, MATE)), uv(), Color32::WHITE);
+        mx += MATE;
+    }
+    at.union(Rect::from_min_size(pos2(at.center().x - m.mates.len() as f32 * MATE / 2.0, my), vec2(m.mates.len() as f32 * MATE, MATE)))
 }
 
 /// One number with its caption and a line below (Java `tile`).

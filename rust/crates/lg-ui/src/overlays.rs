@@ -474,15 +474,16 @@ pub fn buffs(
     let disc = Color32::from_rgba_unmultiplied(0x14, 0x10, 0x0C, 190);
     let n = tiles.len().max(1) as f32;
     let size = vec2(n * tile + (n - 1.0) * gap, tile);
-    let rad = (tile - 1.0) / 2.0;
+    // a pixel and a half inside the tile: the soft edge stays in the window (cut at its border it went flat)
+    let rad = tile / 2.0 - 1.5;
     if tiles.is_empty() {
-        let c = at + vec2(rad, rad);
+        let c = at + vec2(tile / 2.0, tile / 2.0);
         painter.circle_filled(c, rad, disc);
         painter.circle_stroke(c, rad - 1.0, Stroke::new(2.0, Color32::from_rgb(0x8A, 0x82, 0x72)));
     }
     let mut x = at.x;
     for t in tiles {
-        let c = pos2(x + rad, at.y + rad);
+        let c = pos2(x + tile / 2.0, at.y + tile / 2.0);
         painter.circle_filled(c, rad, disc);
         let share = if t.duration_ms <= 0 { 0.0 } else { ((t.start + t.duration_ms - now) as f64 / t.duration_ms as f64).clamp(0.0, 1.0) };
         if share > 0.0 {
