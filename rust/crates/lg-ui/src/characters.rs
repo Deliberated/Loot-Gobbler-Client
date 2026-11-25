@@ -582,18 +582,15 @@ impl CharactersView {
                 .interact(er, ui.scope_id().with(("char-focus", c.char_id)), Sense::click())
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(if added { "In the focus row: click to take it out" } else { "Focus on this character" });
-            if on {
-                painter.rect_filled(er, 0.0, p.gold);
-            }
-            painter.rect_stroke(er, 0.0, Stroke::new(1.0, if resp.hovered() || added { p.gold } else { p.line }), StrokeKind::Inside);
-            let ink = if on {
-                p.on_accent
-            } else if added || resp.hovered() {
+            // just the eye: gold in focus, dimmer gold when only in the focus row, lit on hover
+            let ink = if on || resp.hovered() {
                 p.gold
+            } else if added {
+                p.gold.gamma_multiply(0.6)
             } else {
                 p.ink_soft
             };
-            eye(&painter, er.shrink(1.0), ink, if on { p.gold } else { card_fill });
+            eye(&painter, er.shrink(1.0), ink, card_fill);
             if resp.clicked() {
                 let mut ids = self.focus_chars.clone();
                 if added {

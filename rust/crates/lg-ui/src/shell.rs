@@ -716,7 +716,8 @@ impl Shell {
                 Laid { t, icon, w: 6.0 + icon + 8.0 + tw + 12.0 + 4.0 * t, title, sub }
             })
             .collect();
-        let anchor = on.and_then(|id| self.focus_boxes.iter().position(|b| b.id == id)).unwrap_or(0);
+        // the door always at the left, before the first box
+        let anchor = 0;
         let total = DOOR_VIS + laid.iter().map(|l| l.w).sum::<f32>() - OVERLAP * (laid.len() - 1) as f32;
         let mut x = right - total;
         let mut xs = Vec::with_capacity(laid.len());
