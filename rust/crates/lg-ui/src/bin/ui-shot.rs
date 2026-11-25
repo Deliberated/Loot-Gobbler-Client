@@ -500,6 +500,25 @@ fn main() {
                             Some(lg_ui::welcome::JavaOffer { path: r"C:\Users\Someone\AppData\Roaming\LootGobbler".into(), take: true });
                     }
                     // "about": Info > About over the Profile
+                    // "Inventory:st:forge": ST Sets with a set clicked whose missing piece you can forge (else one the
+                    // forge makes from tokens), its class alone in the grid
+                    if tab == "Inventory:st:forge" {
+                        win.open("Inventory:st");
+                        let data = app.world.data();
+                        let stock = lg_app::st_forge::Stock::of(&app, 0);
+                        let has = |id: i32| app.collection.entry(id).is_some_and(|e| e.held() > 0);
+                        let plans: Vec<(&lg_gamedata::st_sets::StSet, Vec<lg_app::st_forge::Piece>)> =
+                            data.st_sets.iter().map(|s| (s, stock.plan(data, s, &has))).collect();
+                        let pick = plans
+                            .iter()
+                            .find(|(_, p)| p.iter().any(|c| c.craftable))
+                            .or_else(|| plans.iter().find(|(_, p)| p.iter().any(|c| !c.tokens.is_empty())))
+                            .or_else(|| plans.iter().find(|(_, p)| !p.is_empty()));
+                        if let Some((s, _)) = pick {
+                            win.inventory.st_selected = Some(s.name.clone());
+                            win.inventory.st_class = Some(s.class_name.clone());
+                        }
+                    }
                     if tab == "about" {
                         win.open("Profile");
                         let mut asks = Vec::new();

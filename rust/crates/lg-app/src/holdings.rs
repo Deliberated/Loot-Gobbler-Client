@@ -864,7 +864,13 @@ impl Holdings {
 
     /// Java `everyCopy`: every copy of an item on living characters and in the vaults, characters first by id.
     pub fn every_copy(&self, living: &HashMap<i32, bool>, item: i32) -> Vec<crate::loadout::Held> {
-        let mut out = Vec::new();
+        self.copies_of(living, |id| id == item).remove(&item).unwrap_or_default()
+    }
+
+    /// Every copy of the items `want` picks, in one pass over the places: item -> its copies, each list ordered as
+    /// `every_copy` orders it (characters first by id, then the vaults).
+    pub fn copies_of(&self, living: &HashMap<i32, bool>, want: impl Fn(i32) -> bool) -> HashMap<i32, Vec<crate::loadout::Held>> {
+        let mut out: HashMap<i32, Vec<crate::loadout::Held>> = HashMap::new();
         for key in self.java_place_order() {
             let p = &self.places[&key];
             let char_id = key.strip_prefix("char:").and_then(|i| i.parse::<i32>().ok());
@@ -879,7 +885,7 @@ impl Holdings {
             };
             for (section, slots) in &p.sections {
                 for (i, slot) in slots.iter().enumerate() {
-                    if slot.item != item {
+                    if slot.empty() || !want(slot.item) {
                         continue;
                     }
                     let place = match char_id {
@@ -887,7 +893,7 @@ impl Holdings {
                         Some(_) => slot_name(i).to_string(),
                         None => section.clone(),
                     };
-                    out.push(crate::loadout::Held {
+                    out.entry(slot.item).or_default().push(crate::loadout::Held {
                         char_id: char_id.unwrap_or(0),
                         vault: if char_id.is_some() { None } else { Some(key.clone()) },
                         slot: place,
@@ -897,12 +903,14 @@ impl Holdings {
                 }
             }
         }
-        out.sort_by(|a, b| {
-            (a.char_id == 0)
-                .cmp(&(b.char_id == 0))
-                .then(a.char_id.cmp(&b.char_id))
-                .then(a.vault.as_deref().unwrap_or("").cmp(b.vault.as_deref().unwrap_or("")))
-        });
+        for copies in out.values_mut() {
+            copies.sort_by(|a, b| {
+                (a.char_id == 0)
+                    .cmp(&(b.char_id == 0))
+                    .then(a.char_id.cmp(&b.char_id))
+                    .then(a.vault.as_deref().unwrap_or("").cmp(b.vault.as_deref().unwrap_or("")))
+            });
+        }
         out
     }
 

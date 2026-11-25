@@ -35,6 +35,8 @@ pub struct InventoryView {
     focus_seen: Option<i32>,
     pub st_filter: usize,
     pub st_class: Option<String>,
+    /// The ST set clicked on its card: the side shows what forging its missing pieces takes (its name).
+    pub st_selected: Option<String>,
     /// The item whose history replaces the Recent list (Java `historyItem`).
     pub history: Option<i32>,
     /// An item opened from another tab, to be scrolled to and pulsed once the grid is drawn (Java `showItem`).
@@ -1024,6 +1026,18 @@ impl InventoryView {
             })
             .collect();
         shown.sort_by(|a, b| n_of(b).cmp(&n_of(a)).then(a.title.cmp(&b.title)));
+        // the missing pieces the forge can make now from what you hold (tokens, a spare ST to dismantle)
+        let stock = lg_app::st_forge::Stock::of(app, self.upe_char);
+        let craftable: std::collections::HashSet<i32> =
+            sets.iter().flat_map(|s| stock.plan(data, s, &has)).filter(|c| c.craftable).map(|c| c.piece).collect();
+        // low-high-low, once every 1.4 s
+        let time = ui.input(|i| i.time);
+        let blink = (0.5 - 0.5 * (std::f64::consts::TAU * time / 1.4).cos()) as f32;
+        if !craftable.is_empty() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+        }
+        let selected_name = self.st_selected.clone();
+        let mut pick: Option<Option<String>> = None;
         // the split: the side 280 px, the cards snapped down to whole columns
         let overhead = 2.0 + 12.0;
         let base = overhead + 20.0 - GAP;
@@ -1083,6 +1097,15 @@ impl InventoryView {
                             Stroke::new(if done { 2.0 } else { 1.0 }, if done { p.gold } else { Color32::BLACK }),
                             StrokeKind::Inside,
                         );
+                        // a click on the card: the side shows what forging its missing pieces takes (again: hidden)
+                        let selected = selected_name.as_deref() == Some(s.name.as_str());
+                        if ui
+                            .interact(cr, ui.scope_id().with(("st-card", &s.name)), Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            pick = Some(if selected { None } else { Some(s.name.clone()) });
+                        }
                         if s.skin != 0
                             && let Some(t) = icons.object(ui.ctx(), data, s.skin, 64)
                         {
@@ -1122,13 +1145,39 @@ impl InventoryView {
                                 );
                             }
                             painter.rect_stroke(tr, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
-                            // hover: a gold frame; click: the piece on the Items page with its history (Java `Tile`)
+                            // a missing piece you can forge now: a gold glow fading up and down
+                            let forge = !have && craftable.contains(id);
+                            if forge {
+                                painter.rect_filled(tr, 0.0, p.gold.gamma_multiply(0.15 + 0.45 * blink));
+                                if let Some(t) = icons.object(ui.ctx(), data, *id, (TILE - 10.0) as u32) {
+                                    painter.image(
+                                        t.id(),
+                                        Rect::from_center_size(tr.center(), vec2(TILE - 10.0, TILE - 10.0)),
+                                        uv(),
+                                        Color32::from_white_alpha((64.0 + 191.0 * blink) as u8),
+                                    );
+                                }
+                                painter.rect_stroke(
+                                    tr,
+                                    0.0,
+                                    Stroke::new(2.0, p.gold.gamma_multiply(0.3 + 0.7 * blink)),
+                                    StrokeKind::Inside,
+                                );
+                            }
+                            // hover: a gold frame; click: the piece on the Items page with its history (Java `Tile`), or
+                            // for a piece you can forge, what it takes and where that is (the side)
                             let item = data.items.item(*id);
                             let tip = format!(
                                 "{}  ({}{})",
                                 item.map_or(format!("Item {id}"), |i| i.name.clone()),
                                 item.map_or("", |i| i.slot_name()),
-                                if have { "" } else { " - missing" }
+                                if have {
+                                    ""
+                                } else if forge {
+                                    " - missing, you can forge it now: click to see what it takes"
+                                } else {
+                                    " - missing"
+                                }
                             );
                             let resp = ui
                                 .interact(tr, ui.scope_id().with(("st-piece", *id, k)), Sense::click())
@@ -1137,7 +1186,9 @@ impl InventoryView {
                             if resp.hovered() {
                                 painter.rect_stroke(tr, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
                             }
-                            if resp.clicked() && item.is_some() {
+                            if resp.clicked() && forge {
+                                pick = Some(Some(s.name.clone()));
+                            } else if resp.clicked() && item.is_some() {
                                 crate::window::open_later(ui.ctx(), format!("Inventory:item:{id}"));
                             }
                         }
@@ -1177,6 +1228,9 @@ impl InventoryView {
                         let t = widgets::fit(&painter, &s.title, &text(size), room);
                         let tr = jtext::draw(&painter, pos2(cr.left() + 6.0, by), Align2::LEFT_CENTER, &t, &text(size), p.ink);
                         painter.rect_filled(Rect::from_min_size(pos2(tr.left(), tr.bottom() - 1.0), vec2(tr.width(), 1.0)), 0.0, p.ink);
+                        if selected {
+                            painter.rect_stroke(cr, 0.0, Stroke::new(3.0, p.gold_hover), StrokeKind::Inside);
+                        }
                     }
                     let rows = (shown.len() as f32 / cols).ceil();
                     ui.allocate_exact_size(vec2(r.width() - 12.0, 20.0 + rows * (ch + GAP)), Sense::hover());
@@ -1184,6 +1238,9 @@ impl InventoryView {
             },
         );
         self.st_filter = filter;
+        if let Some(sel) = pick {
+            self.st_selected = sel;
+        }
 
         // the side: set progress, almost complete, by class
         let painter = ui.painter().clone();
@@ -1224,49 +1281,47 @@ impl InventoryView {
                 }
             },
         );
-        let mut close: Vec<&lg_gamedata::st_sets::StSet> = sets.iter().filter(|s| n_of(s) == 3).collect();
-        close.sort_by(|a, b| a.title.cmp(&b.title));
-        close.truncate(8);
-        let row_h = lh.max(22.0);
-        let almost_h = if close.is_empty() { lh } else { close.len() as f32 * row_h };
-        let almost = Rect::from_min_size(pos2(side.left(), prog.bottom() + 8.0), vec2(side.width(), head + 2.0 + 16.0 + almost_h));
-        let icons = &mut *c.icons;
-        widgets::section(
-            ui,
-            &p,
-            almost,
-            "Almost Complete",
-            fixed::BLUE,
-            |_, _| {},
-            |ui, r| {
-                let painter = ui.painter().clone();
-                let (x, mut y) = (r.left() + 10.0, r.top() + 8.0);
-                if close.is_empty() {
-                    jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, "No set is one piece away.", &text(18.0), fixed::MUTED);
-                }
-                for s in &close {
-                    let missing = s.pieces.iter().copied().find(|id| !has(*id)).unwrap_or(0);
-                    if let Some(t) = icons.object(ui.ctx(), data, missing, ICON as u32) {
-                        painter.image(
-                            t.id(),
-                            Rect::from_min_size(pos2(x, y + (row_h - 22.0) / 2.0), vec2(22.0, 22.0)),
-                            uv(),
-                            Color32::WHITE,
-                        );
+        // the set clicked: what forging its missing pieces takes, and where those things are
+        let chosen = self.st_selected.as_deref().and_then(|n| sets.iter().find(|s| s.name == n));
+        let mut below = prog.bottom();
+        if let Some(set) = chosen {
+            let plan = stock.plan(data, set, &has);
+            let w = side.width() - 20.0 - 12.0;
+            let content = forge_rows(ui, &p, &mut *c.icons, app, rarity, set, &plan, n_of(set), pos2(0.0, 0.0), w, false);
+            let room = (side.bottom() - below - 8.0 - 140.0).max(head + 60.0);
+            let fr = Rect::from_min_size(pos2(side.left(), below + 8.0), vec2(side.width(), (head + 2.0 + 16.0 + content).min(room)));
+            let icons = &mut *c.icons;
+            let mut close = false;
+            widgets::section(
+                ui,
+                &p,
+                fr,
+                "Forge",
+                fixed::GOLD,
+                |ui, head| {
+                    let painter = ui.painter().clone();
+                    let xr = Rect::from_center_size(pos2(head.right() - 14.0, head.center().y), vec2(22.0, 22.0));
+                    let resp = ui.interact(xr, ui.scope_id().with("st-forge-close"), Sense::click()).on_hover_text("Close");
+                    let ink = if resp.hovered() { p.gold } else { p.ink_muted };
+                    for (a, b) in [(vec2(-5.0, -5.0), vec2(5.0, 5.0)), (vec2(-5.0, 5.0), vec2(5.0, -5.0))] {
+                        painter.line_segment([xr.center() + a, xr.center() + b], Stroke::new(2.0, ink));
                     }
-                    jtext::draw(&painter, pos2(x + 30.0, y + row_h / 2.0), Align2::LEFT_CENTER, &s.title, &text(18.0), p.ink);
-                    let name = data.items.item(missing).map_or("?".to_string(), |i| i.name.clone());
-                    widgets::tip(
-                        ui,
-                        Rect::from_min_size(pos2(x, y), vec2(r.width() - 20.0, row_h)),
-                        ("almost", missing),
-                        &format!("Missing: {name}"),
-                    );
-                    y += row_h;
-                }
-            },
-        );
-        let by_class = Rect::from_min_max(pos2(side.left(), almost.bottom() + 8.0), side.max);
+                    close = resp.clicked();
+                },
+                |ui, r| {
+                    egui::ScrollArea::vertical().id_salt("st-forge").show(ui, |ui| {
+                        let top = ui.cursor().min;
+                        let h = forge_rows(ui, &p, icons, app, rarity, set, &plan, n_of(set), pos2(top.x + 10.0, top.y + 8.0), w, true);
+                        ui.allocate_exact_size(vec2(r.width() - 12.0, h + 16.0), Sense::hover());
+                    });
+                },
+            );
+            if close {
+                self.st_selected = None;
+            }
+            below = fr.bottom();
+        }
+        let by_class = Rect::from_min_max(pos2(side.left(), below + 8.0), side.max);
         widgets::section(
             ui,
             &p,
@@ -1682,4 +1737,139 @@ fn resource_row(
         jtext::draw(&painter, pos2(x + 4.0, cy), Align2::LEFT_CENTER, &label.to_uppercase(), &small_f, fixed::MUTED);
         x -= 18.0;
     }
+}
+
+/// Where a copy is, in words: "Druid · Slot 3" (seasonal marked), "Vault · Vault chest", "Seasonal vault · Gift chest".
+fn place_of(app: &lg_app::App, h: &lg_app::loadout::Held) -> String {
+    if h.char_id > 0 {
+        let class = app.characters.get(h.char_id).map_or("Character", |c| c.class_name.as_str());
+        let seasonal = if h.seasonal == Some(true) { " (seasonal)" } else { "" };
+        format!("{class}{seasonal} · {}", h.slot)
+    } else if h.vault.as_deref() == Some(lg_app::holdings::SEASONAL_VAULT) {
+        format!("Seasonal vault · {}", h.slot)
+    } else {
+        format!("Vault · {}", h.slot)
+    }
+}
+
+/// The ST Sets side's Forge section for the set clicked: each missing piece the forge makes from its token, whether
+/// you can forge it now, where your tokens are and the spare ST items it could take; drawn from `at` when `paint`,
+/// else only measured. Gives the height.
+#[allow(clippy::too_many_arguments)]
+fn forge_rows(
+    ui: &Ui,
+    p: &Palette,
+    icons: &mut crate::icons::Icons,
+    app: &lg_app::App,
+    rarity: &Rarity,
+    set: &lg_gamedata::st_sets::StSet,
+    plan: &[lg_app::st_forge::Piece],
+    owned: usize,
+    at: egui::Pos2,
+    w: f32,
+    paint: bool,
+) -> f32 {
+    let painter = ui.painter().clone();
+    let data = app.world.data();
+    let (f18, f16, fs) = (text(18.0), text(16.0), small());
+    let (lh, lh16, lhs) = (jtext::height(&painter, &f18), jtext::height(&painter, &f16), jtext::height(&painter, &fs));
+    let (x, mut y) = (at.x, at.y);
+    let line = |y: &mut f32, s: &str, f: &egui::FontId, color: Color32, indent: f32, h: f32| {
+        if paint {
+            let t = widgets::fit(&painter, s, f, w - indent);
+            jtext::draw(&painter, pos2(x + indent, *y), Align2::LEFT_TOP, &t, f, color);
+        }
+        *y += h;
+    };
+    line(&mut y, &format!("{}  ·  {}", set.title, set.class_name), &f18, p.gold, 0.0, lh + 4.0);
+    if owned == 4 {
+        line(&mut y, "All four pieces are yours.", &f16, fixed::MUTED, 0.0, lh16);
+        return y - at.y;
+    }
+    if plan.is_empty() {
+        line(&mut y, "Its missing pieces are not made from a set token.", &f16, fixed::MUTED, 0.0, lh16);
+        return y - at.y;
+    }
+    for (k, piece) in plan.iter().enumerate() {
+        if k > 0 {
+            y += 10.0;
+        }
+        // the piece: its icon, name and whether you can forge it now
+        let row = 30f32.max(lh + lh16);
+        if paint {
+            let ir = Rect::from_min_size(pos2(x, y + (row - 28.0) / 2.0), vec2(28.0, 28.0));
+            painter.rect_filled(ir, 0.0, if piece.craftable { mix(p.gold, p.paper, 0.35) } else { Color32::from_rgb(5, 5, 5) });
+            painter.rect_stroke(ir, 0.0, Stroke::new(1.0, if piece.craftable { p.gold } else { Color32::BLACK }), StrokeKind::Inside);
+            if let Some(t) = icons.object(ui.ctx(), data, piece.piece, 22) {
+                painter.image(t.id(), Rect::from_center_size(ir.center(), vec2(22.0, 22.0)), uv(), Color32::WHITE);
+            }
+            let name = data.items.item(piece.piece).map_or(format!("Item {}", piece.piece), |i| i.name.clone());
+            let nx = x + 28.0 + 8.0;
+            jtext::draw(&painter, pos2(nx, y), Align2::LEFT_TOP, &widgets::fit(&painter, &name, &f18, w - 36.0), &f18, p.ink);
+            let mut needs = Vec::new();
+            let short = piece.amount - piece.tokens.len() as i32;
+            if short > 0 {
+                needs.push(format!("{short} more token{}", if short == 1 { "" } else { "s" }));
+            }
+            if let Some(slot) = &piece.st_slot
+                && piece.spares.is_empty()
+            {
+                needs.push(format!("a spare ST {}", slot.to_lowercase()));
+            }
+            let (status, color) = if piece.craftable {
+                ("You can forge it now".to_string(), fixed::GREEN)
+            } else if needs.is_empty() {
+                ("Tokens and spare are on different sides (seasonal / regular)".to_string(), fixed::MUTED)
+            } else {
+                (format!("Needs {}", needs.join(" and ")), fixed::MUTED)
+            };
+            jtext::draw(&painter, pos2(nx, y + lh), Align2::LEFT_TOP, &widgets::fit(&painter, &status, &f16, w - 36.0), &f16, color);
+        }
+        y += row + 4.0;
+        // the tokens: how many it takes, and every one you hold
+        line(&mut y, &format!("TOKENS: {} HELD, {} NEEDED", piece.tokens.len(), piece.amount), &fs, p.ink_muted, 0.0, lhs + 2.0);
+        if piece.tokens.is_empty() {
+            line(&mut y, "None held", &f16, fixed::MUTED, 10.0, lh16);
+        }
+        for c in &piece.tokens {
+            line(&mut y, &format!("· {}", place_of(app, &c.held)), &f16, p.ink, 10.0, lh16);
+        }
+        // the ST item to dismantle: your spares of that kind
+        if let Some(slot) = &piece.st_slot {
+            y += 4.0;
+            line(&mut y, &format!("SPARE ST {} TO DISMANTLE", slot.to_uppercase()), &fs, p.ink_muted, 0.0, lhs + 2.0);
+            if piece.spares.is_empty() {
+                line(&mut y, &format!("None: an ST {} you hold twice or more", slot.to_lowercase()), &f16, fixed::MUTED, 10.0, lh16);
+            }
+            // the least enchanted first (the one to give up); a few, the rest counted
+            const SHOWN: usize = 3;
+            for c in piece.spares.iter().take(SHOWN) {
+                let rh = 22f32.max(lh16 * 2.0);
+                if paint {
+                    let ir = Rect::from_min_size(pos2(x + 10.0, y + (rh - 20.0) / 2.0), vec2(20.0, 20.0));
+                    if let Some(t) = icons.object(ui.ctx(), data, c.item, 20) {
+                        painter.image(t.id(), ir, uv(), Color32::WHITE);
+                    }
+                    enchant_badge(&painter, rarity, pos2(ir.right() + 1.0, ir.bottom() + 1.0), c.enchants().max(0) as usize, 4.0);
+                    let name = data.items.item(c.item).map_or(format!("Item {}", c.item), |i| i.name.clone());
+                    let tx = x + 10.0 + 20.0 + 8.0;
+                    jtext::draw(&painter, pos2(tx, y), Align2::LEFT_TOP, &widgets::fit(&painter, &name, &f16, w - 38.0), &f16, p.ink);
+                    let place = place_of(app, &c.held);
+                    jtext::draw(
+                        &painter,
+                        pos2(tx, y + lh16),
+                        Align2::LEFT_TOP,
+                        &widgets::fit(&painter, &place, &f16, w - 38.0),
+                        &f16,
+                        fixed::MUTED,
+                    );
+                }
+                y += rh + 2.0;
+            }
+            if piece.spares.len() > SHOWN {
+                line(&mut y, &format!("and {} more", piece.spares.len() - SHOWN), &f16, fixed::MUTED, 10.0, lh16);
+            }
+        }
+    }
+    y - at.y
 }

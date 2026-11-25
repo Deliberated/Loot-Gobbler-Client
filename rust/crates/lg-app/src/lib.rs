@@ -38,6 +38,7 @@ pub mod properties;
 pub mod realm_character;
 pub mod resources;
 pub mod server;
+pub mod st_forge;
 pub mod sync;
 pub mod tinkerer;
 pub mod upe;

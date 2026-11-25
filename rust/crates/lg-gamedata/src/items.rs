@@ -89,7 +89,8 @@ const LOOT_ACCELERATORS: [&str; 4] = ["DROPLOOTBOOST", "TIEREDLOOTBOOST", "ITEMS
 const FORGE_DROPS: [&str; 3] = ["Concentrated Soul Fire", "SpecPen Upgrade Token", "SpecPen Upgrade Token Shiny"];
 
 impl Item {
-    fn new(id: i32) -> Item {
+    /// An item with just its id, everything else as when the data says nothing.
+    pub fn new(id: i32) -> Item {
         Item {
             id,
             name: String::new(),
@@ -366,6 +367,11 @@ impl Items {
     #[cfg(test)]
     pub(crate) fn insert_for_test(&mut self, id: i32, name: &str) {
         self.items.insert(id, Item { name: name.into(), ..Item::new(id) });
+    }
+
+    /// Adds or replaces an item (made-up game data in other crates' tests).
+    pub fn insert(&mut self, item: Item) {
+        self.items.insert(item.id, item);
     }
 
     pub fn item(&self, id: i32) -> Option<&Item> {
