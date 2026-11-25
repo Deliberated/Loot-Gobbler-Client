@@ -1729,7 +1729,28 @@ fn gathered(app: &lg_app::App, char_id: i32) -> HashMap<i32, (i32, i32, String, 
 /// A drop belongs to the characters played around then (a stretch of play by its fame samples, a little slack at
 /// either end; a lone sample is no play); where two were, to the one with a sample nearest the drop. As `gathered`:
 /// item -> (copies, best enchantments, date, time of the newest).
+/// Worked out again only when the records it reads changed (it reads every find and every character's play: done each
+/// frame, a long-played character's view kept loading).
 fn found_by(app: &lg_app::App, char_id: i32) -> HashMap<i32, (i32, i32, String, String)> {
+    type Found = HashMap<i32, (i32, i32, String, String)>;
+    type Key = (usize, usize, usize, usize);
+    type Cache = HashMap<i32, (Key, Found)>;
+    thread_local! {
+        static CACHE: std::cell::RefCell<Cache> = std::cell::RefCell::new(HashMap::new());
+    }
+    // what it depends on, counted: the finds, the owners noted, the characters' samples
+    let finds: usize = app.collection.all().map(|(_, e)| e.history.as_ref().map_or(0, Vec::len)).sum();
+    let samples: usize = app.characters.all().map(|c| c.samples.len()).sum();
+    let key = (finds, app.collection.owners.len(), samples, app.characters.all().count());
+    if let Some(hit) = CACHE.with(|c| c.borrow().get(&char_id).filter(|(k, _)| *k == key).map(|(_, f)| f.clone())) {
+        return hit;
+    }
+    let found = work_out_found_by(app, char_id);
+    CACHE.with(|c| c.borrow_mut().insert(char_id, (key, found.clone())));
+    found
+}
+
+fn work_out_found_by(app: &lg_app::App, char_id: i32) -> HashMap<i32, (i32, i32, String, String)> {
     const SLACK_MS: i64 = 2 * 60_000;
     let mut out: HashMap<i32, (i32, i32, String, String)> = HashMap::new();
     if app.characters.get(char_id).is_none() {
