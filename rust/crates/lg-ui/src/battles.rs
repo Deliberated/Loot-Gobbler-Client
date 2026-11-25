@@ -339,10 +339,14 @@ impl BattlesView {
             .or_else(|| visits.iter().copied().find(|v| Some(v.start) == shown).map(|v| (v, false)));
         if let Some((v, current)) = shown_visit {
             crate::guide::mark(ui, "battles.detail", side);
-            if let Some(run) = detail(ui, c, v, current, side) {
-                // Java `showRun`: the run under DPS, its latest boss open (the one in progress followed live)
+            if let Some((run, boss)) = detail(ui, c, v, current, side) {
+                // Java `showRun`: the run under DPS, its latest boss open (the one in progress followed live); or
+                // the boss clicked
                 self.page = 1;
-                self.dps.show_run(&c.app.dps_history, run);
+                match boss {
+                    Some(i) => self.dps.show_boss(&c.app.dps_history, run, i),
+                    None => self.dps.show_run(&c.app.dps_history, run),
+                }
             }
         }
         c.asks.extend(pending.take());
@@ -682,8 +686,8 @@ pub fn hit_source(data: &lg_gamedata::GameData, enemy: i32) -> String {
 
 /// The column on the right (Java `showDetail`): the dungeon, its boss fights, the damage graph, your death, the
 /// exaltation progress.
-/// Gives the run whose boss damage was asked for (None inside: the one in progress).
-fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Option<Option<i64>> {
+/// Gives the run whose boss damage was asked for (None inside: the one in progress), with the boss clicked.
+fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Option<(Option<i64>, Option<usize>)> {
     let asked = std::cell::RefCell::new(None);
     let c_asks = std::cell::RefCell::new(Vec::new());
     let p = *c.p;
@@ -805,8 +809,10 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Opt
                     return fh;
                 };
                 let mut ty = r.top();
-                for b in &run.bosses {
+                let which = if current { None } else { Some(run.start) };
+                for (bi, b) in run.bosses.iter().enumerate() {
                     let Some(place) = b.players.iter().position(|x| x.me) else { continue };
+                    let block_top = ty;
                     let me = &b.players[place];
                     let dps = f64::from(me.damage) / (b.fight_ms as f64 / 1000.0).max(1.0);
                     let t = format!(
@@ -817,7 +823,33 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Opt
                         num(dps.round() as i64)
                     );
                     jtext::draw(&painter, pos2(r.left(), ty), Align2::LEFT_TOP, &t, &f, p.ink);
-                    ty += fh;
+                    ty += fh + 2.0;
+                    // an excerpt: you and the one above and below (the next two when you are first or last)
+                    let n = b.players.len();
+                    let from = place.saturating_sub(1).min(n.saturating_sub(3));
+                    let sm = f.clone();
+                    let sh = fh + 1.0;
+                    for (k, pl) in b.players.iter().enumerate().skip(from).take(3) {
+                        let color = if pl.me { p.gold } else { p.ink_soft };
+                        let x = r.left() + 12.0;
+                        jtext::draw(&painter, pos2(x, ty), Align2::LEFT_TOP, &format!("#{}", k + 1), &sm, color);
+                        jtext::draw(&painter, pos2(x + 40.0, ty), Align2::LEFT_TOP, &pl.name, &sm, color);
+                        let dmg = format!("{} DMG", num(i64::from(pl.damage)));
+                        jtext::draw(&painter, pos2(x + 300.0, ty), Align2::RIGHT_TOP, &dmg, &sm, color);
+                        let pct = format!("{:.1}%", crate::dps::share(b, pl));
+                        jtext::draw(&painter, pos2(x + 370.0, ty), Align2::RIGHT_TOP, &pct, &sm, color);
+                        ty += sh;
+                    }
+                    // anywhere on it: that boss under DPS
+                    let hit = Rect::from_min_max(pos2(r.left() - 4.0, block_top - 2.0), pos2(r.right(), ty + 2.0));
+                    let resp = ui.interact(hit, ui.scope_id().with(("boss-fight", bi)), egui::Sense::click());
+                    if resp.hovered() {
+                        painter.rect_filled(hit, 4.0, p.gold.gamma_multiply(0.06));
+                    }
+                    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        *asked.borrow_mut() = Some((which, Some(bi)));
+                    }
+                    ty += 8.0;
                 }
                 ty += 8.0;
                 let bw = jtext::width(&painter, "SHOW BOSS DAMAGE", &small()) + 32.0;
@@ -829,7 +861,7 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Opt
                     false,
                     "boss-damage",
                 ) {
-                    *asked.borrow_mut() = Some(if current { None } else { Some(run.start) });
+                    *asked.borrow_mut() = Some((which, None));
                 }
                 ty + 36.0 - r.top()
             },

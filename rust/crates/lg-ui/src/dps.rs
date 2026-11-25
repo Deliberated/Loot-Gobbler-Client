@@ -62,7 +62,7 @@ fn dps(b: &Boss, p: &PlayerRow) -> f64 {
     f64::from(p.damage) / (b.fight_ms as f64 / 1000.0).max(1.0)
 }
 
-fn share(b: &Boss, p: &PlayerRow) -> f64 {
+pub(crate) fn share(b: &Boss, p: &PlayerRow) -> f64 {
     let t: i64 = b.players.iter().map(|x| i64::from(x.damage)).sum();
     if t == 0 { 0.0 } else { 100.0 * f64::from(p.damage) / t as f64 }
 }
@@ -336,6 +336,28 @@ impl DpsView {
         self.selected = start;
         if let Some(run) = start.and_then(|s| history.runs.iter().find(|r| r.start == s)) {
             self.open_latest(run);
+        }
+    }
+
+    /// A run (None: the one in progress) with one of its bosses (its place in the run) opened.
+    pub fn show_boss(&mut self, history: &lg_app::dps_history::DpsHistory, start: Option<i64>, boss: usize) {
+        self.selected = start;
+        match start {
+            Some(s) => {
+                if let Some(run) = history.runs.iter().find(|r| r.start == s)
+                    && let Some(b) = run.bosses.get(boss)
+                {
+                    self.expanded.insert(boss_key(run, false, b, boss));
+                }
+            }
+            // the live run's bosses are open unless collapsed
+            None => {
+                if let Some(run) = history.live.as_ref()
+                    && let Some(b) = run.bosses.get(boss)
+                {
+                    self.expanded.remove(&boss_key(run, true, b, boss));
+                }
+            }
         }
     }
 
