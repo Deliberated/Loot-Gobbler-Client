@@ -756,7 +756,8 @@ impl CharactersView {
                 |ui, r| crate::detail::loadout(ui, &p, app, icons, ch, r),
             );
             mark(ui, "characters.loadout", y0, y);
-            // the suggestion, worked out again only when the character or the settings change
+            // the suggestion (not for one in the graveyard), worked out again only when the character or the settings
+            // change
             let key = format!(
                 "{}|{:?}|{}|{}|{}|{}|{}|{}",
                 ch.char_id,
@@ -768,13 +769,16 @@ impl CharactersView {
                 c.loadout.enchant_locks,
                 c.loadout.suggest_enchants
             );
-            if self.suggestion.as_ref().is_none_or(|s| s.0 != key)
+            if ch.alive
+                && self.suggestion.as_ref().is_none_or(|s| s.0 != key)
                 && let Some(picks) = lg_app::loadout::suggestion(app, c.en, ch, c.loadout)
             {
                 let sum = lg_app::loadout::summary(app, c.en, ch, c.loadout, &picks);
                 self.suggestion = Some((key, picks, sum));
             }
-            if let Some((_, picks, sum)) = &self.suggestion {
+            if ch.alive
+                && let Some((_, picks, sum)) = &self.suggestion
+            {
                 let mut change = None;
                 let en = c.en;
                 let settings = c.loadout.clone();
