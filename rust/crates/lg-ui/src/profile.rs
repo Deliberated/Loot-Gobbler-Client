@@ -264,6 +264,13 @@ impl Profile {
             ],
         );
         ui.add_space(20.0);
+        // suggestions of what to do next (each a box; their content comes later)
+        heading(ui, &p, "What you can do");
+        ui.add_space(8.0);
+        let ideas: Vec<widgets::Card<'_, ()>> =
+            (0..SUGGESTIONS).map(|_| -> widgets::Card<'_, ()> { Box::new(|ui: &mut Ui, _: &mut ()| suggestion(ui, &p)) }).collect();
+        row(ui, &p, 12.0, &mut (), ideas);
+        ui.add_space(20.0);
         heading(ui, &p, "Last 24 hours");
         ui.add_space(8.0);
         today_tiles(ui, &p, app, &runs, &drops, now, since);
@@ -730,6 +737,36 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
 }
 
 /// One number with its caption and a line below (Java `tile`).
+/// How many suggestion boxes the overview shows.
+const SUGGESTIONS: usize = 4;
+
+/// A suggestion box: a quill and "Coming soon" for now.
+fn suggestion(ui: &mut Ui, p: &Palette) {
+    let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 64.0), egui::Sense::hover());
+    quill(ui.painter(), egui::pos2(r.left() + 30.0, r.center().y), p.ink_soft, p.gold);
+    crate::jtext::draw(
+        ui.painter(),
+        egui::pos2(r.left() + 66.0, r.center().y),
+        egui::Align2::LEFT_CENTER,
+        "Coming soon",
+        &widgets::head_px(26.0),
+        p.ink_soft,
+    );
+}
+
+/// A quill around `c`, slanted: the feather's vane, its shaft and the nib with a drop of ink.
+fn quill(painter: &egui::Painter, c: egui::Pos2, feather: egui::Color32, nib: egui::Color32) {
+    let (s, co) = (-std::f32::consts::FRAC_PI_4).sin_cos();
+    // points along the quill (x down the shaft) turned 45 degrees, tip at the bottom left
+    let at = |x: f32, y: f32| egui::pos2(c.x + x * co - y * s, c.y + x * s + y * co);
+    let vane: Vec<egui::Pos2> =
+        vec![at(-24.0, 0.0), at(-14.0, -7.0), at(0.0, -8.0), at(10.0, -4.0), at(12.0, 0.0), at(10.0, 3.0), at(0.0, 5.0), at(-14.0, 4.0)];
+    painter.add(egui::Shape::convex_polygon(vane, feather.gamma_multiply(0.85), egui::Stroke::new(1.0, feather)));
+    painter.line_segment([at(-26.0, 0.0), at(20.0, 0.0)], egui::Stroke::new(1.6, feather));
+    painter.add(egui::Shape::convex_polygon(vec![at(14.0, -2.5), at(24.0, 0.0), at(14.0, 2.5)], nib, egui::Stroke::NONE));
+    painter.circle_filled(at(27.0, 0.0), 1.8, nib);
+}
+
 fn tile(ui: &mut Ui, p: &Palette, caption_text: &str, value: &str, sub: &str) {
     caption(ui, p, caption_text);
     label(ui, value, &widgets::head_px(42.0), p.ink);
