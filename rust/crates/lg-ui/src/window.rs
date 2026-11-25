@@ -504,7 +504,17 @@ impl Window {
                 }
             })
             .collect();
-        self.shell.focus_on = crate::focus::current(app, &self.props).map(|(r, _)| r.char_id);
+        // then the characters added with their eye (Characters tab), each with its own look
+        for ch in crate::focus::char_candidates(app, &self.props) {
+            let skin = if ch.skin > 0 { ch.skin } else { ch.class_type };
+            self.shell.focus_boxes.push(shell::FocusBox {
+                id: ch.char_id,
+                title: ch.class_name.clone(),
+                sub: format!("character{}", if ch.seasonal { " · seasonal" } else { "" }),
+                icon: self.icons.skin(ui.ctx(), data, skin, ch.tex1, ch.tex2, 72).map(|t| t.id()),
+            });
+        }
+        self.shell.focus_on = crate::focus::focused_char(app, &self.props).map(|c| c.char_id);
         let Window { shell, icons, en, loadout, props, profile, characters, inventory, game_modes, battles, social, guild, asks, .. } =
             self;
         shell.show(ui, &palette, |ui, tab| {
@@ -559,7 +569,7 @@ impl Window {
             }
         }
         if let Some(pick) = self.shell.clicked_focus {
-            self.asks.push(Ask::Set(crate::focus::KEY.into(), crate::focus::value(pick)));
+            self.asks.push(Ask::Set(crate::focus::KEY.into(), crate::focus::value_for(app, pick)));
         }
         if self.shell.order_changed {
             self.asks.push(Ask::Set("tabOrder".into(), self.shell.order.join("|")));

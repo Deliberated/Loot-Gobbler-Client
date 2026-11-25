@@ -31,6 +31,9 @@ const LOOT_DROP_BOOST: f64 = 50.0;
 
 pub struct CharactersView {
     pub page: usize,
+    /// The characters added to the focus row with their eye, and the one in focus (from the settings, each frame).
+    focus_chars: Vec<i32>,
+    focus_on: Option<i32>,
     /// A class to show on the Classes page's right (Java `ClassesView.open`).
     pub open_class: Option<i32>,
     pub range: usize,
@@ -48,6 +51,8 @@ pub struct CharactersView {
 impl Default for CharactersView {
     fn default() -> Self {
         CharactersView {
+            focus_chars: Vec::new(),
+            focus_on: None,
             page: 0,
             open_class: None,
             range: 1,
@@ -151,6 +156,8 @@ impl CharactersView {
 
     pub fn show(&mut self, ui: &mut Ui, c: &mut Ctx) {
         self.ensure_textures(ui.ctx());
+        self.focus_chars = crate::focus::chars(c.props);
+        self.focus_on = crate::focus::focused_char(c.app, c.props).map(|ch| ch.char_id);
         let p = *c.p;
         let all = ui.max_rect().shrink(8.0);
         let painter = ui.painter().clone();
@@ -565,6 +572,46 @@ impl CharactersView {
         let row2_top = row1.top() + right_row + 4.0;
         let mid = row2_top + right_row / 2.0;
         let mut x = rx - 8.0;
+        // the eye: this character in the focus row (and in focus), or out of it again; living characters only
+        x -= 34.0;
+        if c.alive {
+            let er = Rect::from_min_size(pos2(x, mid - 17.0), vec2(34.0, 34.0));
+            let added = self.focus_chars.contains(&c.char_id);
+            let on = self.focus_on == Some(c.char_id);
+            let resp = ui
+                .interact(er, ui.scope_id().with(("char-focus", c.char_id)), Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(if added { "In the focus row: click to take it out" } else { "Focus on this character" });
+            if on {
+                painter.rect_filled(er, 0.0, p.gold);
+            }
+            painter.rect_stroke(er, 0.0, Stroke::new(1.0, if resp.hovered() || added { p.gold } else { p.line }), StrokeKind::Inside);
+            let ink = if on {
+                p.on_accent
+            } else if added || resp.hovered() {
+                p.gold
+            } else {
+                p.ink_soft
+            };
+            eye(&painter, er.shrink(1.0), ink, if on { p.gold } else { card_fill });
+            if resp.clicked() {
+                let mut ids = self.focus_chars.clone();
+                if added {
+                    ids.retain(|id| *id != c.char_id);
+                    if on {
+                        crate::window::ask_later(ui.ctx(), crate::window::Ask::Set(crate::focus::KEY.into(), String::new()));
+                    }
+                } else {
+                    ids.push(c.char_id);
+                    crate::window::ask_later(ui.ctx(), crate::window::Ask::Set(crate::focus::KEY.into(), format!("char:{}", c.char_id)));
+                }
+                crate::window::ask_later(
+                    ui.ctx(),
+                    crate::window::Ask::Set(crate::focus::CHARS_KEY.into(), crate::focus::chars_value(&ids)),
+                );
+            }
+        }
+        x -= 8.0;
         // the star (favourite) and the gravestone (dead)
         x -= 34.0;
         star(&painter, pos2(x, mid - 17.0), c.favorite, p.ink);
@@ -1086,6 +1133,33 @@ fn flame(painter: &egui::Painter, at: egui::Pos2) {
             painter.rect_filled(Rect::from_min_size(pos2(at.x + col as f32 * 3.0, at.y + r as f32 * 3.0), vec2(3.0, 3.0)), 0.0, c);
         }
     }
+}
+
+/// The focus eye (16 x 16 pixels, two per pixel here, centred in `r`): an almond outline, the iris in `ink`, the
+/// pupil cut out in `hole`.
+fn eye(painter: &egui::Painter, r: Rect, ink: Color32, hole: Color32) {
+    const PX: f32 = 2.0;
+    let o = r.center() - vec2(8.0 * PX, 8.0 * PX);
+    let cells: [(f32, f32, f32, f32); 14] = [
+        (5.0, 4.0, 6.0, 1.0),
+        (3.0, 5.0, 2.0, 1.0),
+        (11.0, 5.0, 2.0, 1.0),
+        (1.0, 6.0, 2.0, 1.0),
+        (13.0, 6.0, 2.0, 1.0),
+        (0.0, 7.0, 1.0, 2.0),
+        (15.0, 7.0, 1.0, 2.0),
+        (1.0, 9.0, 2.0, 1.0),
+        (13.0, 9.0, 2.0, 1.0),
+        (3.0, 10.0, 2.0, 1.0),
+        (11.0, 10.0, 2.0, 1.0),
+        (5.0, 11.0, 6.0, 1.0),
+        (6.0, 5.0, 4.0, 6.0),
+        (5.0, 6.0, 6.0, 4.0),
+    ];
+    for (x, y, w, h) in cells {
+        painter.rect_filled(Rect::from_min_size(o + vec2(x * PX, y * PX), vec2(w * PX, h * PX)), 0.0, ink);
+    }
+    painter.rect_filled(Rect::from_min_size(o + vec2(7.0 * PX, 7.0 * PX), vec2(2.0 * PX, 2.0 * PX)), 0.0, hole);
 }
 
 /// Java `star`: a white star with a black outline (favourite), or just its outline in the text colour; 34 px.

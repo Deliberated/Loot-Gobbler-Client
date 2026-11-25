@@ -153,9 +153,9 @@ impl InventoryView {
         let data = app.world.data();
         let all = ui.max_rect().shrink(8.0);
         let painter = ui.painter().clone();
-        // the focus: its run's own finds while it is on
-        let focus = crate::focus::current(app, c.props);
-        let focus_id = focus.map(|(r, _)| r.char_id);
+        // the focus: its character's own finds while it is on (a run's gathered items, else what it found)
+        let focus = crate::focus::focused_char(app, c.props);
+        let focus_id = focus.map(|ch| ch.char_id);
         if focus_id != self.focus_seen {
             if let Some(id) = focus_id {
                 self.upe_char = id;
@@ -193,7 +193,7 @@ impl InventoryView {
         }
         // the forge resources, right-aligned on the same row: the regular side at the right, the seasonal one before it
         let pages_end = pages_x + widgets::segmented_width(ui.painter(), &PAGES, false) + 10.0;
-        resource_row(ui, &p, c.icons, app, pos2(all.right(), all.top()), 36.0, pages_end, focus.map(|(_, ch)| ch.seasonal));
+        resource_row(ui, &p, c.icons, app, pos2(all.right(), all.top()), 36.0, pages_end, focus.map(|ch| ch.seasonal));
         let mut body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
         if col_t > 0.0 {
             // it slides out from under the left edge
@@ -246,6 +246,7 @@ impl InventoryView {
         if self.upe_char != 0
             && !runs.iter().any(|r| r.char_id == self.upe_char)
             && !favourites.iter().any(|ch| ch.char_id == self.upe_char)
+            && self.focus_seen != Some(self.upe_char)
         {
             self.upe_char = 0; // it is not in the column (any more)
         }
