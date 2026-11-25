@@ -464,10 +464,26 @@ impl Shell {
             let focused = self.focus_on.is_some_and(|id| self.focus_boxes.iter().any(|b| b.id == id));
             let t = ctx.animate_bool_with_time(ui.scope_id().with("tab-bar-focus"), focused, 0.18);
             let gap = s(1.0) * (1.0 - t);
-            let bar = Rect::from_min_max(pos2(l, r.bottom() - h - gap), pos2(rr.max(l + h), r.bottom() - gap));
-            let round = (h / 2.0).round() as u8;
-            let low = ((1.0 - t) * f32::from(round)).round() as u8;
-            painter.rect_filled(bar, egui::CornerRadius { nw: round, ne: round, sw: low, se: low }, p.gold);
+            if t < 0.5 {
+                let bar = Rect::from_min_max(pos2(l, r.bottom() - h - gap), pos2(rr.max(l + h), r.bottom() - gap));
+                painter.rect_filled(bar, h / 2.0, p.gold);
+            } else {
+                // the top half of a pill, cut along its middle and sitting on the focus line: a quarter circle at
+                // each end, flat on the line
+                let (rad, base) = (s(5.0), r.bottom());
+                let rr = rr.max(l + 2.0 * rad);
+                let mut pts = Vec::new();
+                const STEPS: usize = 8;
+                for k in 0..=STEPS {
+                    let a = std::f32::consts::PI + std::f32::consts::FRAC_PI_2 * k as f32 / STEPS as f32;
+                    pts.push(pos2(l + rad + rad * a.cos(), base + rad * a.sin()));
+                }
+                for k in 0..=STEPS {
+                    let a = std::f32::consts::PI * 1.5 + std::f32::consts::FRAC_PI_2 * k as f32 / STEPS as f32;
+                    pts.push(pos2(rr - rad + rad * a.cos(), base + rad * a.sin()));
+                }
+                painter.add(egui::Shape::convex_polygon(pts, p.gold, Stroke::NONE));
+            }
         }
         // the notifications bell at the right end of the tab row
         let bell = Rect::from_min_size(pos2(row.right() - 36.0, row.top()), vec2(36.0, TAB_H));
@@ -732,12 +748,18 @@ impl Shell {
             .focus_boxes
             .iter()
             .map(|b| {
-                let t = ctx.animate_bool_with_time(ui.scope_id().with(("focus-box", b.id)), on == Some(b.id), 0.15);
-                let size = |a: f32, z: f32| ((a + (z - a) * t) * 2.0).round() / 2.0;
-                let (title, sub) = (theme::body(size(17.0, 20.0)), theme::body(size(13.0, 15.0)));
+                // eased in and out; the width blended between the two ends' (measuring every in-between font size made
+                // it twitch), the text growing smoothly
+                let raw = ctx.animate_bool_with_time(ui.scope_id().with(("focus-box", b.id)), on == Some(b.id), 0.22);
+                let t = raw * raw * (3.0 - 2.0 * raw);
+                let width = |title: &FontId, sub: &FontId, icon: f32, extra: f32| {
+                    6.0 + icon + 8.0 + jtext::width(&painter, &b.title, title).max(jtext::width(&painter, &b.sub, sub)) + 12.0 + extra
+                };
+                let (w0, w1) =
+                    (width(&theme::body(17.0), &theme::body(13.0), 26.0, 0.0), width(&theme::body(20.0), &theme::body(15.0), 36.0, 4.0));
+                let (title, sub) = (theme::body(17.0 + 3.0 * t), theme::body(13.0 + 2.0 * t));
                 let icon = 26.0 + 10.0 * t;
-                let tw = jtext::width(&painter, &b.title, &title).max(jtext::width(&painter, &b.sub, &sub));
-                Laid { t, icon, w: 6.0 + icon + 8.0 + tw + 12.0 + 4.0 * t, title, sub }
+                Laid { t, icon, w: w0 + (w1 - w0) * t, title, sub }
             })
             .collect();
         // all at the right end, the door at their left; a box dragged follows the pointer, the others make room
@@ -772,7 +794,7 @@ impl Shell {
             // gliding to its place; the one dragged right under the pointer
             xs[i] = match (dragged, drag_left) {
                 (Some((di, _)), Some(left)) if di == i => ctx.animate_value_with_time(id, left, 0.0),
-                _ => ctx.animate_value_with_time(id, x, 0.15),
+                _ => ctx.animate_value_with_time(id, x, 0.22),
             };
             x += laid[i].w - OVERLAP;
         }
