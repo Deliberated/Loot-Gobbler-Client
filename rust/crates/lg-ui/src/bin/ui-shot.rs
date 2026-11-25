@@ -48,9 +48,10 @@ fn main() {
         tabs => (None, tabs),
     };
     // UI_SHOT_NOW=<ms>: the views' clock (pictures of the last 24 hours of an older sample)
-    let now = std::env::var("UI_SHOT_NOW").ok().and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or_else(|| {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
-    });
+    let now = std::env::var("UI_SHOT_NOW")
+        .ok()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64));
     let assets = data.as_ref().map(|d| d.join("assets")).unwrap_or_default();
     let world = lg_world::World::new(lg_gamedata::GameData::load(&assets));
     let mut app = lg_app::App::importing(world, now, data.as_deref());
@@ -521,6 +522,11 @@ fn main() {
                             win.inventory.st_selected = Some(s.name.clone());
                             win.inventory.st_class = Some(s.class_name.clone());
                         }
+                    }
+                    // "Inventory:keys:<item id>": the Keys page with that key clicked
+                    if let Some(k) = tab.strip_prefix("Inventory:keys:").and_then(|k| k.parse::<i32>().ok()) {
+                        win.open("Inventory:keys");
+                        win.inventory.key_selected = Some(k);
                     }
                     if tab == "about" {
                         win.open("Profile");

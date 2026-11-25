@@ -132,6 +132,8 @@ pub struct GameData {
     pub st_sets: Vec<st_sets::StSet>,
     /// How hard each dungeon is, as the game rates it.
     pub difficulty: HashMap<String, f64>,
+    /// Dungeon key (item id) -> the dungeon its portal leads to.
+    pub key_dungeons: HashMap<i32, String>,
     /// Which enemy a helper object stands for.
     pub enemy_sprites: enemy_sprites::EnemySprites,
     /// The pieces the forge makes from set tokens.
@@ -178,6 +180,10 @@ impl GameData {
             d.st_sets = st_sets::load(&s, &d.items);
         }
         d.difficulty = difficulty::load(&assets.join("xml"));
+        d.key_dungeons = difficulty::key_dungeons(&assets.join("xml"))
+            .into_iter()
+            .filter_map(|(key, dungeon)| d.items.by_key(&key).map(|i| (i.id, dungeon)))
+            .collect();
         d.enemy_sprites = enemy_sprites::EnemySprites::load(assets);
         if let Some(s) = read("xml/forgeProperties.xml") {
             d.set_tokens = st_sets::set_tokens(&s, &d.items);

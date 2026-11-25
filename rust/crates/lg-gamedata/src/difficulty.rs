@@ -138,6 +138,39 @@ pub fn load(xml_dir: &Path) -> HashMap<String, f64> {
 }
 
 /// `<Activate id="X" ...>CreatePortal</Activate>`: the portal a key opens.
+/// Each dungeon key's dungeon (by the key's id in the game data, its `id=`): the dungeon its portal leads to (the
+/// portal's `DungeonName`, else its name without " Portal").
+pub fn key_dungeons(xml_dir: &Path) -> HashMap<String, String> {
+    let mut portal_to_dungeon: HashMap<String, String> = HashMap::new();
+    let mut key_portals: Vec<(String, String)> = Vec::new();
+    let mut files: Vec<_> = std::fs::read_dir(xml_dir).map(|d| d.filter_map(Result::ok).map(|e| e.path()).collect()).unwrap_or_default();
+    files.retain(|p: &std::path::PathBuf| p.to_string_lossy().ends_with(".xml"));
+    files.sort();
+    for f in files {
+        let Ok(xml) = std::fs::read_to_string(&f) else { continue };
+        if !xml.contains("<DungeonName>") && !xml.contains("CreatePortal</Activate>") {
+            continue;
+        }
+        for (id, body) in objects(&xml) {
+            if let Some(n) = between(body, "<DungeonName>", "</DungeonName>").filter(|n| !n.contains('<')) {
+                portal_to_dungeon.entry(id.to_string()).or_insert_with(|| n.trim().to_string());
+            }
+            if body.contains("<Key />")
+                && let Some(p) = portal_of(body)
+            {
+                key_portals.push((id.to_string(), p));
+            }
+        }
+    }
+    key_portals
+        .into_iter()
+        .filter_map(|(key, portal)| {
+            let dungeon = portal_to_dungeon.get(&portal).cloned().or_else(|| portal.strip_suffix(" Portal").map(str::to_string))?;
+            Some((key, dungeon))
+        })
+        .collect()
+}
+
 fn portal_of(body: &str) -> Option<String> {
     let mut rest = body;
     while let Some(i) = rest.find("<Activate id=\"") {

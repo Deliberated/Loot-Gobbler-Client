@@ -37,6 +37,8 @@ pub struct InventoryView {
     pub st_class: Option<String>,
     /// The ST set clicked on its card: the side shows what forging its missing pieces takes (its name).
     pub st_selected: Option<String>,
+    /// The key clicked on the Keys page: the side shows what it gives (a mystery key) or its dungeon.
+    pub key_selected: Option<i32>,
     /// The item whose history replaces the Recent list (Java `historyItem`).
     pub history: Option<i32>,
     /// An item opened from another tab, to be scrolled to and pulsed once the grid is drawn (Java `showItem`).
@@ -991,6 +993,8 @@ impl InventoryView {
             keys
         };
         let groups = [("Regular", side_of(false)), ("Seasonal", side_of(true))];
+        let selected = self.key_selected;
+        let mut pick: Option<Option<i32>> = None;
         let overhead = 2.0 + 12.0;
         let base = overhead + 20.0 - GAP;
         let (main, side) = widgets::side_split(ui, c.p, c.props, "keys", body, 280.0, 220.0, 200.0, Some((base, CARD_MIN_WIDTH + GAP)));
@@ -1099,7 +1103,17 @@ impl InventoryView {
                                     let more = format!("and {rest} more elsewhere");
                                     jtext::draw(&painter, pos2(tx, ly), Align2::LEFT_TOP, &more, &f16, fixed::MUTED);
                                 }
-                                widgets::tip(ui, cr, ("key-card", *id, *label), &name(*id));
+                                let resp = ui
+                                    .interact(cr, ui.scope_id().with(("key-card", *id, *label)), Sense::click())
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .on_hover_text(format!("{}: click for what it opens", name(*id)));
+                                let on = selected == Some(*id);
+                                if on || resp.hovered() {
+                                    painter.rect_stroke(cr, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
+                                }
+                                if resp.clicked() {
+                                    pick = Some(if on { None } else { Some(*id) });
+                                }
                             }
                             y += ch + GAP;
                         }
@@ -1108,6 +1122,9 @@ impl InventoryView {
                 });
             },
         );
+        if let Some(k) = pick {
+            self.key_selected = k;
+        }
         // the side: how many, per side
         let painter = ui.painter().clone();
         let lh = jtext::height(&painter, &text(18.0));
@@ -1134,6 +1151,41 @@ impl InventoryView {
                     jtext::draw(painter, pos2(r.right() - 22.0, y), Align2::RIGHT_TOP, &n.to_string(), &text(18.0), p.ink);
                     y += lh + 2.0;
                 }
+            },
+        );
+        // the key clicked: what a mystery key can give, or a dungeon key's dungeon
+        let dr = Rect::from_min_max(pos2(side.left(), sum.bottom() + 8.0), side.max);
+        let icons = &mut *c.icons;
+        let now = c.now;
+        let chosen = self.key_selected;
+        widgets::section(
+            ui,
+            &p,
+            dr,
+            "Key Details",
+            fixed::BLUE,
+            |_, _| {},
+            |ui, r| {
+                egui::ScrollArea::vertical().id_salt("key-details").show(ui, |ui| {
+                    let top = ui.cursor().min;
+                    let w = r.width() - 20.0 - 12.0;
+                    let h = match chosen {
+                        Some(id) => key_details(ui, &p, icons, app, id, now, pos2(top.x + 10.0, top.y + 8.0), w),
+                        None => {
+                            let painter = ui.painter();
+                            jtext::draw(
+                                painter,
+                                pos2(top.x + 10.0, top.y + 8.0),
+                                Align2::LEFT_TOP,
+                                "Click a key to see what it opens.",
+                                &text(18.0),
+                                fixed::MUTED,
+                            );
+                            jtext::height(painter, &text(18.0))
+                        }
+                    };
+                    ui.allocate_exact_size(vec2(r.width() - 12.0, h + 16.0), Sense::hover());
+                });
             },
         );
     }
@@ -2034,6 +2086,159 @@ fn resource_row(
         jtext::draw(&painter, pos2(x + 4.0, cy), Align2::LEFT_CENTER, &label.to_uppercase(), &small_f, fixed::MUTED);
         x -= 18.0;
     }
+}
+
+/// The key rarity label of the dungeon keys a mystery key gives (by its id in the game data), and whether that is
+/// only assumed: the game data says only "a random Key".
+fn mystery_label(key: &str) -> Option<(&'static str, bool)> {
+    match key {
+        "Common Mystery Key" => Some(("COMMON_KEY", false)),
+        "Rare Mystery Key" => Some(("RARE_KEY", false)),
+        "Epic Mystery Key" => Some(("EPIC_KEY", false)),
+        "Legendary Mystery Key" => Some(("LEGEND_KEY", false)),
+        "Exalted Mystery Key" => Some(("LEGEND_KEY", true)),
+        _ => None,
+    }
+}
+
+/// The Keys page's details for one key, drawn from `at` in width `w`: a mystery key's possible dungeon keys, or a
+/// dungeon key's dungeon (difficulty, your runs there, the key's text, the UT and ST items that drop there, the ones
+/// you have lit). Gives the height.
+#[allow(clippy::too_many_arguments)]
+fn key_details(ui: &Ui, p: &Palette, icons: &mut crate::icons::Icons, app: &lg_app::App, id: i32, now: i64, at: egui::Pos2, w: f32) -> f32 {
+    let painter = ui.painter().clone();
+    let data = app.world.data();
+    let (f18, f16, fs) = (text(18.0), text(16.0), small());
+    let (lh, lh16, lhs) = (jtext::height(&painter, &f18), jtext::height(&painter, &f16), jtext::height(&painter, &fs));
+    let (x, mut y) = (at.x, at.y);
+    let Some(item) = data.items.item(id) else { return 0.0 };
+    let held = |k: i32| app.collection.entry(k).map_or(0, |e| e.held());
+    let line = |y: &mut f32, s: &str, f: &egui::FontId, color: Color32, h: f32| {
+        let t = widgets::fit(&painter, s, f, w);
+        jtext::draw(&painter, pos2(x, *y), Align2::LEFT_TOP, &t, f, color);
+        *y += h;
+    };
+    let difficulty = |d: &str| data.difficulty.get(d).map_or("?".to_string(), |v| format!("{v}"));
+    // a mystery key: the dungeon keys it can give
+    if item.name.to_lowercase().ends_with("mystery key") {
+        line(&mut y, &item.name, &f18, p.gold, lh + 4.0);
+        let Some((label, assumed)) = mystery_label(&item.key) else {
+            line(&mut y, "The game data does not say which keys it gives.", &f16, fixed::MUTED, lh16);
+            return y - at.y;
+        };
+        let mut keys: Vec<(i32, &String)> = data
+            .key_dungeons
+            .iter()
+            .filter(|(k, _)| data.items.item(**k).is_some_and(|i| i.labels.contains(label)))
+            .map(|(k, d)| (*k, d))
+            .collect();
+        keys.sort_by(|a, b| a.1.cmp(b.1));
+        line(&mut y, &format!("GIVES ONE OF THESE {} KEYS", keys.len()), &fs, p.ink_muted, lhs + 4.0);
+        if assumed {
+            let g = painter.layout(
+                "Assumed: the same keys as the Aspirant Exalted Mystery Key (the game data does not say).".into(),
+                f16.clone(),
+                fixed::MUTED,
+                w,
+            );
+            let gh = g.size().y;
+            painter.galley(pos2(x, y), g, fixed::MUTED);
+            y += gh + 4.0;
+        }
+        for (k, dungeon) in keys {
+            let rh = 26f32.max(lh);
+            if let Some(t) = icons.object(ui.ctx(), data, k, 24) {
+                painter.image(t.id(), Rect::from_min_size(pos2(x, y + (rh - 24.0) / 2.0), vec2(24.0, 24.0)), uv(), Color32::WHITE);
+            }
+            let n = held(k);
+            let right = format!("{}{}", if n > 0 { format!("{n} held  ·  ") } else { String::new() }, difficulty(dungeon));
+            let rw = jtext::width(&painter, &right, &f16);
+            jtext::draw(&painter, pos2(x + w, y + rh / 2.0), Align2::RIGHT_CENTER, &right, &f16, if n > 0 { p.gold } else { fixed::MUTED });
+            let nm = widgets::fit(&painter, dungeon, &f16, w - 32.0 - rw - 8.0);
+            jtext::draw(&painter, pos2(x + 32.0, y + rh / 2.0), Align2::LEFT_CENTER, &nm, &f16, p.ink);
+            y += rh + 2.0;
+        }
+        line(&mut y, "Right: how many you hold, and the dungeon's difficulty.", &f16, fixed::MUTED, lh16);
+        return y - at.y;
+    }
+    // a dungeon key: its dungeon
+    let Some(dungeon) = data.key_dungeons.get(&id) else {
+        line(&mut y, &item.name, &f18, p.gold, lh + 4.0);
+        line(&mut y, "No dungeon known for this key.", &f16, fixed::MUTED, lh16);
+        return y - at.y;
+    };
+    if let Some(t) = data.dungeons.portal_by_name.get(dungeon).and_then(|pid| icons.object(ui.ctx(), data, *pid, 40)) {
+        painter.image(t.id(), Rect::from_min_size(pos2(x, y), vec2(40.0, 40.0)), uv(), Color32::WHITE);
+    }
+    let nm = widgets::fit(&painter, dungeon, &f18, w - 48.0);
+    jtext::draw(&painter, pos2(x + 48.0, y + 2.0), Align2::LEFT_TOP, &nm, &f18, p.gold);
+    jtext::draw(
+        &painter,
+        pos2(x + 48.0, y + 2.0 + lh),
+        Align2::LEFT_TOP,
+        &widgets::fit(&painter, &item.name, &f16, w - 48.0),
+        &f16,
+        fixed::MUTED,
+    );
+    y += 40.0f32.max(lh + lh16 + 2.0) + 8.0;
+    line(&mut y, &format!("Difficulty: {}", difficulty(dungeon)), &f16, p.ink, lh16);
+    // your own runs there (where it is found is not in the game's files)
+    let runs: Vec<i64> = app.dungeon_visits.visits.iter().filter(|v| v.dungeon == *dungeon).map(|v| v.start).collect();
+    let mine = match runs.iter().max() {
+        Some(last) => format!("Your runs: {} (last {})", runs.len(), crate::profile::ago(now, *last)),
+        None => "Your runs: none yet".to_string(),
+    };
+    line(&mut y, &mine, &f16, p.ink, lh16 + 4.0);
+    let desc = item.description.replace("\\n", "\n");
+    let desc = desc.split("\n").next().unwrap_or("").trim().to_string();
+    if !desc.is_empty() {
+        let g = painter.layout(desc, f16.clone(), fixed::MUTED, w);
+        let gh = g.size().y;
+        painter.galley(pos2(x, y), g, fixed::MUTED);
+        y += gh + 8.0;
+    }
+    // what drops there: the UT and ST items the game data says come from this dungeon (only some dungeons say), and
+    // any you found there yourself; the ones you have lit
+    let mut drops: Vec<i32> =
+        data.items.collectible.iter().copied().filter(|k| data.items.item(*k).and_then(|i| i.origin()) == Some(dungeon.as_str())).collect();
+    for (k, e) in app.collection.all() {
+        let found_here =
+            e.history.iter().flatten().any(|f| f.source == lg_app::collection::DROP && f.r#where.eq_ignore_ascii_case(dungeon));
+        if found_here && !drops.contains(&k) && data.items.collectible.contains(&k) {
+            drops.push(k);
+        }
+    }
+    drops.sort_unstable();
+    let got = drops.iter().filter(|k| app.collection.entry(**k).is_some()).count();
+    line(&mut y, &format!("DROPS HERE: {got} OF {} COLLECTED", drops.len()), &fs, p.ink_muted, lhs + 4.0);
+    if drops.is_empty() {
+        line(
+            &mut y,
+            "No UT or ST items known from here yet (the game data names few dungeons' drops; yours fill in).",
+            &f16,
+            fixed::MUTED,
+            lh16,
+        );
+    }
+    const CELL: f32 = 36.0;
+    let per = ((w / CELL).floor() as usize).max(1);
+    for (k, item_id) in drops.iter().enumerate() {
+        let cr = Rect::from_min_size(pos2(x + (k % per) as f32 * CELL, y + (k / per) as f32 * CELL), vec2(CELL - 4.0, CELL - 4.0));
+        let have = app.collection.entry(*item_id).is_some();
+        painter.rect_filled(cr, 0.0, if have { mix(p.gold, p.paper, 0.6) } else { Color32::from_rgb(5, 5, 5) });
+        if let Some(t) = icons.object(ui.ctx(), data, *item_id, 26) {
+            painter.image(
+                t.id(),
+                Rect::from_center_size(cr.center(), vec2(26.0, 26.0)),
+                uv(),
+                if have { Color32::WHITE } else { Color32::from_white_alpha(64) },
+            );
+        }
+        let nm = data.items.item(*item_id).map_or(String::new(), |i| i.name.clone());
+        widgets::tip(ui, cr, ("key-drop", *item_id), &format!("{nm}{}", if have { "" } else { " - not collected yet" }));
+    }
+    y += drops.len().div_ceil(per) as f32 * CELL;
+    y - at.y
 }
 
 /// Where a copy is, in words: "Druid · Slot 3" (seasonal marked), "Vault · Vault chest", "Seasonal vault · Gift chest".
