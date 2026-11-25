@@ -86,6 +86,13 @@ fn main() -> ExitCode {
         lg_app::applog::err(&format!("cannot make {}: {e}", own.display()));
         return ExitCode::FAILURE;
     }
+    // one app per records folder: two would write over each other's records
+    #[cfg(windows)]
+    let Some(_held) = hold_folder(&own) else {
+        lg_app::applog::line("app", "already running on these records: showing that one");
+        show_running();
+        return ExitCode::SUCCESS;
+    };
     // the greeting of the first start offered the Java app's records and they were wanted: what this first start
     // wrote is put aside (it holds nothing yet) and the Java app's folder taken over as on a first start
     if let Some(j) = o.take_over.clone()
@@ -294,6 +301,39 @@ impl Feeder {
                 }
                 self.map = map;
             }
+        }
+    }
+}
+
+/// Windows: the records folder held while the app runs (a file in it no other process may open). Waits a few seconds
+/// for one closing (the app starts itself again on a restart or update); None while another one keeps it.
+#[cfg(windows)]
+fn hold_folder(own: &Path) -> Option<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let path = own.join("lootgobbler-rust.lock");
+    for _ in 0..20 {
+        match std::fs::OpenOptions::new().create(true).truncate(false).write(true).share_mode(0).open(&path) {
+            Ok(f) => return Some(f),
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(250)),
+        }
+    }
+    None
+}
+
+/// Windows: the running app's window brought up (in front, restored when minimized).
+#[cfg(windows)]
+fn show_running() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, IsIconic, SW_RESTORE, SetForegroundWindow, ShowWindow};
+    let title: Vec<u16> = "Loot Gobbler".encode_utf16().chain(Some(0)).collect();
+    // SAFETY: plain Win32 calls with a window found by its title; the title outlives the call
+    unsafe {
+        let h = FindWindowW(std::ptr::null(), title.as_ptr());
+        if !h.is_null() {
+            // only a minimized one restored (a maximized one stays so)
+            if IsIconic(h) != 0 {
+                ShowWindow(h, SW_RESTORE);
+            }
+            SetForegroundWindow(h);
         }
     }
 }
