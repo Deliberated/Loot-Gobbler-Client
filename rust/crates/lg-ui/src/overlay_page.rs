@@ -34,7 +34,8 @@ const OVERLAYS: [Overlay; 4] = [
 ];
 
 const MIN_OPACITY: i32 = 30;
-const DEFAULT_OPACITY: i32 = 85;
+/// Untouched, an overlay is drawn whole (not see-through); the slider makes it more see-through.
+const DEFAULT_OPACITY: i32 = 100;
 const REFINERY: i32 = 44495;
 const ALIEN_GENERATOR: i32 = 48164;
 const MAGIC_MATRIX: i32 = 0x0484;
