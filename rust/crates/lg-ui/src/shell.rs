@@ -84,6 +84,9 @@ pub struct Shell {
     pub clicked_focus: Option<Option<i32>>,
     /// A focus box being dragged to another place: its id and where it was grabbed (from its left edge).
     focus_drag: Option<(i32, f32)>,
+    /// While a box is dragged (and until all are in place after): each box's left as drawn, gliding to its place,
+    /// and when the last frame was.
+    focus_glide: Option<(std::collections::HashMap<i32, f32>, f64)>,
     /// The boxes' new order after a drag ended (their ids), this frame.
     pub focus_order: Option<Vec<i32>>,
 }
@@ -133,6 +136,7 @@ impl Default for Shell {
             focus_on: None,
             clicked_focus: None,
             focus_drag: None,
+            focus_glide: None,
             focus_order: None,
         }
     }
@@ -809,6 +813,37 @@ impl Shell {
                 _ => x,
             };
             x += laid[i].w - OVERLAP;
+        }
+        // while one is dragged (and until all have arrived after), the others glide to their new places (they
+        // jumped there at once)
+        if dragged.is_some() && self.focus_glide.is_none() {
+            let at = self.focus_boxes.iter().zip(&xs).map(|(b, x)| (b.id, *x)).collect();
+            self.focus_glide = Some((at, ui.input(|i| i.time)));
+        }
+        if let Some((at, last)) = &mut self.focus_glide {
+            let now = ui.input(|i| i.time);
+            let step = (1.0 - 0.75f64.powf((now - *last).clamp(0.0, 1.0) / 0.015)) as f32;
+            *last = now;
+            let mut moving = false;
+            for (i, b) in self.focus_boxes.iter().enumerate() {
+                if dragged.is_some_and(|(di, _)| di == i) {
+                    at.insert(b.id, xs[i]);
+                    continue;
+                }
+                let cur = at.entry(b.id).or_insert(xs[i]);
+                *cur += (xs[i] - *cur) * step;
+                if (xs[i] - *cur).abs() < 0.5 {
+                    *cur = xs[i];
+                } else {
+                    moving = true;
+                }
+                xs[i] = *cur;
+            }
+            if moving {
+                ctx.request_repaint();
+            } else if dragged.is_none() {
+                self.focus_glide = None;
+            }
         }
         // the door, behind them all: its visible part left of the box it belongs to, the icon in its middle
         let door_r = Rect::from_min_max(pos2(door_x, base - BOX_H), pos2(door_x + DOOR_VIS + TUCK, base));
