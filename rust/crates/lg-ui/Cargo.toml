@@ -14,3 +14,7 @@ lg-world = { path = "../lg-world" }
 # pictures of the window without showing it (bin/ui-shot), to compare with the Java app's
 egui_kittest = { version = "0.37", features = ["wgpu", "snapshot"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# the overlays as layered windows (Windows): the only way there to make them see-through
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Controls", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi"] }

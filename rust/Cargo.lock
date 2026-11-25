@@ -1928,6 +1928,7 @@ dependencies = [
  "lg-app",
  "lg-gamedata",
  "lg-world",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
