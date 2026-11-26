@@ -662,7 +662,7 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
     let runs: Vec<Vec<&lg_app::dungeon_visits::Visit>> = groups.iter().flat_map(|g| g.iter().map(|v| vec![*v])).collect();
     for group in &runs {
         let (first, last) = (group[0], group[group.len() - 1]);
-        let Some(icon) = data.dungeons.portal_by_name.get(&first.dungeon).and_then(|id| icons.object(ui.ctx(), data, *id, ICON as u32))
+        let Some(icon) = data.dungeons.portal_by_name.get(&first.dungeon).and_then(|id| icons.fitted(ui.ctx(), data, *id, 64, ICON as u32))
         else {
             continue;
         };

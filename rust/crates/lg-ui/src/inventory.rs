@@ -621,13 +621,24 @@ impl InventoryView {
             if beat.as_ref() != self.beat.as_ref().map(|b| &b.0) {
                 self.beat = beat.map(|b| (b, ui.input(|i| i.time)));
             }
+            // parting back to the items: the Items page whole (its right column too) under the sets fading out over it
+            let parting = !self.melt && self.melt_exit == 0;
+            if parting {
+                self.items(ui, c, rarity, body, false);
+            }
             for (r, sets) in [(items_r, false), (sets_r, true)] {
+                if parting && !sets {
+                    continue;
+                }
                 let shown = r.intersect(body);
                 if shown.width() < 1.0 {
                     continue;
                 }
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
                 child.set_clip_rect(shown.intersect(ui.clip_rect()));
+                if parting {
+                    child.multiply_opacity(mt);
+                }
                 if sets {
                     // crafting from the optimization: its section stays on top, the sets come in below it
                     let r = if self.opt {
