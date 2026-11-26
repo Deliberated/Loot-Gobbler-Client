@@ -291,8 +291,15 @@ impl InventoryView {
             },
         );
         match choice {
-            Some(0) => *opt_sort = if sort == 1 { 0 } else { 1 },
-            Some(2) => *opt_sort = if sort == 2 { 0 } else { 2 },
+            // a sort: the spare copies shown too
+            Some(0) => {
+                *opt_sort = if sort == 1 { 0 } else { 1 };
+                *opt = true;
+            }
+            Some(2) => {
+                *opt_sort = if sort == 2 { 0 } else { 2 };
+                *opt = true;
+            }
             // craft: the ST sets come in beside the items (again: they go)
             Some(_) => {
                 *melt = !*melt;
@@ -3603,9 +3610,8 @@ fn st_bar(
     // the card's frame as wide as the selected one's (3 px), so the joint's sides run on from it
     full.rect_stroke(real_card, 0.0, Stroke::new(3.0, gold), StrokeKind::Inside);
     // the card's colour running down through the joint and fading out in the bar
-    // a set complete fades its gold into the bar; one not complete (no colour of its own) just opens into it
+    // a set complete fades its gold into the bar; one not complete its card's brown
     let glow = card_fill;
-    let fades = card_fill != p.header;
     crate::overlays::gradient_round_rect(
         &full,
         // over the card's bottom border too (the selected one's is 3 px)
@@ -3615,7 +3621,7 @@ fn st_bar(
         glow,
     );
     let fade_end = (bar.top() + 110.0).min(bar.bottom() - 2.0);
-    if fades && fade_end > bar.top() + 3.0 {
+    if fade_end > bar.top() + 3.0 {
         // softly out, rounded: each point of a fine grid a mix of the two colours by its distance from the card
         // (an ellipse: as far down as `fade_end`, `spread` out to either side)
         let spread = 110.0;
