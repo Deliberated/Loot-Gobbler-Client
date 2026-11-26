@@ -138,6 +138,7 @@ fn forge_mode(props: &lg_app::properties::Properties) -> (lg_app::st_forge::Mode
 fn spares(app: &lg_app::App, props: &lg_app::properties::Properties, sort: usize) -> Vec<Spare> {
     let data = app.world.data();
     let (mode, freed) = forge_mode(props);
+    let allowed = lg_app::st_forge::rarities(props.get(lg_app::st_forge::RARITIES_KEY));
     let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
     let copies = app.holdings.copies_of(&living, |id| data.items.collectible.contains(&id));
     let enchants = |h: &lg_app::loadout::Held| h.enchant_ids.as_ref().map_or(0, |e| e.iter().filter(|x| **x >= 0).count());
@@ -149,6 +150,10 @@ fn spares(app: &lg_app::App, props: &lg_app::properties::Properties, sort: usize
                 return None;
             }
             copies.sort_by_key(|h| std::cmp::Reverse(enchants(h)));
+            // only copies of the rarities considered are spare
+            if !copies[keep..].iter().any(|h| allowed[enchants(h).min(4)]) {
+                return None;
+            }
             Some(Spare { item, copies, keep })
         })
         .collect();
@@ -195,6 +200,7 @@ impl InventoryView {
         melt_exit: &mut usize,
         props: &lg_app::properties::Properties,
         asks: &mut Vec<crate::window::Ask>,
+        rarity: &Rarity,
     ) -> Rect {
         let painter = ui.painter().clone();
         let head = widgets::section_head_height(&painter);
@@ -205,7 +211,9 @@ impl InventoryView {
         let mut choice: Option<usize> = None;
         // the forge mode, one setting for the whole app: the same switch as on the ST Sets page
         let (mode, _) = forge_mode(props);
+        let allowed = lg_app::st_forge::rarities(props.get(lg_app::st_forge::RARITIES_KEY));
         let mut next_mode = None;
+        let mut next_rarities = None;
         widgets::section(
             ui,
             p,
@@ -213,7 +221,9 @@ impl InventoryView {
             "Optimization",
             fixed::GREEN,
             |ui, head| {
-                next_mode = forge_switch(ui, p, pos2(head.right() - 6.0, head.top() + 1.0), head.height() - 2.0, mode);
+                let out = forge_switch(ui, p, rarity, pos2(head.right() - 6.0, head.top() + 1.0), head.height() - 2.0, mode, allowed);
+                next_mode = out.mode;
+                next_rarities = out.rarities;
             },
             |ui, r| {
                 let painter = ui.painter().clone();
@@ -263,6 +273,9 @@ impl InventoryView {
         }
         if let Some(m) = next_mode {
             asks.push(crate::window::Ask::Set(lg_app::st_forge::Mode::KEY.into(), m.value().into()));
+        }
+        if let Some(r) = next_rarities {
+            asks.push(crate::window::Ask::Set(lg_app::st_forge::RARITIES_KEY.into(), lg_app::st_forge::rarities_value(r)));
         }
         or
     }
@@ -731,6 +744,7 @@ impl InventoryView {
                             &mut self.melt_exit,
                             c.props,
                             c.asks,
+                            rarity,
                         );
                         Rect::from_min_max(pos2(r.left(), or.bottom() + 8.0), r.max)
                     } else {
@@ -1374,7 +1388,7 @@ impl InventoryView {
         let pct = if grid.is_empty() { 0.0 } else { 100.0 * have as f64 / grid.len() as f64 };
         let mut side = side;
         if self.opt {
-            let or = Self::opt_section(ui, &p, side, &mut self.opt_sort, &mut self.melt, &mut self.melt_exit, c.props, c.asks);
+            let or = Self::opt_section(ui, &p, side, &mut self.opt_sort, &mut self.melt, &mut self.melt_exit, c.props, c.asks, rarity);
             side = Rect::from_min_max(pos2(side.left(), or.bottom() + 8.0), side.max);
         }
         let prog = Rect::from_min_size(
@@ -1943,6 +1957,8 @@ impl InventoryView {
         // the forge suggestions: off, as a collector (the best copy of each ST item kept), or with a backup kept too
         use lg_app::st_forge::{FREED_KEY, Mode};
         let mode = Mode::of(c.props.get(Mode::KEY));
+        let allowed = lg_app::st_forge::rarities(c.props.get(lg_app::st_forge::RARITIES_KEY));
+        let mut next_rarities: Option<[bool; 5]> = None;
         let freed: std::collections::HashSet<i32> =
             c.props.get(FREED_KEY).map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
         let stock = match focus {
@@ -1950,7 +1966,8 @@ impl InventoryView {
             Some(ch) => lg_app::st_forge::Stock::reachable(app, ch.char_id, ch.seasonal),
             None => lg_app::st_forge::Stock::of(app, self.upe_char),
         }
-        .keeping(mode, freed.clone());
+        .keeping(mode, freed.clone())
+        .with_rarities(allowed);
         // crafts planned: what they take is not offered again
         let taken: Vec<(i32, lg_app::loadout::Held)> = self.st_planned.iter().flat_map(|pl| pl.taken.iter().cloned()).collect();
         let stock = stock.without(&taken);
@@ -2051,8 +2068,12 @@ impl InventoryView {
                     filter = i;
                 }
                 // the forge suggestions: a pill with a switch of three places (a click: the next)
-                if let Some(m) = forge_switch(ui, &p, pos2(fx - 8.0, head.top() + 1.0), h - 2.0, mode) {
-                    next_mode = Some(m);
+                let out = forge_switch(ui, &p, rarity, pos2(fx - 8.0, head.top() + 1.0), h - 2.0, mode, allowed);
+                if out.mode.is_some() {
+                    next_mode = out.mode;
+                }
+                if out.rarities.is_some() {
+                    next_rarities = out.rarities;
                 }
             },
             |ui, r| {
@@ -2336,6 +2357,9 @@ impl InventoryView {
         }
         if let Some(m) = next_mode {
             c.asks.push(crate::window::Ask::Set(Mode::KEY.into(), m.value().into()));
+        }
+        if let Some(r) = next_rarities {
+            c.asks.push(crate::window::Ask::Set(lg_app::st_forge::RARITIES_KEY.into(), lg_app::st_forge::rarities_value(r)));
         }
         // a backup's lock clicked: let go (it can be dismantled) or kept again
         if let Some(id) = freed_click {
@@ -3224,14 +3248,22 @@ struct BarLook {
 /// pill set into the page (darker, a shadow along its top, a light edge along its bottom) saying "COLLECTOR MODE",
 /// with a switch whose knob stands left (off), in the middle (collector, gold) or right (with a backup, green). Only the
 /// switch is clicked; the whole pill, hovered, explains the three at once. Gives the next mode when clicked.
-fn forge_switch(ui: &Ui, p: &Palette, right_top: egui::Pos2, h: f32, mode: lg_app::st_forge::Mode) -> Option<lg_app::st_forge::Mode> {
+fn forge_switch(
+    ui: &Ui,
+    p: &Palette,
+    rarity: &Rarity,
+    right_top: egui::Pos2,
+    h: f32,
+    mode: lg_app::st_forge::Mode,
+    allowed: [bool; 5],
+) -> SwitchOut {
     use lg_app::st_forge::Mode;
     let painter = ui.painter().clone();
     let font = small();
     let label = "COLLECTOR MODE";
     let tw = jtext::width(&painter, label, &font);
-    let (track_w, pad) = (56.0, 16.0);
-    let w = pad + tw + 14.0 + track_w + pad - 4.0;
+    let (track_w, pad, pick_w) = (56.0, 16.0, 30.0);
+    let w = pad + tw + 14.0 + track_w + 12.0 + pick_w + pad - 6.0;
     let r = Rect::from_min_size(pos2(right_top.x - w, right_top.y), vec2(w, h));
     // the pill, sunk into the page
     let well = mix(p.header, Color32::BLACK, 0.45);
@@ -3246,7 +3278,8 @@ fn forge_switch(ui: &Ui, p: &Palette, right_top: egui::Pos2, h: f32, mode: lg_ap
     let lit = hover.contains_pointer();
     jtext::draw(&painter, pos2(r.left() + pad, r.center().y), Align2::LEFT_CENTER, label, &font, if lit { p.ink } else { p.ink_soft });
     // the switch: a dark track (tinted by the mode) and its silver knob sliding to its place; it alone is clicked
-    let track = Rect::from_min_size(pos2(r.right() - pad + 4.0 - track_w, r.center().y - 9.0), vec2(track_w, 18.0));
+    let pick = Rect::from_min_size(pos2(r.right() - pad + 6.0 - pick_w, r.center().y - 12.0), vec2(pick_w, 24.0));
+    let track = Rect::from_min_size(pos2(pick.left() - 12.0 - track_w, r.center().y - 9.0), vec2(track_w, 18.0));
     let (place, tint) = match mode {
         Mode::Off => (0.0, None),
         Mode::Collector => (0.5, Some(p.gold)),
@@ -3295,7 +3328,95 @@ fn forge_switch(ui: &Ui, p: &Palette, right_top: egui::Pos2, h: f32, mode: lg_ap
             }
         });
     }
-    click.clicked().then(|| mode.next())
+    // the rarities considered: a button with the rarity marks; a click opens the five to tick
+    let pid = ui.scope_id().with("rarity-pick-open");
+    let open = ui.data(|d| d.get_temp::<bool>(pid)).unwrap_or(false);
+    let presp = ui
+        .interact(pick, ui.scope_id().with("rarity-pick"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Which rarities are considered for forging and crafting");
+    let some_off = allowed.iter().any(|a| !a);
+    painter.rect(
+        pick,
+        5.0,
+        if open || presp.hovered() { mix(p.header, p.gold, 0.25) } else { p.header },
+        Stroke::new(1.0, if some_off { p.gold } else { Color32::from_black_alpha(160) }),
+        StrokeKind::Inside,
+    );
+    // the marks of three rarities, overlapping
+    for (i, k) in [2usize, 3, 4].iter().enumerate() {
+        enchant_badge(&painter, rarity, pos2(pick.left() + 12.0 + i as f32 * 6.0, pick.bottom() - 5.0 - i as f32 * 3.0), *k, 5.0);
+    }
+    let mut open = if presp.clicked() { !open } else { open };
+    let mut next_rarities = None;
+    if open {
+        let area = egui::Area::new(ui.scope_id().with("rarity-pick-area"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos2(pick.right() - 220.0, pick.bottom() + 6.0))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::new().fill(p.paper).stroke(Stroke::new(2.0, p.gold)).corner_radius(6.0).inner_margin(10.0).show(ui, |ui| {
+                    ui.set_width(200.0);
+                    let names = ["Common", "Uncommon", "Rare", "Legendary", "Divine"];
+                    let f = text(16.0);
+                    jtext::draw(ui.painter(), ui.cursor().min, Align2::LEFT_TOP, "CONSIDERED FOR FORGING", &small(), fixed::MUTED);
+                    ui.add_space(jtext::height(ui.painter(), &small()) + 6.0);
+                    for (k, name) in names.iter().enumerate() {
+                        let (row, resp) = ui.allocate_exact_size(vec2(200.0, 26.0), Sense::click());
+                        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                        let painter = ui.painter();
+                        if resp.hovered() {
+                            painter.rect_filled(row, 3.0, mix(p.header, p.paper, 0.5));
+                        }
+                        // the tick box, the rarity's mark, its name
+                        let bx = Rect::from_center_size(pos2(row.left() + 10.0, row.center().y), vec2(14.0, 14.0));
+                        painter.rect(bx, 2.0, p.header, Stroke::new(1.0, p.line), StrokeKind::Inside);
+                        if allowed[k] {
+                            painter.line_segment(
+                                [bx.left_center() + vec2(3.0, 0.0), bx.center_bottom() + vec2(0.0, -3.0)],
+                                Stroke::new(2.0, p.gold),
+                            );
+                            painter.line_segment(
+                                [bx.center_bottom() + vec2(0.0, -3.0), bx.right_top() + vec2(-3.0, 3.0)],
+                                Stroke::new(2.0, p.gold),
+                            );
+                        }
+                        if k > 0 {
+                            enchant_badge(painter, rarity, pos2(row.left() + 46.0, row.center().y + 6.0), k, 5.0);
+                        } else {
+                            painter.circle_stroke(pos2(row.left() + 38.0, row.center().y), 4.0, Stroke::new(1.0, p.ink_muted));
+                        }
+                        jtext::draw(
+                            painter,
+                            pos2(row.left() + 54.0, row.center().y),
+                            Align2::LEFT_CENTER,
+                            name,
+                            &f,
+                            if allowed[k] { p.ink } else { p.ink_muted },
+                        );
+                        if resp.clicked() {
+                            let mut a = allowed;
+                            a[k] = !a[k];
+                            next_rarities = Some(a);
+                        }
+                    }
+                });
+            });
+        // a click anywhere else closes it
+        if ui.input(|i| i.pointer.primary_clicked())
+            && !presp.clicked()
+            && !ui.input(|i| i.pointer.interact_pos()).is_some_and(|q| area.response.rect.contains(q))
+        {
+            open = false;
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(pid, open));
+    SwitchOut { mode: click.clicked().then(|| mode.next()), rarities: next_rarities }
+}
+
+/// What the Collector Mode pill gives back: the next mode (its switch clicked), the rarities ticked (one changed).
+struct SwitchOut {
+    mode: Option<lg_app::st_forge::Mode>,
+    rarities: Option<[bool; 5]>,
 }
 
 /// A padlock centred on `c`, `s` tall (open: its shackle lifted on one side).

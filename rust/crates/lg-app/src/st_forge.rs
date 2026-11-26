@@ -51,6 +51,31 @@ pub struct Stock {
     keep: usize,
     /// Items whose backup was let go: only their best kept.
     freed: std::collections::HashSet<i32>,
+    /// The rarities (by enchantments, 0 to 4) whose copies may be dismantled for a craft.
+    rarities: [bool; 5],
+}
+
+/// The setting listing the rarities (enchantments 0 to 4, comma separated) considered for forging and crafting; not
+/// set: all five.
+pub const RARITIES_KEY: &str = "stForgeRarities";
+
+/// The rarities considered, as the setting says.
+pub fn rarities(value: Option<&str>) -> [bool; 5] {
+    match value {
+        None => [true; 5],
+        Some(v) => {
+            let mut out = [false; 5];
+            for n in v.split(',').filter_map(|x| x.trim().parse::<usize>().ok()).filter(|n| *n < 5) {
+                out[n] = true;
+            }
+            out
+        }
+    }
+}
+
+/// The setting's value for these rarities.
+pub fn rarities_value(r: [bool; 5]) -> String {
+    (0..5).filter(|n| r[*n]).map(|n| n.to_string()).collect::<Vec<_>>().join(",")
 }
 
 /// How the forge suggestions treat your ST items (the ST Sets page's toggle).
@@ -108,7 +133,7 @@ impl Stock {
             }
             copies.retain(|_, c| !c.is_empty());
         }
-        Stock { copies, keep: 1, freed: Default::default() }
+        Stock { copies, keep: 1, freed: Default::default(), rarities: [true; 5] }
     }
 
     /// The copies kept of each ST item as the mode says (a backup too), but for the items whose backup was let go.
@@ -132,7 +157,13 @@ impl Stock {
             }
         }
         copies.retain(|_, c| !c.is_empty());
-        Stock { copies, keep: self.keep, freed: self.freed.clone() }
+        Stock { copies, keep: self.keep, freed: self.freed.clone(), rarities: self.rarities }
+    }
+
+    /// Only copies of these rarities offered to dismantle.
+    pub fn with_rarities(mut self, rarities: [bool; 5]) -> Stock {
+        self.rarities = rarities;
+        self
     }
 
     /// How many copies of `item` are kept.
@@ -159,7 +190,7 @@ impl Stock {
     }
 
     pub fn from_copies(copies: HashMap<i32, Vec<Held>>) -> Stock {
-        Stock { copies, keep: 1, freed: Default::default() }
+        Stock { copies, keep: 1, freed: Default::default(), rarities: [true; 5] }
     }
 
     fn copies(&self, item: i32) -> Vec<Copy> {
@@ -177,7 +208,8 @@ impl Stock {
                 continue;
             }
             // the best kept; on a tie the first as listed stays (characters before the vaults)
-            let rest: Vec<Copy> = self.ranked(*item).into_iter().skip(keep).collect();
+            let rest: Vec<Copy> =
+                self.ranked(*item).into_iter().skip(keep).filter(|c| self.rarities[c.enchants().clamp(0, 4) as usize]).collect();
             let mut taken = 0;
             for side in [Some(true), Some(false)] {
                 if let Some((i, c)) =
@@ -297,6 +329,18 @@ mod tests {
         let less = stock.without(&[(0x100, held(0, 0, false))]);
         let plan = less.plan(&d, &set(), &|_| false);
         assert_eq!(plan[0].tokens.len(), 1, "one of the two tokens set aside");
+    }
+
+    #[test]
+    fn only_the_rarities_chosen_are_offered() {
+        let d = data();
+        let copies = HashMap::from([(0x300, vec![held(1, 4, false), held(0, 2, false), held(2, 0, false)])]);
+        let all = Stock::from_copies(copies.clone());
+        assert_eq!(all.spares(&d, "Armor")[0].enchants(), 2);
+        let no_rare = Stock::from_copies(copies).with_rarities([true, true, false, true, true]);
+        assert_eq!(no_rare.spares(&d, "Armor")[0].enchants(), 0, "the copy with 2 enchantments left out");
+        assert_eq!(rarities(Some("0,3")), [true, false, false, true, false]);
+        assert_eq!(rarities_value([true, false, false, true, false]), "0,3");
     }
 
     #[test]
