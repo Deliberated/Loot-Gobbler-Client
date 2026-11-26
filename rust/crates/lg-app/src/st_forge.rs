@@ -2,8 +2,9 @@
 //!
 //! The forge makes a set's piece from its set token (one or two, `forgeProperties.xml`), and most pieces also take
 //! one ST item of a kind to dismantle (any set's ST weapon, ability, armor or ring: the item's `ST_WEAPON`... label).
-//! The tokens are whatever copies you hold. An ST item only counts to dismantle when you hold it twice or more: the
-//! copy with the most enchantments is kept, the second best is the one offered (one per item).
+//! The tokens are whatever copies you hold. An ST item only counts to dismantle beyond the copies kept: as a
+//! collector the one with the most enchantments, with a backup also the second best (unless that backup is let go);
+//! the best of the rest on each side is the one offered.
 //! Tokens and the item dismantled have to be on the same side, seasonal or not; a place whose side is not known
 //! counts for both.
 
@@ -46,7 +47,52 @@ pub struct Piece {
 /// What the planner works from: every copy of the set tokens and of every ST item, by item.
 pub struct Stock {
     copies: HashMap<i32, Vec<Held>>,
+    /// Copies of each ST item kept (not offered to dismantle): 1 as a collector, 2 with a backup.
+    keep: usize,
+    /// Items whose backup was let go: only their best kept.
+    freed: std::collections::HashSet<i32>,
 }
+
+/// How the forge suggestions treat your ST items (the ST Sets page's toggle).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    /// No suggestions.
+    Off,
+    /// The best copy of each kept, the rest can be dismantled.
+    #[default]
+    Collector,
+    /// The best copy and a backup (the second best) kept.
+    Backup,
+}
+
+impl Mode {
+    pub const KEY: &str = "stForgeMode";
+    /// The setting's value.
+    pub fn of(value: Option<&str>) -> Mode {
+        match value {
+            Some("off") => Mode::Off,
+            Some("backup") => Mode::Backup,
+            _ => Mode::Collector,
+        }
+    }
+    pub fn value(self) -> &'static str {
+        match self {
+            Mode::Off => "off",
+            Mode::Collector => "collector",
+            Mode::Backup => "backup",
+        }
+    }
+    pub fn next(self) -> Mode {
+        match self {
+            Mode::Off => Mode::Collector,
+            Mode::Collector => Mode::Backup,
+            Mode::Backup => Mode::Off,
+        }
+    }
+}
+
+/// The setting listing the items whose backup was let go (ids, comma separated).
+pub const FREED_KEY: &str = "stBackupFreed";
 
 impl Stock {
     /// Every copy of the set tokens and the ST items on your living characters and in your vaults; with `only_char`
@@ -62,7 +108,26 @@ impl Stock {
             }
             copies.retain(|_, c| !c.is_empty());
         }
-        Stock { copies }
+        Stock { copies, keep: 1, freed: Default::default() }
+    }
+
+    /// The copies kept of each ST item as the mode says (a backup too), but for the items whose backup was let go.
+    pub fn keeping(mut self, mode: Mode, freed: std::collections::HashSet<i32>) -> Stock {
+        self.keep = if mode == Mode::Backup { 2 } else { 1 };
+        self.freed = freed;
+        self
+    }
+
+    /// How many copies of `item` are kept.
+    pub fn kept(&self, item: i32) -> usize {
+        if self.freed.contains(&item) { 1 } else { self.keep }
+    }
+
+    /// Every copy of an item, the most enchanted first (on a tie as listed: characters before the vaults).
+    pub fn ranked(&self, item: i32) -> Vec<Copy> {
+        let mut c = self.copies(item);
+        c.sort_by_key(|c| std::cmp::Reverse(c.enchants()));
+        c
     }
 
     /// What a character (not a game mode run) can reach: what it carries, and the vault of its side (seasonal or
@@ -77,25 +142,34 @@ impl Stock {
     }
 
     pub fn from_copies(copies: HashMap<i32, Vec<Held>>) -> Stock {
-        Stock { copies }
+        Stock { copies, keep: 1, freed: Default::default() }
     }
 
     fn copies(&self, item: i32) -> Vec<Copy> {
         self.copies.get(&item).map_or_else(Vec::new, |c| c.iter().map(|h| Copy { item, held: h.clone() }).collect())
     }
 
-    /// The spare ST items of a kind ("Armor"...): of each ST item held twice or more, its second best copy.
+    /// The spare ST items of a kind ("Armor"...): of each ST item held beyond the copies kept, the best of the rest on
+    /// each side (seasonal, regular; one when they are on one side).
     pub fn spares(&self, data: &GameData, st_slot: &str) -> Vec<Copy> {
         let label = format!("ST_{}", st_slot.to_uppercase());
         let mut out: Vec<Copy> = Vec::new();
         for (item, held) in &self.copies {
-            if held.len() < 2 || !data.items.item(*item).is_some_and(|i| i.is_st() && i.labels.contains(&label)) {
+            let keep = self.kept(*item);
+            if held.len() <= keep || !data.items.item(*item).is_some_and(|i| i.is_st() && i.labels.contains(&label)) {
                 continue;
             }
-            let mut copies = self.copies(*item);
             // the best kept; on a tie the first as listed stays (characters before the vaults)
-            copies.sort_by_key(|c| std::cmp::Reverse(c.enchants()));
-            out.push(copies.swap_remove(1));
+            let rest: Vec<Copy> = self.ranked(*item).into_iter().skip(keep).collect();
+            let mut taken = 0;
+            for side in [Some(true), Some(false)] {
+                if let Some((i, c)) =
+                    rest.iter().enumerate().find(|(i, c)| taken & (1 << i) == 0 && (c.held.seasonal.is_none() || c.held.seasonal == side))
+                {
+                    taken |= 1 << i;
+                    out.push(c.clone());
+                }
+            }
         }
         // the least enchanted first: the one to give up
         out.sort_by(|a, b| a.enchants().cmp(&b.enchants()).then(a.item.cmp(&b.item)));
@@ -177,6 +251,26 @@ mod tests {
         assert_eq!(spares.len(), 1, "one spare per item");
         assert_eq!(spares[0].enchants(), 2, "the best (3) is kept, the second best (2) offered");
         assert!(stock.spares(&d, "Weapon").is_empty());
+    }
+
+    #[test]
+    fn a_backup_is_kept_unless_let_go() {
+        let d = data();
+        let copies = HashMap::from([(0x300, vec![held(1, 1, false), held(0, 3, false), held(2, 2, false)])]);
+        let backup = Stock::from_copies(copies.clone()).keeping(Mode::Backup, Default::default());
+        let spares = backup.spares(&d, "Armor");
+        assert_eq!(spares.len(), 1);
+        assert_eq!(spares[0].enchants(), 1, "the best (3) and the backup (2) kept, the third offered");
+        let freed = Stock::from_copies(copies).keeping(Mode::Backup, [0x300].into());
+        assert_eq!(freed.spares(&d, "Armor")[0].enchants(), 2, "the backup let go: offered again");
+    }
+
+    #[test]
+    fn a_spare_on_each_side() {
+        let d = data();
+        let stock = Stock::from_copies(HashMap::from([(0x300, vec![held(0, 4, false), held(1, 3, true), held(2, 1, false)])]));
+        let spares = stock.spares(&d, "Armor");
+        assert_eq!(spares.len(), 2, "one seasonal, one regular");
     }
 
     #[test]
