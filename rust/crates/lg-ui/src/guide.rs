@@ -110,6 +110,14 @@ pub fn mark(ui: &Ui, name: &'static str, r: Rect) {
     }
 }
 
+/// [`mark`], but only the first part of this name drawn this frame counts (e.g. the first of several buttons alike).
+pub fn mark_first(ui: &Ui, name: &'static str, r: Rect) {
+    let taken = ui.ctx().data(|d| d.get_temp::<Targets>(targets_id()).is_some_and(|t| t.rects.contains_key(name)));
+    if !taken {
+        mark(ui, name, r);
+    }
+}
+
 /// A linked item icon in a character's boxes (Java `ItemLinks.ITEM`), for the step about your best items.
 pub fn mark_item(ui: &Ui, r: Rect, id: i32) {
     let seen = r.intersect(ui.clip_rect());
@@ -900,19 +908,65 @@ pub struct TourStep {
     pub merged: bool,
 }
 
+/// A release's tour: its id is the version it came with ("v0.0.3").
 pub struct Tour {
     pub id: &'static str,
     pub steps: Vec<TourStep>,
+}
+
+fn step(title: &str, body: &str, open: Option<&str>, spots: Vec<&'static str>) -> TourStep {
+    TourStep { title: title.into(), body: body.into(), open: open.map(str::to_string), spots, clicks: Vec::new(), merged: false }
 }
 
 const KEY_TOURS_SEEN: &str = "featureToursSeen";
 const GREETING_TITLE: &str = "Hey, welcome!";
 const GREETING_BODY: &str = "I have some new features for you.";
 
-/// The tours: one per release with features worth showing, the latest last. To present a release's features, add a
-/// tour here (a new id, and its steps); it shows once after the update, and Info > What's New Tour shows the latest.
+/// The tours: one per release with features worth showing, the oldest first. To present a release's features, add a
+/// tour here (a new id, and its steps); it shows once after the update (several updates skipped: their tours one after
+/// another, the oldest first), and Info > What's New Tour shows the latest.
 pub fn tours() -> Vec<Tour> {
-    Vec::new()
+    vec![Tour {
+        id: "v0.0.3",
+        steps: vec![
+            step(
+                "ST Sets: a bar per set",
+                "Click a set and a bar opens below it: every copy of its pieces, seasonal and regular, beside the character or chest it sits in.\n\nClick one of the pieces to list just its copies; click any other item to see it on a card of its own (drag it anywhere).",
+                Some("Inventory:st:craftable"),
+                vec!["inventory.st.bar"],
+            ),
+            step(
+                "Forge what is missing",
+                "A missing piece the forge can make shows the tokens it needs (held / needed) and the spare ST item to dismantle.\n\nCRAFTABLE: you have it all. Click it to plan the craft: its tokens and spare are set aside, so other sets no longer count them.",
+                Some("Inventory:st:craftable"),
+                vec!["inventory.craftable"],
+            ),
+            step(
+                "Collector Mode",
+                "Decides which copies the forge may use.\n\nOff: every copy can be used.\nCollector: the best copy of each ST item is kept (gold lock).\nCollector + Backup: the second best is kept too (green lock), but can still be used.",
+                Some("Inventory:st:craftable"),
+                vec!["inventory.collector"],
+            ),
+            step(
+                "Which rarities",
+                "Hover the rarity button to choose which rarities may be used for forging and crafting. The rarest spare is always offered first.",
+                Some("Inventory:st:craftable"),
+                vec!["inventory.rarity"],
+            ),
+            step(
+                "Items and ST Sets",
+                "Click ST Sets while on Items (or Items while on ST Sets) and the two melt into one page: your collection on the left, the sets on the right.\n\nClick a set there and its pieces beat in the collection.",
+                Some("Inventory:melt"),
+                vec!["inventory.pages"],
+            ),
+            step(
+                "Inventory Optimization",
+                "Your spare copies: framed in the collection and listed on the left, with where each copy is and its feed power. Click the box to show or hide them.\n\nFeed sorts by feed power, Forge by what dismantling gives, Craft brings in the ST sets.",
+                Some("Inventory:optimize"),
+                vec!["inventory.opt"],
+            ),
+        ],
+    }]
 }
 
 /// Java `FeatureTour`: after an update, once the release notes are closed, a short tour of a release's new
@@ -921,6 +975,8 @@ pub fn tours() -> Vec<Tour> {
 #[derive(Default)]
 pub struct FeatureTour {
     tour: Option<Tour>,
+    /// The tours after this one (updates skipped), the oldest first.
+    queue: Vec<Tour>,
     /// -1: the greeting.
     index: i32,
     pending: Out,
@@ -937,14 +993,25 @@ impl FeatureTour {
         self.tour.is_some()
     }
 
-    /// After the release notes and the Newcomer's Guide: the latest tour not seen yet.
+    /// After the release notes and the Newcomer's Guide: every tour not seen yet, the oldest first (one greeting).
     pub fn after_start(&mut self, props: &lg_app::properties::Properties, guide_running: bool) {
         if guide_running {
             return;
         }
         let seen = seen_tours(props);
-        if let Some(t) = tours().into_iter().rfind(|t| !seen.iter().any(|s| s == t.id)) {
-            self.begin(t);
+        let mut new: Vec<Tour> = tours().into_iter().filter(|t| !seen.iter().any(|s| s == t.id)).collect();
+        if !new.is_empty() {
+            let first = new.remove(0);
+            self.queue = new;
+            self.begin(first);
+        }
+    }
+
+    /// A tour's step at once (for pictures of it): `at` -1 the greeting.
+    pub fn preview(&mut self, id: &str, at: i32) {
+        if let Some(t) = tours().into_iter().find(|t| t.id == id) {
+            self.tour = Some(t);
+            self.go(at);
         }
     }
 
@@ -966,6 +1033,7 @@ impl FeatureTour {
         }
         match tours().pop() {
             Some(t) => {
+                self.queue.clear();
                 self.begin(t);
                 true
             }
@@ -978,13 +1046,27 @@ impl FeatureTour {
         self.go(-1);
     }
 
-    fn end(&mut self, props: &lg_app::properties::Properties) {
+    /// The tour done: seen; the next one queued goes on (its own steps, no greeting again). `all`: skipped, the ones
+    /// queued count as seen too.
+    fn end(&mut self, props: &lg_app::properties::Properties, all: bool) {
         if let Some(t) = self.tour.take() {
             let mut seen = seen_tours(props);
-            if !seen.iter().any(|s| s == t.id) {
-                seen.push(t.id.to_string());
+            // what an earlier tour's end wrote, not yet in the settings
+            if let Some((_, v)) = self.sets.iter().rev().find(|(k, _)| *k == KEY_TOURS_SEEN) {
+                seen = v.split(',').map(str::to_string).collect();
+            }
+            let done: Vec<Tour> = if all { std::mem::take(&mut self.queue) } else { Vec::new() };
+            for id in std::iter::once(t.id).chain(done.iter().map(|t| t.id)) {
+                if !seen.iter().any(|s| s == id) {
+                    seen.push(id.to_string());
+                }
             }
             self.sets.push((KEY_TOURS_SEEN, seen.join(",")));
+            if !self.queue.is_empty() {
+                let next = self.queue.remove(0);
+                self.tour = Some(next);
+                self.go(0);
+            }
         }
     }
 
@@ -1007,6 +1089,8 @@ impl FeatureTour {
             let of = t.steps.len();
             let step = (self.index >= 0).then(|| t.steps.get(self.index as usize)).flatten();
             let last = self.index == of as i32 - 1;
+            let more = !self.queue.is_empty();
+            let id = t.id;
             let targets = targets(ctx);
             let rects = |names: &[&'static str]| names.iter().filter_map(|n| targets.rects.get(n).copied()).collect::<Vec<_>>();
             let mut spots = step.map_or_else(Vec::new, |s| rects(&s.spots));
@@ -1016,7 +1100,7 @@ impl FeatureTour {
             }
             let clicks = step.map_or_else(Vec::new, |s| rects(&s.clicks));
             let v = View {
-                head: if self.index < 0 { "WHAT'S NEW".into() } else { format!("WHAT'S NEW · {} / {of}", self.index + 1) },
+                head: if self.index < 0 { "WHAT'S NEW".into() } else { format!("WHAT'S NEW IN {id} · {} / {of}", self.index + 1) },
                 title: step.map_or(GREETING_TITLE.to_string(), |s| s.title.clone()),
                 body: step.map_or(GREETING_BODY.to_string(), |s| s.body.clone()),
                 waiting: None,
@@ -1024,7 +1108,7 @@ impl FeatureTour {
                 clicks,
                 on_click: true,
                 open: true,
-                next: if last { "FINISH" } else { "NEXT" },
+                next: if last && !more { "FINISH" } else { "NEXT" },
                 choose: false,
             };
             // a click on what glows does what it always does, then the tour goes on
@@ -1045,15 +1129,15 @@ impl FeatureTour {
                 Some(Press::Back) => self.go(self.index - 1),
                 Some(Press::Next) => {
                     if last {
-                        self.end(props);
+                        self.end(props, false);
                     } else {
                         self.go(self.index + 1);
                     }
                 }
-                Some(Press::Skip) => self.end(props),
+                Some(Press::Skip) => self.end(props, true),
                 _ if clicked => {
                     if last {
-                        self.end(props);
+                        self.end(props, false);
                     } else {
                         self.go(self.index + 1);
                     }

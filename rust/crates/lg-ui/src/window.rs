@@ -257,6 +257,28 @@ impl Window {
         }
     }
 
+    /// [`Window::open`], and the views the tours open that need the records: "Inventory:st:craftable" (ST Sets, the
+    /// bar of a set whose missing piece can be forged open), "Inventory:melt" (Items and ST Sets melted, that set
+    /// clicked).
+    pub fn open_with(&mut self, spec: &str, app: &lg_app::App) {
+        match spec {
+            "Inventory:st:craftable" => {
+                self.open("Inventory:st");
+                self.inventory.melt = false;
+                self.inventory.st_piece = None;
+                self.inventory.pick_forgeable(app, true);
+            }
+            "Inventory:melt" => {
+                self.open("Inventory");
+                self.inventory.opt = false;
+                self.inventory.melt = true;
+                self.inventory.melt_exit = 0;
+                self.inventory.pick_forgeable(app, true);
+            }
+            _ => self.open(spec),
+        }
+    }
+
     /// Opens a tab, or a page of it: "Inventory:st", "Inventory:log", "Characters:<charId|classes|pets>",
     /// "Battles:dps|overlay", "Social:quests|discord", "Guild:<page name>".
     pub fn open(&mut self, spec: &str) {
@@ -271,6 +293,7 @@ impl Window {
             // the Overview's Suggest Inventory Optimization: the Items page with it on
             ("Inventory", "optimize") => {
                 self.inventory.page = 0;
+                self.inventory.melt = false;
                 self.inventory.opt = true;
             }
             ("Inventory", p) if p.starts_with("item:") => {
@@ -689,7 +712,7 @@ impl Window {
         for spec in &out.open {
             match spec.strip_prefix("tab:") {
                 Some(tab) => self.shell.selected = tab.to_string(),
-                None => self.open(spec),
+                None => self.open_with(spec, app),
             }
         }
         if let Some(open) = out.menu {

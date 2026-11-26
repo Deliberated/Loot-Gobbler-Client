@@ -648,6 +648,11 @@ fn main() {
                         win.open("Inventory:keys");
                         win.inventory.key_selected = Some(k);
                     }
+                    // "tour:<id>:<step>": a What's New tour's step over the window (-1 the greeting)
+                    if let Some((id, at)) = tab.strip_prefix("tour:").and_then(|r| r.rsplit_once(':')) {
+                        win.open("Profile");
+                        win.tour.preview(id, at.parse().unwrap_or(-1));
+                    }
                     if tab == "about" {
                         win.open("Profile");
                         let mut asks = Vec::new();
@@ -675,6 +680,10 @@ fn main() {
                 win.show(&mut all, &app, now);
             });
         harness.run_steps(3);
+        // a tour: the view it opened settled (bars open, the melt done), the frames placed on it
+        if tab.starts_with("tour:") {
+            harness.run_steps(60);
+        }
         if let Some(at) = hover {
             harness.input_mut().events.push(egui::Event::PointerMoved(at));
             harness.run_steps(2);
