@@ -168,32 +168,9 @@ fn all_drops(app: &App) -> Vec<Drop> {
 
 /// The page buttons above the tab's pages (Java `Segmented` in `SubTabs`); the last one greyed out.
 pub fn pages(ui: &mut Ui, p: &Palette, names: &[&str], selected: &mut usize, disabled: &[usize]) {
-    let font = widgets::small();
-    let painter = ui.painter().clone();
     let top = ui.cursor().min;
-    let mut x = top.x + 7.0;
-    for (i, n) in names.iter().enumerate() {
-        let t = n.to_uppercase();
-        let w = crate::jtext::width(&painter, &t, &font) + 30.0;
-        let r = egui::Rect::from_min_size(pos2(x, top.y), vec2(w, 36.0));
-        let off = disabled.contains(&i);
-        let resp = ui.interact(r, ui.scope_id().with(("page", i)), if off { Sense::hover() } else { Sense::click() });
-        let on = *selected == i;
-        let (bg, fg) = if on {
-            (p.gold, p.on_accent)
-        } else if off {
-            (p.paper, p.ink_muted)
-        } else if resp.hovered() {
-            (p.header, p.ink_soft)
-        } else {
-            (p.paper, p.ink_soft)
-        };
-        painter.rect(r, 0.0, bg, egui::Stroke::new(1.5, Color32::BLACK), egui::StrokeKind::Inside);
-        crate::jtext::draw(&painter, r.center(), egui::Align2::CENTER_CENTER, &t, &font, fg);
-        if resp.clicked() {
-            *selected = i;
-        }
-        x += w + 8.0;
+    if let Some(i) = widgets::segmented(ui, p, pos2(top.x + 7.0, top.y), 36.0, names, *selected, false, disabled) {
+        *selected = i;
     }
     ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::hover());
 }

@@ -286,6 +286,10 @@ pub fn pour(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, names: &[&str], joined
     let lead = lead0 + (lead1 - lead0) * e;
     let len = ((lead0 - back0) + ((lead1 - back1) - (lead0 - back0)) * e) * (1.0 - 0.3 * (std::f32::consts::PI * e).sin());
     let back = lead - len;
+    // the front a drop's tip on its side: a point widening to the full height; none at the start and the end
+    let dir = if right { 1.0 } else { -1.0 };
+    let tip_len = (h * 0.9).min(len.abs()) * (std::f32::consts::PI * e).sin();
+    let neck = lead - dir * tip_len;
     let (lo, hi) = (lead.min(back), lead.max(back));
     let gold = p.gold;
     let cy = src.center().y;
@@ -310,11 +314,36 @@ pub fn pour(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, names: &[&str], joined
         }
         let gr = Rect::from_min_max(pos2(x0, inner.top()), pos2(x1, inner.bottom()));
         let clip = painter.with_clip_rect(inner.intersect(painter.clip_rect()));
-        clip.rect_filled(gr, 0.0, gold);
-        if lead > inner.left() + 1.0 && lead < inner.right() - 1.0 {
-            clip.circle_filled(pos2(lead, inner.center().y), ((h - 3.0) / 4.0).min(gr.width() + 4.0), gold);
+        // the full-height part up to the neck, then the tip
+        let (b0, b1) = (back.min(neck), back.max(neck));
+        clip.rect_filled(
+            Rect::from_min_max(pos2(b0.max(inner.left()), inner.top()), pos2(b1.min(inner.right()), inner.bottom())),
+            0.0,
+            gold,
+        );
+        if tip_len > 0.5 {
+            let half = inner.height() / 2.0;
+            let mut mesh = egui::Mesh::default();
+            let n = 16;
+            for i in 0..=n {
+                // u 0 at the tip, 1 at the neck: pointed at the tip, smooth into the full height
+                let u = i as f32 / n as f32;
+                let x = lead - dir * tip_len * u;
+                let y = half * (std::f32::consts::FRAC_PI_2 * u).sin().powf(1.5);
+                mesh.colored_vertex(pos2(x, inner.center().y - y), gold);
+                mesh.colored_vertex(pos2(x, inner.center().y + y), gold);
+                if i > 0 {
+                    let k = 2 * i as u32;
+                    mesh.add_triangle(k - 2, k - 1, k);
+                    mesh.add_triangle(k - 1, k + 1, k);
+                }
+            }
+            clip.add(Shape::mesh(mesh));
         }
-        let dark = painter.with_clip_rect(gr.intersect(painter.clip_rect()));
+        // the label dark where the gold is full height (the body, half the tip)
+        let mid = lead - dir * tip_len * 0.5;
+        let full = Rect::from_min_max(pos2(back.min(mid), inner.top()), pos2(back.max(mid), inner.bottom()));
+        let dark = painter.with_clip_rect(gr.intersect(full).intersect(painter.clip_rect()));
         jtext::draw(&dark, r.center(), Align2::CENTER_CENTER, &label, &font, p.on_accent);
     }
 }
