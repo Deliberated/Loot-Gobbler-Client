@@ -3367,19 +3367,25 @@ fn forge_switch(
         Stroke::new(1.0, if some_off { p.gold } else { Color32::from_black_alpha(160) }),
         StrokeKind::Inside,
     );
-    // the rarities as a little stack, bright when considered: uncommon on top with a box for common beside it, rare
-    // below, legendary and divine at the bottom
-    let c = pick.center();
-    // each mark as the game turns it there: uncommon and rare as they are, legendary and divine a quarter turn of a
-    // right angle round (their stones upright squares)
-    let mark = |k: usize, at: egui::Pos2| {
-        let Some(t) = &rarity[k] else { return };
-        let [tw, th] = t.size();
-        let (hw, hh) = (tw as f32 * 0.4, th as f32 * 0.4);
-        let tint = if allowed[k] { Color32::WHITE } else { Color32::from_white_alpha(55) };
-        let turn = if k >= 3 { std::f32::consts::FRAC_PI_4 } else { 0.0 };
-        let (sn, cs) = turn.sin_cos();
-        let rot = |x: f32, y: f32| at + vec2(x * cs - y * sn, x * sn + y * cs);
+    // the rarities as a little stack, bright when considered: legendary and divine at the bottom (each turned 45°
+    // counter-clockwise, standing on one line, touching), rare on top where they meet, uncommon on rare's left stone and
+    // a box for common on its right one
+    let size = |k: usize| rarity[k].as_ref().map_or(vec2(8.0, 8.0), |t| vec2(t.size()[0] as f32, t.size()[1] as f32));
+    let turned = |v: egui::Vec2| (v.x + v.y) / std::f32::consts::SQRT_2;
+    let (l, d, ra, un) = (size(3), size(4), size(2), size(1));
+    // heights at scale 1: the bottom row, rare, uncommon; then scaled to fit the button
+    let bottom_h = turned(l).max(turned(d));
+    let full = bottom_h + ra.y + un.y;
+    let k = ((pick.height() - 6.0) / full).min(1.0);
+    let base = pick.bottom() - 3.0;
+    let meet = pick.center().x + (turned(l) - turned(d)) * k / 2.0;
+    let mark = |r: usize, center: egui::Pos2, turn: bool| {
+        let Some(t) = &rarity[r] else { return };
+        let (hw, hh) = (t.size()[0] as f32 * k / 2.0, t.size()[1] as f32 * k / 2.0);
+        let tint = if allowed[r] { Color32::WHITE } else { Color32::from_white_alpha(55) };
+        let a = if turn { -std::f32::consts::FRAC_PI_4 } else { 0.0 };
+        let (sn, cs) = a.sin_cos();
+        let rot = |x: f32, y: f32| center + vec2(x * cs - y * sn, x * sn + y * cs);
         let mut mesh = egui::Mesh::with_texture(t.id());
         for (x, y, u, v) in [(-hw, -hh, 0.0, 0.0), (hw, -hh, 1.0, 0.0), (hw, hh, 1.0, 1.0), (-hw, hh, 0.0, 1.0)] {
             mesh.vertices.push(egui::epaint::Vertex { pos: rot(x, y), uv: pos2(u, v), color: tint });
@@ -3388,18 +3394,22 @@ fn forge_switch(
         mesh.add_triangle(0, 2, 3);
         painter.add(egui::Shape::mesh(mesh));
     };
-    let row = 8.0;
-    mark(1, pos2(c.x - 2.0, c.y - row));
-    let common = Rect::from_center_size(pos2(c.x + 6.0, c.y - row), vec2(5.0, 5.0));
+    let (lw, dw) = (turned(l) * k, turned(d) * k);
+    // their pictures have an empty edge: a little closer, so the stones meet
+    mark(3, pos2(meet - lw / 2.0 + 1.5, base - lw / 2.0), true);
+    mark(4, pos2(meet + dw / 2.0 - 1.5, base - dw / 2.0), true);
+    let row_top = base - bottom_h * k;
+    let rare_c = pos2(meet, row_top - ra.y * k / 2.0);
+    mark(2, rare_c, false);
+    let top_y = row_top - ra.y * k - un.y * k / 2.0;
+    mark(1, pos2(rare_c.x - ra.x * k / 4.0, top_y), false);
+    let common = Rect::from_center_size(pos2(rare_c.x + ra.x * k / 4.0, top_y), vec2(un.x * k * 0.7, un.y * k * 0.7));
     painter.rect_stroke(
         common,
         0.0,
         Stroke::new(1.0, if allowed[0] { p.ink } else { p.ink_muted.gamma_multiply(0.5) }),
         StrokeKind::Inside,
     );
-    mark(2, pos2(c.x, c.y));
-    mark(3, pos2(c.x - 5.0, c.y + row));
-    mark(4, pos2(c.x + 5.0, c.y + row));
     let mut open = if presp.clicked() { !open } else { open };
     let mut next_rarities = None;
     if open {

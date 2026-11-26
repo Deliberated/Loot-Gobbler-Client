@@ -925,7 +925,7 @@ fn portal(painter: &egui::Painter, m: &Member, at: Rect, count_f: &egui::FontId,
 /// How many suggestion boxes the overview shows.
 const SUGGESTIONS: usize = 4;
 
-/// The first suggestion box: Suggest Inventory Optimization (the optimization icon); a click opens Inventory > Items.
+/// The first suggestion box: Inventory Optimization (the optimization icon); a click opens Inventory > Items.
 fn optimization_box(ui: &Ui, p: &Palette, r: egui::Rect) {
     let resp = ui
         .interact(r, ui.scope_id().with("suggest-optimization"), Sense::click())
@@ -945,7 +945,7 @@ fn optimization_box(ui: &Ui, p: &Palette, r: egui::Rect) {
         painter,
         egui::pos2(r.left() + 66.0, r.center().y),
         egui::Align2::LEFT_CENTER,
-        "Suggest Inventory Optimization",
+        "Inventory Optimization",
         &widgets::head_px(24.0),
         if lit { p.gold } else { p.ink },
     );
