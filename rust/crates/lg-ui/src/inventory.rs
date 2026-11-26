@@ -201,6 +201,7 @@ impl InventoryView {
         props: &lg_app::properties::Properties,
         asks: &mut Vec<crate::window::Ask>,
         rarity: &Rarity,
+        opt: &mut bool,
     ) -> Rect {
         let painter = ui.painter().clone();
         let head = widgets::section_head_height(&painter);
@@ -214,6 +215,13 @@ impl InventoryView {
         let allowed = lg_app::st_forge::rarities(props.get(lg_app::st_forge::RARITIES_KEY));
         let mut next_mode = None;
         let mut next_rarities = None;
+        // the whole box opens or closes the spare copies (its buttons and switch keep their own clicks)
+        let on = *opt;
+        let box_resp = ui
+            .interact(or, ui.scope_id().with("opt-box"), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(if on { "Hide your spare copies" } else { "Show your spare copies" });
+        let lit = box_resp.hovered();
         widgets::section(
             ui,
             p,
@@ -221,6 +229,20 @@ impl InventoryView {
             "Optimization",
             fixed::GREEN,
             |ui, head| {
+                // the icon in place of the section's square, the title after it: gold while on
+                let painter = ui.painter();
+                let font = crate::theme::head(17.0);
+                let strip = Rect::from_min_max(pos2(head.left(), head.top() - 1.0), pos2(head.right() + 3.0, head.bottom() + 1.0));
+                painter.rect_filled(strip, 0.0, if on { mix(p.gold, p.header, 0.18) } else { p.header });
+                let ink = if on {
+                    p.gold
+                } else if lit {
+                    p.ink
+                } else {
+                    p.ink_soft
+                };
+                widgets::optimize_icon(painter, pos2(head.left() + 18.0, head.center().y), 22.0, ink);
+                jtext::draw(painter, pos2(head.left() + 36.0, head.center().y), Align2::LEFT_CENTER, "OPTIMIZATION", &font, ink);
                 let out = forge_switch(ui, p, rarity, pos2(head.right() - 6.0, head.top() + 1.0), head.height() - 2.0, mode, allowed);
                 next_mode = out.mode;
                 next_rarities = out.rarities;
@@ -276,6 +298,15 @@ impl InventoryView {
         }
         if let Some(r) = next_rarities {
             asks.push(crate::window::Ask::Set(lg_app::st_forge::RARITIES_KEY.into(), lg_app::st_forge::rarities_value(r)));
+        }
+        // clickable: a gold edge under the mouse; on: a thicker gold frame
+        if on {
+            ui.painter().rect_stroke(or, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
+        } else if lit {
+            ui.painter().rect_stroke(or, 0.0, Stroke::new(1.0, p.gold_hover), StrokeKind::Inside);
+        }
+        if box_resp.clicked() {
+            *opt = !*opt;
         }
         or
     }
@@ -745,6 +776,7 @@ impl InventoryView {
                             c.props,
                             c.asks,
                             rarity,
+                            &mut self.opt,
                         );
                         Rect::from_min_max(pos2(r.left(), or.bottom() + 8.0), r.max)
                     } else {
@@ -1387,8 +1419,20 @@ impl InventoryView {
         let have = grid.iter().filter(|id| owned_set.contains(id)).count();
         let pct = if grid.is_empty() { 0.0 } else { 100.0 * have as f64 / grid.len() as f64 };
         let mut side = side;
-        if self.opt {
-            let or = Self::opt_section(ui, &p, side, &mut self.opt_sort, &mut self.melt, &mut self.melt_exit, c.props, c.asks, rarity);
+        // the Optimization section, always on top of the side; a click on it shows or hides the spare copies
+        {
+            let or = Self::opt_section(
+                ui,
+                &p,
+                side,
+                &mut self.opt_sort,
+                &mut self.melt,
+                &mut self.melt_exit,
+                c.props,
+                c.asks,
+                rarity,
+                &mut self.opt,
+            );
             side = Rect::from_min_max(pos2(side.left(), or.bottom() + 8.0), side.max);
         }
         let prog = Rect::from_min_size(
