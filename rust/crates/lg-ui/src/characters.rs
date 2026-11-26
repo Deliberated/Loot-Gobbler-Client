@@ -225,7 +225,7 @@ impl CharactersView {
         {
             // it follows the pointer over the portrait, and stays put once the pointer leaves it (towards it)
             if !on_window && let Some(q) = ptr {
-                h.1 = q + vec2(14.0, 14.0);
+                h.1 = q;
             }
             h.3 = now;
             t.pending = None;
@@ -233,7 +233,7 @@ impl CharactersView {
             match t.pending {
                 Some((pid, since)) if pid == id => {
                     if now - since >= OPEN_AFTER {
-                        let at = ptr.unwrap_or_default() + vec2(14.0, 14.0);
+                        let at = ptr.unwrap_or_default();
                         t.hover = Some((id, at, Rect::from_min_size(at, vec2(1.0, 1.0)), now));
                         t.pending = None;
                     } else {
@@ -292,13 +292,16 @@ impl CharactersView {
             s.rect_filled(r.translate(vec2(3.0, 4.0)), 6.0, Color32::from_black_alpha(90));
         };
         // the one open by hovering
-        if let Some((id, at, _, last)) = t.hover {
+        if let Some((id, at, last_rect, last)) = t.hover {
+            // right of the pointer, which sits a quarter down its height (its height as last shown)
+            let tall = if last_rect.height() > 10.0 { last_rect.height() } else { 290.0 };
+            let place = at + vec2(16.0, -tall / 4.0);
             match app.characters.get(id) {
                 Some(ch) => {
                     let mut pin = false;
                     let shown = egui::Area::new(egui::Id::unique("lg-char-stats-hover"))
                         .order(egui::Order::Foreground)
-                        .fixed_pos(at)
+                        .fixed_pos(place)
                         .constrain(true)
                         .show(ui.ctx(), |ui| {
                             let (_, clicked) = window(ui, ch, false);
@@ -1251,7 +1254,7 @@ fn triggers_id() -> egui::Id {
 struct StatsTips {
     /// The character hovered and since when (opens after a moment).
     pending: Option<(i32, f64)>,
-    /// The window open by hovering: its character, where, its rect last frame, when the pointer was last on it or
+    /// The window open by hovering: its character, the pointer it stands by, its rect last frame, when the pointer was last on it or
     /// on the character.
     hover: Option<(i32, egui::Pos2, Rect, f64)>,
     /// The pinned windows: their character, a number of their own (a fresh place each time one is pinned), and where
