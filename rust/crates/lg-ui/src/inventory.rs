@@ -692,7 +692,7 @@ impl InventoryView {
         resource_row(ui, &p, c.icons, app, pos2(all.right(), all.top()), 36.0, pages_end, focus.map(|ch| ch.seasonal));
         let mut body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
         // the optimization: its list in a column of its own, sliding out from the left
-        let ot = ui.ctx().animate_bool_with_time(ui.scope_id().with("opt-column"), self.opt && self.page == 0, 0.22);
+        let ot = ui.ctx().animate_bool_with_time(ui.scope_id().with("opt-column"), self.opt && self.page == 0 && !self.melt, 0.22);
         let ot = ot * ot * (3.0 - 2.0 * ot);
         if ot > 0.0 {
             let shown = OPT_COLUMN_W * ot;
@@ -763,25 +763,8 @@ impl InventoryView {
                     continue;
                 }
                 if sets {
-                    // crafting from the optimization: its section stays on top, the sets come in below it
-                    let r = if self.opt {
-                        let side = Rect::from_min_max(pos2(r.left() + 8.0, r.top()), r.max);
-                        let or = Self::opt_section(
-                            &mut child,
-                            &p,
-                            side,
-                            &mut self.opt_sort,
-                            &mut self.melt,
-                            &mut self.melt_exit,
-                            c.props,
-                            c.asks,
-                            rarity,
-                            &mut self.opt,
-                        );
-                        Rect::from_min_max(pos2(r.left(), or.bottom() + 8.0), r.max)
-                    } else {
-                        r
-                    };
+                    // a gap from the collection, as between the sections elsewhere
+                    let r = Rect::from_min_max(pos2(r.left() + 8.0, r.top()), r.max);
                     self.st_sets(&mut child, c, rarity, r, true);
                 } else {
                     self.items(&mut child, c, rarity, r, true);
