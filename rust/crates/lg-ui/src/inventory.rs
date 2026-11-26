@@ -42,6 +42,8 @@ pub struct InventoryView {
     /// An item in a set's bar clicked that is not of the set: it, the column it was in, its copy; shown in the next
     /// column (how far, fading in and out); the last one, for fading out.
     pub st_show: Option<(i32, usize, lg_app::loadout::Held)>,
+    /// Crafts planned (while the app runs): what they take is no longer offered to other crafts.
+    st_planned: Vec<Planned>,
     st_show_t: f32,
     st_show_last: Option<(i32, usize, lg_app::loadout::Held)>,
     /// How far each set's bar is open (the one clicked opening, the one before closing), by the set's name.
@@ -427,7 +429,7 @@ fn heartbeat(elapsed: f64) -> Vec<f32> {
 /// Items and ST Sets melting into one tab (`t` 0 apart, 1 one; parting plays it backwards), drawn over the tabs: gold
 /// pours from Items over the gap into ST Sets, which fills from its left, then the gap closes into the one box with
 /// "ITEMS AND ST SETS".
-fn melt_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, t: f32) {
+fn melt_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, t: f32, from_sets: bool) {
     let painter = ui.painter().clone();
     let font = small();
     let w0 = jtext::width(&painter, "ITEMS", &font) + 30.0;
@@ -458,26 +460,31 @@ fn melt_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, t: f32) {
         );
         return;
     }
-    box_(r0, gold, "ITEMS", p.on_accent);
-    box_(r1, p.paper, "ST SETS", p.ink_soft);
+    // from Items: Items gold, pouring right into ST Sets; from (or to) ST Sets: the other way
+    let (src, dst, src_l, dst_l) = if from_sets { (r1, r0, "ST SETS", "ITEMS") } else { (r0, r1, "ITEMS", "ST SETS") };
+    box_(src, gold, src_l, p.on_accent);
+    box_(dst, p.paper, dst_l, p.ink_soft);
     // the stream over the gap, thickening at the end until it closes it
     let stream = ease(t / 0.25);
     let sh = 6.0 + 24.0 * ease((t - 0.55) / 0.35);
-    painter.rect_filled(
-        Rect::from_min_max(pos2(r0.right() - 1.5, r0.center().y - sh / 2.0), pos2(r0.right() + 10.0 * stream, r0.center().y + sh / 2.0)),
-        3.0,
-        gold,
-    );
-    // ST Sets filling from its left, its front rounded
+    let (a, b) = if from_sets { (r1.left() - 10.0 * stream, r1.left() + 1.5) } else { (r0.right() - 1.5, r0.right() + 10.0 * stream) };
+    painter.rect_filled(Rect::from_min_max(pos2(a, r0.center().y - sh / 2.0), pos2(b, r0.center().y + sh / 2.0)), 3.0, gold);
+    // the other filling from the side it is poured into, its front rounded
     let fill = ease((t - 0.2) / 0.5);
     if fill > 0.0 {
-        let fr = Rect::from_min_size(r1.min + vec2(1.5, 1.5), vec2((r1.width() - 3.0) * fill, h - 3.0));
+        let fw = (dst.width() - 3.0) * fill;
+        let fr = if from_sets {
+            Rect::from_min_max(pos2(dst.right() - 1.5 - fw, dst.top() + 1.5), pos2(dst.right() - 1.5, dst.bottom() - 1.5))
+        } else {
+            Rect::from_min_size(dst.min + vec2(1.5, 1.5), vec2(fw, h - 3.0))
+        };
         painter.rect_filled(fr, 0.0, gold);
         if fill < 1.0 {
-            painter.circle_filled(pos2(fr.right(), fr.center().y), (h - 3.0) / 2.0 * (1.0 - fill).min(0.5), gold);
+            let front = if from_sets { fr.left() } else { fr.right() };
+            painter.circle_filled(pos2(front, fr.center().y), (h - 3.0) / 2.0 * (1.0 - fill).min(0.5), gold);
         }
-        painter.rect_stroke(r1, 0.0, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
-        jtext::draw(&painter, r1.center(), Align2::CENTER_CENTER, "ST SETS", &font, if fill > 0.5 { p.on_accent } else { p.ink_soft });
+        painter.rect_stroke(dst, 0.0, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+        jtext::draw(&painter, dst.center(), Align2::CENTER_CENTER, dst_l, &font, if fill > 0.5 { p.on_accent } else { p.ink_soft });
     }
 }
 
@@ -631,7 +638,8 @@ impl InventoryView {
         self.melt_t = if self.melt_t < goal { (self.melt_t + dt / 0.45).min(goal) } else { (self.melt_t - dt / 0.45).max(goal) };
         let mt = self.melt_t * self.melt_t * (3.0 - 2.0 * self.melt_t);
         if mt > 0.0 && self.page <= 1 {
-            melt_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, mt);
+            // the pour runs from (or, parting, back into) the side the sets are on when they come or go
+            melt_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, mt, self.melt_exit == 1);
         }
         // the forge resources, right-aligned on the same row: the regular side at the right, the seasonal one before it
         let pages_end = pages_x + widgets::segmented_width(ui.painter(), &PAGES, false) + 10.0;
@@ -1941,6 +1949,11 @@ impl InventoryView {
             None => lg_app::st_forge::Stock::of(app, self.upe_char),
         }
         .keeping(mode, freed.clone());
+        // crafts planned: what they take is not offered again
+        let taken: Vec<(i32, lg_app::loadout::Held)> = self.st_planned.iter().flat_map(|pl| pl.taken.iter().cloned()).collect();
+        let stock = stock.without(&taken);
+        let planned_now = self.st_planned.clone();
+        let mut plan_click: Option<Result<Planned, (i32, bool)>> = None;
         let craftable: std::collections::HashSet<i32> =
             sets.iter().flat_map(|s| stock.plan(data, s, &has)).filter(|c| c.craftable).map(|c| c.piece).collect();
         let picked = (self.upe_char != 0).then(|| app.characters.get(self.upe_char)).flatten();
@@ -2258,7 +2271,10 @@ impl InventoryView {
                         let card_fill = if done { mix(p.gold, p.paper, 0.45) } else { p.header };
                         let look = BarLook { piece: st_piece, card, joint_x: jx, bar, full_h, t, mode, card_fill };
                         let show = show_now.as_ref().map(|s| (s, show_t));
-                        let out = st_bar(ui, &p, icons, app, rarity, shown[i], &stock, &has, look, show);
+                        let out = st_bar(ui, &p, icons, app, rarity, shown[i], &stock, &has, look, show, &planned_now);
+                        if out.plan.is_some() {
+                            plan_click = out.plan;
+                        }
                         if let Some(id) = out.toggled {
                             freed_click = Some(id);
                         }
@@ -2275,6 +2291,12 @@ impl InventoryView {
             },
         );
         self.st_filter = filter;
+        // a craft planned, or no longer
+        match plan_click {
+            Some(Ok(pl)) => self.st_planned.push(pl),
+            Some(Err((piece, seasonal))) => self.st_planned.retain(|pl| !(pl.piece == piece && pl.seasonal == seasonal)),
+            None => {}
+        }
         // an item clicked in the bar: shown; a click anywhere else (not on what is shown) lets it go
         if show_pick.is_some() {
             self.st_show = show_pick;
@@ -3334,6 +3356,7 @@ fn st_bar(
     has: &dyn Fn(i32) -> bool,
     look: BarLook,
     show: Option<(&(i32, usize, lg_app::loadout::Held), f32)>,
+    planned: &[Planned],
 ) -> BarOut {
     use lg_app::st_forge::Mode;
     let BarLook { piece, card, joint_x, bar, full_h, t, mode, card_fill } = look;
@@ -3417,6 +3440,7 @@ fn st_bar(
     let colw = (bar.width() - 16.0) / pieces.len() as f32;
     let mut toggled = None;
     let mut shown: Option<(i32, usize, lg_app::loadout::Held)> = None;
+    let mut plan_click: Option<Result<Planned, (i32, bool)>> = None;
     let same = |a: &lg_app::loadout::Held, b: &lg_app::loadout::Held| {
         a.char_id == b.char_id && a.vault == b.vault && a.slot == b.slot && a.enchant_ids == b.enchant_ids
     };
@@ -3480,17 +3504,40 @@ fn st_bar(
             let mut y = top_s + lh16 + if forge.is_some() { 4.0 } else { 12.0 };
             let on_side = |h: &lg_app::loadout::Held| h.seasonal.is_none() || h.seasonal == Some(seasonal);
             if let Some(f) = forge {
-                // missing, the forge makes it: the tokens on this side, and the spare ST item it takes (gold box) with
-                // where it is
+                // planned on this side: what it takes, set aside, and "PLANNED" (a click: no longer)
+                if let Some(pl) = planned.iter().find(|pl| pl.piece == *id && pl.seasonal == seasonal) {
+                    let tt = format!("{} token{} set aside", f.amount, if f.amount == 1 { "" } else { "s" });
+                    jtext::draw(&painter, pos2(sx, y), Align2::LEFT_TOP, &tt, &f16, fixed::GREEN);
+                    y += lh16 + 6.0;
+                    let mut x = sx;
+                    if let Some((item, held)) = pl.taken.iter().find(|(i, _)| *i != f.token) {
+                        let ir = Rect::from_min_size(pos2(x, y), vec2(ICON_B, ICON_B));
+                        item_icon(&painter, icons, ui, app, rarity, *item, held, ir);
+                        let pr = Rect::from_min_size(pos2(ir.right() + 6.0, y), vec2(ICON_B, ICON_B));
+                        place_look(ui, &painter, icons, app, held, *item, pr, ("st-planned", *id, seasonal));
+                        x = pr.right() + 8.0;
+                    }
+                    if plan_label(ui, &painter, p, pos2(x, y + ICON_B / 2.0), true, &f16, ("st-plan", *id, seasonal)) {
+                        plan_click = Some(Err((*id, seasonal)));
+                    }
+                    continue;
+                }
+                // missing, the forge makes it: the tokens on this side, and the spare ST item it takes with where it is
                 let n = f.tokens.iter().filter(|c| on_side(&c.held)).count() as i32;
                 let enough = n >= f.amount;
                 // needed / held
                 let tt = format!("{} / {n} token{}", f.amount, if n == 1 { "" } else { "s" });
                 jtext::draw(&painter, pos2(sx, y), Align2::LEFT_TOP, &tt, &f16, if enough { fixed::GREEN } else { fixed::MUTED });
                 y += lh16 + 6.0;
+                // what planning it would set aside: the tokens it takes from this side (and the spare)
+                let tokens: Vec<(i32, lg_app::loadout::Held)> =
+                    f.tokens.iter().filter(|c| on_side(&c.held)).take(f.amount.max(0) as usize).map(|c| (c.item, c.held.clone())).collect();
                 match &f.st_slot {
                     None => {
                         jtext::draw(&painter, pos2(sx, y), Align2::LEFT_TOP, "no ST item needed", &fs, fixed::MUTED);
+                        if enough && plan_label(ui, &painter, p, pos2(sx, y + lh16 + 14.0), false, &f16, ("st-plan", *id, seasonal)) {
+                            plan_click = Some(Ok(Planned { piece: *id, seasonal, taken: tokens }));
+                        }
                     }
                     Some(slot) => match f.spares.iter().find(|c| on_side(&c.held)) {
                         None => {
@@ -3510,16 +3557,21 @@ fn st_bar(
                             }
                             let pr = Rect::from_min_size(pos2(ir.right() + 6.0, y), vec2(ICON_B, ICON_B));
                             place_look(ui, &painter, icons, app, &spare.held, spare.item, pr, ("st-spare", *id, seasonal));
-                            // enough tokens on this side too: it can be made here
-                            if enough {
-                                jtext::draw(
+                            // enough tokens on this side too: it can be made here; a click plans it
+                            if enough
+                                && plan_label(
+                                    ui,
                                     &painter,
+                                    p,
                                     pos2(pr.right() + 8.0, pr.center().y),
-                                    Align2::LEFT_CENTER,
-                                    "CRAFTABLE",
+                                    false,
                                     &f16,
-                                    p.gold,
-                                );
+                                    ("st-plan", *id, seasonal),
+                                )
+                            {
+                                let mut taken = tokens;
+                                taken.push((spare.item, spare.held.clone()));
+                                plan_click = Some(Ok(Planned { piece: *id, seasonal, taken }));
                             }
                         }
                     },
@@ -3645,13 +3697,56 @@ fn st_bar(
         showcase(ui, &painter, p, icons, app, rarity, *item, held, r, st);
         card_r = Some(r);
     }
-    BarOut { toggled, show: shown, card: card_r }
+    BarOut { toggled, plan: plan_click, show: shown, card: card_r }
+}
+
+/// The label of a craft that can be made: "CRAFTABLE" in gold, or once planned "PLANNED" in green in a grey box,
+/// its left middle at `at`. True when clicked.
+fn plan_label(
+    ui: &Ui,
+    painter: &egui::Painter,
+    p: &Palette,
+    at: egui::Pos2,
+    planned: bool,
+    font: &egui::FontId,
+    id: impl std::hash::Hash + std::fmt::Debug,
+) -> bool {
+    let text = if planned { "PLANNED" } else { "CRAFTABLE" };
+    let w = jtext::width(painter, text, font);
+    let h = jtext::height(painter, font);
+    let r = Rect::from_min_size(pos2(at.x, at.y - h / 2.0 - 4.0), vec2(w + 14.0, h + 8.0));
+    let resp =
+        ui.interact(r, ui.scope_id().with(id), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(if planned {
+            "Planned: what it takes is set aside. Click: not planned any more"
+        } else {
+            "Click to plan this craft: its tokens and the item it takes are set aside for it"
+        });
+    if planned {
+        painter.rect(r, 3.0, mix(p.paper, p.line, 0.4), Stroke::new(1.0, p.ink_muted), StrokeKind::Inside);
+        jtext::draw(painter, r.center(), Align2::CENTER_CENTER, text, font, fixed::GREEN);
+    } else {
+        if resp.hovered() {
+            painter.rect_stroke(r, 3.0, Stroke::new(1.0, p.gold.gamma_multiply(0.6)), StrokeKind::Inside);
+        }
+        jtext::draw(painter, r.center(), Align2::CENTER_CENTER, text, font, p.gold);
+    }
+    resp.clicked()
+}
+
+/// A craft planned in a set's bar: the piece, on which side, the spare ST item and the tokens it takes (set aside).
+#[derive(Clone, Debug)]
+struct Planned {
+    piece: i32,
+    seasonal: bool,
+    taken: Vec<(i32, lg_app::loadout::Held)>,
 }
 
 /// What a set's bar gives back: the item whose backup lock was clicked, an item clicked that is not of the set (it,
 /// its column, its copy), where the item shown is.
 struct BarOut {
     toggled: Option<i32>,
+    /// A craft planned (Some) or no longer (None: the piece and side), when its label was clicked.
+    plan: Option<Result<Planned, (i32, bool)>>,
     show: Option<(i32, usize, lg_app::loadout::Held)>,
     card: Option<Rect>,
 }

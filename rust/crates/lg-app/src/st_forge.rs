@@ -118,6 +118,23 @@ impl Stock {
         self
     }
 
+    /// The stock less copies set aside (crafts planned): for each, the first copy of its item in the same place
+    /// with the same enchantments.
+    pub fn without(&self, taken: &[(i32, Held)]) -> Stock {
+        let mut copies = self.copies.clone();
+        for (item, h) in taken {
+            if let Some(c) = copies.get_mut(item)
+                && let Some(i) = c
+                    .iter()
+                    .position(|x| x.char_id == h.char_id && x.vault == h.vault && x.slot == h.slot && x.enchant_ids == h.enchant_ids)
+            {
+                c.remove(i);
+            }
+        }
+        copies.retain(|_, c| !c.is_empty());
+        Stock { copies, keep: self.keep, freed: self.freed.clone() }
+    }
+
     /// How many copies of `item` are kept.
     pub fn kept(&self, item: i32) -> usize {
         if self.freed.contains(&item) { 1 } else { self.keep }
@@ -271,6 +288,15 @@ mod tests {
         let stock = Stock::from_copies(HashMap::from([(0x300, vec![held(0, 4, false), held(1, 3, true), held(2, 1, false)])]));
         let spares = stock.spares(&d, "Armor");
         assert_eq!(spares.len(), 2, "one seasonal, one regular");
+    }
+
+    #[test]
+    fn copies_set_aside_are_left_out() {
+        let d = data();
+        let stock = Stock::from_copies(HashMap::from([(0x100, vec![held(0, 0, false), held(1, 0, false)])]));
+        let less = stock.without(&[(0x100, held(0, 0, false))]);
+        let plan = less.plan(&d, &set(), &|_| false);
+        assert_eq!(plan[0].tokens.len(), 1, "one of the two tokens set aside");
     }
 
     #[test]
