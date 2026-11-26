@@ -981,7 +981,7 @@ pub fn tours() -> Vec<Tour> {
             ),
             step(
                 "Which rarities",
-                "Hover the rarity button to choose which rarities may be used for forging and crafting; the rarest spare is always offered first.\n\nTry it: untick one.",
+                "Hover the rarity button to choose which rarities may be used for crafting; the rarest spare is always offered first. The ones left out are what Forge lists to dismantle, the worst first.\n\nTry it: untick one.",
                 None,
                 vec!["inventory.rarity"],
                 Vec::new(),

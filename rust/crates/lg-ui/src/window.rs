@@ -294,12 +294,12 @@ impl Window {
                 self.inventory.melt = false;
                 self.inventory.opt = true;
             }
-            // the same, the spare copies by feed power
-            ("Inventory", "optimize:feed") => {
+            // the same, the spare copies by feed power or (forge) by what dismantling gives
+            ("Inventory", p @ ("optimize:feed" | "optimize:forge")) => {
                 self.inventory.page = 0;
                 self.inventory.melt = false;
                 self.inventory.opt = true;
-                self.inventory.opt_sort = 1;
+                self.inventory.opt_sort = if p == "optimize:feed" { 1 } else { 2 };
             }
             ("Inventory", p) if p.starts_with("item:") => {
                 // Java `showItem`: the Items page, the item scrolled to and pulsing, its history beside the grid

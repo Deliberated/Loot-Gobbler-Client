@@ -115,16 +115,26 @@ fn glow_ups(dur: f64) -> [(f64, f64); 3] {
 const OPT_COLUMN_W: f32 = 380.0;
 
 /// An item held more often than kept (the forge mode: the best copy, with a backup also the second best): its copies,
-/// the most enchanted first, and how many of them are kept.
+/// the most enchanted first, how many of them are kept, and which rarities count as spare (by enchantments, 0..4).
 struct Spare {
     item: i32,
     copies: Vec<lg_app::loadout::Held>,
     keep: usize,
+    counts: [bool; 5],
+}
+
+fn enchant_count(h: &lg_app::loadout::Held) -> usize {
+    h.enchant_ids.as_ref().map_or(0, |e| e.iter().filter(|x| **x >= 0).count())
 }
 
 impl Spare {
+    /// Whether the copy at `rank` is spare: not kept, of a rarity that counts.
+    fn spare(&self, rank: usize) -> bool {
+        rank >= self.keep && self.copies.get(rank).is_some_and(|h| self.counts[enchant_count(h).min(4)])
+    }
+
     fn free(&self) -> usize {
-        self.copies.len().saturating_sub(self.keep)
+        (0..self.copies.len()).filter(|r| self.spare(*r)).count()
     }
 }
 
@@ -137,14 +147,16 @@ fn forge_mode(props: &lg_app::properties::Properties) -> (lg_app::st_forge::Mode
 
 /// Every collectible item you hold more copies of than you keep, on your living characters and in your vaults, in the
 /// order `sort` asks: 0 STs, then UTs, then the rest, each the most spare copies first; 1 the most feed power first;
-/// 2 the most forge essence from dismantling first.
+/// 2 the most forge essence from dismantling first. Spare are the copies of the rarities considered for crafting (the
+/// rarity button); for the forge (2) those left out instead, as they are not kept for crafting.
 fn spares(app: &lg_app::App, props: &lg_app::properties::Properties, sort: usize) -> Vec<Spare> {
     let data = app.world.data();
     let (mode, freed) = forge_mode(props);
     let allowed = lg_app::st_forge::rarities(props.get(lg_app::st_forge::RARITIES_KEY));
     let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
     let copies = app.holdings.copies_of(&living, |id| data.items.collectible.contains(&id));
-    let enchants = |h: &lg_app::loadout::Held| h.enchant_ids.as_ref().map_or(0, |e| e.iter().filter(|x| **x >= 0).count());
+    let enchants = enchant_count;
+    let counts = if sort == 2 { allowed.map(|a| !a) } else { allowed };
     let mut out: Vec<Spare> = copies
         .into_iter()
         .filter_map(|(item, mut copies)| {
@@ -153,11 +165,11 @@ fn spares(app: &lg_app::App, props: &lg_app::properties::Properties, sort: usize
                 return None;
             }
             copies.sort_by_key(|h| std::cmp::Reverse(enchants(h)));
-            // only copies of the rarities considered are spare
-            if !copies[keep..].iter().any(|h| allowed[enchants(h).min(4)]) {
+            // only copies of the rarities that count are spare
+            if !copies[keep..].iter().any(|h| counts[enchants(h).min(4)]) {
                 return None;
             }
-            Some(Spare { item, copies, keep })
+            Some(Spare { item, copies, keep, counts })
         })
         .collect();
     let kind = |id: i32| {
@@ -259,7 +271,7 @@ impl InventoryView {
                     "Your spare copies are framed and listed on the left.",
                     "Feed: the most feed power first.",
                     "Craft: the ST sets beside your items.",
-                    "Forge: what dismantling gives, the most first.",
+                    "Forge: the rarities not for crafting, the worst first.",
                 ] {
                     jtext::draw(
                         &painter,
@@ -412,8 +424,12 @@ impl InventoryView {
                         for (side, seasonal) in [(0.0, true), (1.0, false)] {
                             let sx = x + side * half;
                             let per = (((half - 4.0) / (CHIP + 3.0)).floor() as usize).max(1);
-                            let list: Vec<(usize, &lg_app::loadout::Held)> =
+                            let mut list: Vec<(usize, &lg_app::loadout::Held)> =
                                 sp.copies.iter().enumerate().filter(|(_, h)| (h.seasonal == Some(true)) == seasonal).collect();
+                            // for the forge the worst first: what goes first
+                            if self.opt_sort == 2 {
+                                list.reverse();
+                            }
                             if list.is_empty() {
                                 jtext::draw(
                                     &painter,
@@ -437,7 +453,7 @@ impl InventoryView {
                                         lock(&painter, cr.left_top() + vec2(5.0, 6.0), 10.0, p.gold, false);
                                     } else if *rank < sp.keep {
                                         lock(&painter, cr.left_top() + vec2(5.0, 6.0), 10.0, fixed::GREEN, false);
-                                    } else {
+                                    } else if sp.spare(*rank) {
                                         painter.rect_stroke(cr.expand(1.0), 0.0, Stroke::new(2.0, p.gold), StrokeKind::Outside);
                                     }
                                 }
@@ -1108,7 +1124,7 @@ impl InventoryView {
         let beat_since = self.beat.as_ref().map_or(0.0, |b| b.1);
         // the optimization: the items you hold spare copies of
         let spare_items: std::collections::HashSet<i32> =
-            if self.opt { spares(app, c.props, 0).into_iter().map(|s| s.item).collect() } else { Default::default() };
+            if self.opt { spares(app, c.props, self.opt_sort).into_iter().map(|s| s.item).collect() } else { Default::default() };
         let title = if self.upe_char != 0 {
             let name = match (app.characters.get(self.upe_char), app.upe.runs.get(&self.upe_char).filter(|r| r.marked)) {
                 (Some(ch), Some(r)) => format!("{} ({})", ch.class_name, lg_app::upe::label(&r.mode)),
@@ -3450,7 +3466,7 @@ fn forge_switch(
                     ui.set_width(200.0);
                     let names = ["Common", "Uncommon", "Rare", "Legendary", "Divine"];
                     let f = text(16.0);
-                    jtext::draw(ui.painter(), ui.cursor().min, Align2::LEFT_TOP, "CONSIDERED FOR FORGING", &small(), fixed::MUTED);
+                    jtext::draw(ui.painter(), ui.cursor().min, Align2::LEFT_TOP, "CONSIDERED FOR CRAFTING", &small(), fixed::MUTED);
                     ui.add_space(jtext::height(ui.painter(), &small()) + 6.0);
                     for (k, name) in names.iter().enumerate() {
                         let (row, resp) = ui.allocate_exact_size(vec2(200.0, 26.0), Sense::click());

@@ -11,7 +11,7 @@ v0.0.3: Forge, focus and optimization
 
 **Collector Mode:** 
 - A switch for forge suggestions: off, collector (the best copy of each ST item kept, gold lock) or collector + backup (the second best kept too, green lock you can let go)
-- Hover the rarity button beside it to choose which rarities may be used for forging and crafting
+- Hover the rarity button beside it to choose which rarities may be used for crafting; Forge lists the others to dismantle, the worst first
 - The rarest spare is always offered first
 
 **Items and ST Sets:** 
