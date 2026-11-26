@@ -527,6 +527,14 @@ fn main() {
                             win.inventory.st_class = Some(s.class_name.clone());
                         }
                     }
+                    // "Inventory:melt[:<set title>]": Items and ST Sets melted (that set clicked)
+                    if let Some(rest) = tab.strip_prefix("Inventory:melt") {
+                        win.open("Inventory");
+                        win.inventory.melt = true;
+                        if let Some(s) = rest.strip_prefix(':').and_then(|t| app.world.data().st_sets.iter().find(|s| s.title == t)) {
+                            win.inventory.st_selected = Some(s.name.clone());
+                        }
+                    }
                     // "Inventory:st:set:<title>[:<piece id>]": ST Sets with that set's bar open (that piece alone)
                     if let Some(rest) = tab.strip_prefix("Inventory:st:set:") {
                         win.open("Inventory:st");

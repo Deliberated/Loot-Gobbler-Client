@@ -41,6 +41,12 @@ pub struct InventoryView {
     pub st_piece: Option<i32>,
     /// The set whose bar is open or still closing.
     st_bar_last: Option<String>,
+    /// Items and ST Sets melted into one page: the collection left, the sets right.
+    pub melt: bool,
+    /// Where the melt goes when it ends: 0 back to Items, 1 on to ST Sets (the items slide out left).
+    melt_exit: usize,
+    /// The set whose pieces beat in the collection, and since when.
+    beat: Option<(String, f64)>,
     /// The key clicked on the Keys page: the side shows what it gives (a mystery key) or its dungeon.
     pub key_selected: Option<i32>,
     /// The item whose history replaces the Recent list (Java `historyItem`).
@@ -81,6 +87,54 @@ fn glow_ups(dur: f64) -> [(f64, f64); 3] {
         prev = d;
     }
     out
+}
+
+/// A set's pieces beating in the melted collection, `elapsed` s after the set was clicked: the second and third of an
+/// opened item's glow-ups, then 2 s of rest, over and over. Each box's place as in `pulse_ts`.
+fn heartbeat(elapsed: f64) -> Vec<f32> {
+    let g = glow_ups(PULSE_S);
+    let (from, to) = (g[1].0, g[2].0 + g[2].1);
+    let cycle = to - from + 2.0;
+    let e = from + elapsed.rem_euclid(cycle);
+    g[1..].iter().filter(|(s, d)| e >= *s && e < s + d).map(|(s, d)| ((e - s) / d).clamp(0.0, 1.0) as f32).collect()
+}
+
+/// Items and ST Sets melting into one tab (`t` 0 apart, 1 one): both gold, the gap between them filling from the
+/// middle out like something molten, then the one box with "ITEMS AND ST SETS".
+fn melt_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, t: f32) {
+    let painter = ui.painter().clone();
+    let font = small();
+    let w0 = jtext::width(&painter, "ITEMS", &font) + 30.0;
+    let w1 = jtext::width(&painter, "ST SETS", &font) + 30.0;
+    let r0 = Rect::from_min_size(at, vec2(w0, h));
+    let r1 = Rect::from_min_size(pos2(at.x + w0 + 8.0, at.y), vec2(w1, h));
+    let gold = p.gold;
+    // the ST Sets box turning gold too
+    painter.rect_filled(
+        r1.shrink(1.5),
+        0.0,
+        Color32::from_rgba_unmultiplied(gold.r(), gold.g(), gold.b(), (255.0 * (t * 2.0).min(1.0)) as u8),
+    );
+    // the gap filling: a neck growing from the middle, rounded
+    let neck_h = h * ((t - 0.15) / 0.55).clamp(0.0, 1.0);
+    if neck_h > 0.0 {
+        let gap =
+            Rect::from_min_max(pos2(r0.right() - 2.0, r0.center().y - neck_h / 2.0), pos2(r1.left() + 2.0, r0.center().y + neck_h / 2.0));
+        painter.rect_filled(gap, neck_h / 2.0 * (1.0 - t), gold);
+    }
+    // the one box, its name fading in over the two
+    let k = ((t - 0.6) / 0.4).clamp(0.0, 1.0);
+    let one = r0.union(r1);
+    if t > 0.6 {
+        painter.rect_filled(one.shrink(1.5), 0.0, gold);
+        painter.rect_stroke(one, 0.0, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+        let ink = p.on_accent.gamma_multiply(k);
+        jtext::draw(&painter, one.center(), Align2::CENTER_CENTER, "ITEMS AND ST SETS", &font, ink);
+    } else {
+        for (r, label) in [(r0, "ITEMS"), (r1, "ST SETS")] {
+            jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, label, &font, p.on_accent);
+        }
+    }
 }
 
 /// How long a pulse lasts: one opening, or the three glow-ups.
@@ -192,8 +246,30 @@ impl InventoryView {
             c.asks.push(crate::window::Ask::Set("collectionUpeColumn".into(), (!column_on).to_string()));
         }
         const PAGES: [&str; 4] = ["Items", "ST Sets", "Keys", "Log"];
+        // ST Sets from Items: the two melt into one page; ST Sets again: the plain sets; Items: back to the items
         if let Some(i) = widgets::segmented(ui, &p, pos2(pages_x, all.top()), 36.0, &PAGES, self.page, false, &[]) {
-            self.page = i;
+            match (self.melt, i) {
+                (false, 1) if self.page == 0 => {
+                    self.melt = true;
+                    self.melt_exit = 0;
+                }
+                (true, 1) => {
+                    self.melt = false;
+                    self.melt_exit = 1;
+                    self.page = 1;
+                }
+                (true, _) => {
+                    self.melt = false;
+                    self.melt_exit = 0;
+                    self.page = i;
+                }
+                _ => self.page = i,
+            }
+        }
+        let mt = ui.ctx().animate_bool_with_time(ui.scope_id().with("inv-melt"), self.melt, 0.45);
+        let mt = mt * mt * (3.0 - 2.0 * mt);
+        if mt > 0.0 && self.page <= 1 {
+            melt_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, mt);
         }
         // the forge resources, right-aligned on the same row: the regular side at the right, the seasonal one before it
         let pages_end = pages_x + widgets::segmented_width(ui.painter(), &PAGES, false) + 10.0;
@@ -211,11 +287,52 @@ impl InventoryView {
                 ui.ctx().request_repaint();
             }
         }
+        // melted (or melting, or parting): the collection squeezed to the left, the sets coming in from the right;
+        // parting to ST Sets the collection slides out to the left
+        if mt > 0.0 && self.page <= 1 {
+            let mid = body.left() + (body.width() * 0.5).round();
+            let (items_r, sets_r) = if self.melt || self.melt_exit == 0 {
+                let split = body.right() + (mid - body.right()) * mt;
+                (
+                    Rect::from_min_max(body.min, pos2(split, body.bottom())),
+                    Rect::from_min_max(pos2(split, body.top()), pos2(split + body.right() - mid, body.bottom())),
+                )
+            } else {
+                let split = body.left() + (mid - body.left()) * mt;
+                (
+                    Rect::from_min_max(pos2(split - (mid - body.left()), body.top()), pos2(split, body.bottom())),
+                    Rect::from_min_max(pos2(split, body.top()), body.max),
+                )
+            };
+            // the set clicked: its pieces beat in the collection
+            let beat = self.st_selected.clone().filter(|_| self.melt);
+            if beat.as_ref() != self.beat.as_ref().map(|b| &b.0) {
+                self.beat = beat.map(|b| (b, ui.input(|i| i.time)));
+            }
+            for (r, sets) in [(items_r, false), (sets_r, true)] {
+                let shown = r.intersect(body);
+                if shown.width() < 1.0 {
+                    continue;
+                }
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
+                child.set_clip_rect(shown.intersect(ui.clip_rect()));
+                if sets {
+                    self.st_sets(&mut child, c, rarity, r, true);
+                } else {
+                    self.items(&mut child, c, rarity, r, true);
+                }
+            }
+            if mt < 1.0 {
+                ui.ctx().request_repaint();
+            }
+            return;
+        }
+        self.beat = None;
         match self.page {
-            1 => self.st_sets(ui, c, rarity, body),
+            1 => self.st_sets(ui, c, rarity, body, false),
             2 => self.keys(ui, c, body),
             3 => self.log(ui, c, body),
-            _ => self.items(ui, c, rarity, body),
+            _ => self.items(ui, c, rarity, body, false),
         }
     }
 
@@ -396,7 +513,7 @@ impl InventoryView {
     }
 
     /// The Items page: the grid beside progress, actions and recent finds.
-    fn items(&mut self, ui: &mut Ui, c: &mut Ctx, rarity: &Rarity, body: Rect) {
+    fn items(&mut self, ui: &mut Ui, c: &mut Ctx, rarity: &Rarity, body: Rect, grid_only: bool) {
         let p = *c.p;
         let app = c.app;
         let data = app.world.data();
@@ -500,8 +617,21 @@ impl InventoryView {
         // the split: the side 380 px, the grid snapped down to whole columns
         let overhead = 2.0 + 12.0;
         let base = overhead + 2.0 * PAD;
-        let (main, side) = widgets::side_split(ui, c.p, c.props, "collectionGrid", body, 380.0, 200.0, 560.0, Some((base, CELL)));
+        let (main, side) = if grid_only {
+            (body, Rect::NOTHING)
+        } else {
+            widgets::side_split(ui, c.p, c.props, "collectionGrid", body, 380.0, 200.0, 560.0, Some((base, CELL)))
+        };
         let cols = ((main.width() - base + 0.001) / CELL).floor().max(1.0);
+        // melted with a set clicked: its pieces beat (two glow-ups, then 2 s of rest), the rest dimmed
+        let beat_pieces: Vec<i32> = self
+            .beat
+            .as_ref()
+            .filter(|_| grid_only)
+            .and_then(|(n, _)| data.st_sets.iter().find(|s| s.name == *n))
+            .map(|s| s.pieces.to_vec())
+            .unwrap_or_default();
+        let beat_since = self.beat.as_ref().map_or(0.0, |b| b.1);
         let title = if self.upe_char != 0 {
             let name = match (app.characters.get(self.upe_char), app.upe.runs.get(&self.upe_char).filter(|r| r.marked)) {
                 (Some(ch), Some(r)) => format!("{} ({})", ch.class_name, lg_app::upe::label(&r.mode)),
@@ -717,6 +847,29 @@ impl InventoryView {
                             fade(sub_c),
                         );
                     }
+                    if !beat_pieces.is_empty() {
+                        for (i, cell) in cells.iter().enumerate() {
+                            if !beat_pieces.contains(&cell.id) {
+                                painter.rect_filled(cell_rect(i), 0.0, Color32::from_black_alpha(110));
+                            }
+                        }
+                        for t in heartbeat(time_s - beat_since) {
+                            let eased = 1.0 - (1.0 - t) * (1.0 - t);
+                            let gold = Color32::from_rgb(0xF5, 0xC5, 0x42).gamma_multiply(1.0 - t);
+                            for (i, cell) in cells.iter().enumerate() {
+                                if beat_pieces.contains(&cell.id) {
+                                    widgets::smooth_stroke(
+                                        &painter,
+                                        cell_rect(i).expand(eased * PULSE_GROW),
+                                        0.0,
+                                        Stroke::new(5.0, gold),
+                                        StrokeKind::Middle,
+                                    );
+                                }
+                            }
+                        }
+                        ui.ctx().request_repaint();
+                    }
                     if let Some((id, start, dur, again)) = pulse
                         && let Some(i) = cells.iter().position(|c| c.id == id)
                     {
@@ -746,6 +899,13 @@ impl InventoryView {
         if let Some(id) = clicked_cell.get() {
             self.history = Some(id);
             self.pulse = Some((id, time_s, CLICK_PULSE_S, false));
+            // melted: a piece of the set clicked shows alone in its bar; any other item, all four again
+            if grid_only {
+                self.st_piece = beat_pieces.contains(&id).then_some(id);
+            }
+        }
+        if grid_only {
+            return;
         }
 
         // the side: progress and actions on top, recent finds below
@@ -1299,7 +1459,7 @@ impl InventoryView {
 
     /// The ST Sets page (Java `StSetsView`): a card per set with its four pieces, beside the progress, the sets one
     /// piece away and the sets per class.
-    fn st_sets(&mut self, ui: &mut Ui, c: &mut Ctx, rarity: &Rarity, body: Rect) {
+    fn st_sets(&mut self, ui: &mut Ui, c: &mut Ctx, rarity: &Rarity, body: Rect, grid_only: bool) {
         const CARD_MIN_WIDTH: f32 = 330.0;
         const GAP: f32 = 8.0;
         const TILE: f32 = 44.0;
@@ -1354,7 +1514,11 @@ impl InventoryView {
         // the split: the side 280 px, the cards snapped down to whole columns
         let overhead = 2.0 + 12.0;
         let base = overhead + 20.0 - GAP;
-        let (main, side) = widgets::side_split(ui, c.p, c.props, "stSets", body, 280.0, 220.0, 200.0, Some((base, CARD_MIN_WIDTH + GAP)));
+        let (main, side) = if grid_only {
+            (body, Rect::NOTHING)
+        } else {
+            widgets::side_split(ui, c.p, c.props, "stSets", body, 280.0, 220.0, 200.0, Some((base, CARD_MIN_WIDTH + GAP)))
+        };
         let cols = (((main.width() - base + 0.001) / (CARD_MIN_WIDTH + GAP)).floor()).max(1.0);
         let filters = ["All", "Tokens"];
         let mut filter = self.st_filter.min(1);
@@ -1646,6 +1810,9 @@ impl InventoryView {
             self.st_selected = sel;
         }
 
+        if grid_only {
+            return;
+        }
         // the side: set progress, almost complete, by class
         let painter = ui.painter().clone();
         let lh = jtext::height(&painter, &text(18.0));
