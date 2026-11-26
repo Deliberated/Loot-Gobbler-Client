@@ -88,14 +88,8 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
         })
         .collect();
     infos.sort_by(|a, b| b.total.cmp(&a.total).then(b.sum.cmp(&a.sum)).then(a.name.cmp(&b.name)));
-    // the class of the character in focus: its card first and lit; a new focus opens it on the right
+    // the class of the character in focus: its card lit where it stands; a new focus opens it on the right
     let focus = crate::focus::focused_char(app, c.props).map(|x| x.class_type);
-    if let Some(f) = focus
-        && let Some(i) = infos.iter().position(|x| x.id == f)
-    {
-        let it = infos.remove(i);
-        infos.insert(0, it);
-    }
     let seen_id = egui::Id::unique("lg-class-focus-seen");
     if ui.ctx().data(|d| d.get_temp::<Option<i32>>(seen_id)) != Some(focus) {
         ui.ctx().data_mut(|d| {
