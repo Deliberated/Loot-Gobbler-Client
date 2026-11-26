@@ -46,10 +46,6 @@ pub struct CharactersView {
     pets: crate::pets::PetsView,
     /// The line beside REFRESH (Java's status label).
     pub refresh_status: String,
-    /// The character whose stats window is open (a card clicked), and where.
-    stats_open: Option<(i32, egui::Pos2)>,
-    /// Opened this frame (its own click does not close it).
-    stats_opened: bool,
 }
 
 impl Default for CharactersView {
@@ -67,8 +63,6 @@ impl Default for CharactersView {
             suggestion: None,
             pets: Default::default(),
             refresh_status: String::new(),
-            stats_open: None,
-            stats_opened: false,
         }
     }
 }
@@ -205,55 +199,7 @@ impl CharactersView {
             self.pets.show(ui, c, body);
             return;
         }
-        self.stats_opened = false;
         self.characters_page(ui, c, body);
-        self.stats_window(ui, c, self.stats_opened);
-    }
-
-    /// The stats window of the card clicked, until it is closed (its x, Escape, or a click anywhere else).
-    fn stats_window(&mut self, ui: &Ui, c: &Ctx, opened: bool) {
-        let Some((id, at)) = self.stats_open else { return };
-        let Some(ch) = c.app.characters.get(id) else {
-            self.stats_open = None;
-            return;
-        };
-        let p = *c.p;
-        let mut close = false;
-        let shown = egui::Area::new(egui::Id::unique("lg-char-stats"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(at + vec2(14.0, 14.0))
-            .constrain(true)
-            .show(ui.ctx(), |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(&ch.class_name).font(text(24.0)).color(if ch.seasonal {
-                            SEASONAL_TEXT
-                        } else {
-                            p.gold
-                        }));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .add(egui::Button::new(egui::RichText::new("x").font(text(20.0))).frame(false))
-                                .on_hover_text("Close")
-                                .clicked()
-                            {
-                                close = true;
-                            }
-                        });
-                    });
-                    // the class's exaltations so far
-                    let done = lg_app::exalt_store::total(c.app.exalts.progress(ch.class_type).map(|v| v.as_slice()));
-                    let max = 8 * lg_app::exalt_store::THRESHOLDS.len() as i32;
-                    ui.label(
-                        egui::RichText::new(format!("{} exaltations: {done} of {max}", ch.class_name)).font(text(18.0)).color(EXALT_BLUE),
-                    );
-                    stats_grid(ui, ch, c.app);
-                });
-            });
-        let outside = ui.input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|q| !shown.response.rect.contains(q)));
-        if close || ui.input(|i| i.key_pressed(egui::Key::Escape)) || (outside && !opened) {
-            self.stats_open = None;
-        }
     }
 
     fn characters_page(&mut self, ui: &mut Ui, c: &mut Ctx, body: Rect) {
@@ -356,13 +302,6 @@ impl CharactersView {
                             let y0 = list.cursor().top();
                             if self.card(&mut list, &p, c.icons, app, x, gain(x), now) {
                                 self.selected = x.char_id;
-                                // its stats in a little window by the pointer; the same card again closes it
-                                let at = list.input(|i| i.pointer.interact_pos()).unwrap_or(list.cursor().min);
-                                self.stats_open = match self.stats_open {
-                                    Some((id, _)) if id == x.char_id => None,
-                                    _ => Some((x.char_id, at)),
-                                };
-                                self.stats_opened = true;
                             }
                             if x.char_id == self.selected {
                                 let m = list.max_rect();
@@ -544,7 +483,7 @@ impl CharactersView {
         if c.ritual {
             flame(&painter, pr.center() + vec2(37.0 - 21.0, 37.0 - 27.0));
         }
-        pot_tip(ui, pr, ("portrait", c.char_id), c, app);
+        pot_tip(ui, p, pr, ("portrait", c.char_id), c, app);
         // the loadout: weapon, ability, armor, ring, backpack, at fixed places; reusable quick-slot gear below
         let lx = pr.right() + 3.0 + 14.0;
         let ly = cy - loadout_h / 2.0;
@@ -610,7 +549,7 @@ impl CharactersView {
         let when_asc = (15.0f32 * 1050.0 / 1350.0).ceil();
         jtext::draw(&painter, pos2(tx + line_w, base - when_asc), Align2::RIGHT_TOP, &ago_or(c, now), &text(15.0), fixed::MUTED);
         let pr2 = jtext::draw(&painter, pos2(tx, top + row_h + (row_h - ph) / 2.0), Align2::LEFT_TOP, &progress(c), &text(20.0), p.gold);
-        pot_tip(ui, Rect::from_min_size(pos2(tx, top), vec2(line_w, 2.0 * row_h)), ("name", c.char_id), c, app);
+        pot_tip(ui, p, Rect::from_min_size(pos2(tx, top), vec2(line_w, 2.0 * row_h)), ("name", c.char_id), c, app);
         let gcol = if gain > 0 { fixed::GREEN } else { fixed::MUTED };
         jtext::draw(
             &painter,
@@ -709,7 +648,7 @@ impl CharactersView {
             34.0,
             if c.stats_maxed == 8 { STATS_MAXED } else { STATS_OPEN },
         );
-        pot_tip(ui, Rect::from_min_size(pos2(x, mid - ss.y / 2.0), ss), ("stats", c.char_id), c, app);
+        pot_tip(ui, p, Rect::from_min_size(pos2(x, mid - ss.y / 2.0), ss), ("stats", c.char_id), c, app);
         x -= 8.0;
         let lb = loot_bonus(c, data, now);
         let lt = format!("+{}%", percent(lb));
@@ -1158,9 +1097,36 @@ const EXALT_BLUE: Color32 = Color32::from_rgb(0x4A, 0xA8, 0xFF);
 /// The gear bonus colour in the stat tooltip.
 const GEAR_GREEN: Color32 = Color32::from_rgb(0x5C, 0xE0, 0x4A);
 
-/// A character's stats while the pointer rests on `r` (see `stats_grid`).
-fn pot_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, c: &Char, app: &lg_app::App) {
-    widgets::custom_tip(ui, r, id, |ui| stats_grid(ui, c, app));
+/// A character's stats while the pointer rests on `r` (see `stats_grid`), in a rounded window framed in gold by the
+/// pointer.
+fn pot_tip(ui: &Ui, p: &Palette, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, c: &Char, app: &lg_app::App) {
+    let resp = ui.interact(r, ui.scope_id().with(("stats-tip", id)), Sense::hover());
+    if !resp.contains_pointer() || ui.ctx().dragged_id().is_some() {
+        return;
+    }
+    let delay = ui.style().interaction.tooltip_delay;
+    let rest = ui.input(|i| i.pointer.time_since_last_movement());
+    if rest < delay {
+        ui.ctx().request_repaint_after_secs(delay - rest);
+        return;
+    }
+    let Some(at) = ui.input(|i| i.pointer.hover_pos()) else { return };
+    let shown = egui::Area::new(egui::Id::unique("lg-char-stats-tip"))
+        .order(egui::Order::Tooltip)
+        .fixed_pos(at + vec2(16.0, 16.0))
+        .constrain(true)
+        .interactable(false)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(p.paper)
+                .stroke(Stroke::new(2.0, p.gold))
+                .corner_radius(6.0)
+                .inner_margin(10.0)
+                .show(ui, |ui| stats_grid(ui, c, app));
+        });
+    // a soft shadow under it
+    let shadow = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("lg-char-stats-shadow")));
+    shadow.rect_filled(shown.response.rect.translate(vec2(3.0, 4.0)), 6.0, Color32::from_black_alpha(90));
 }
 
 /// A character's stats: per stat its base, the potions it still needs to max (after a bar), the gear bonus while it
@@ -1205,7 +1171,7 @@ fn stats_grid(ui: &mut Ui, c: &Char, app: &lg_app::App) {
             format!("{maxed}/8 · {total} potion{} to 8/8", if total == 1 { "" } else { "s" })
         };
         ui.label(egui::RichText::new(head).font(text(20.0)).color(STATS_MAXED));
-        let (cw, ch, gap) = (170.0, 58.0, 6.0);
+        let (cw, ch, gap) = (132.0, 50.0, 4.0);
         let (area, _) = ui.allocate_exact_size(vec2(2.0 * cw + gap, 4.0 * ch + 3.0 * gap), Sense::hover());
         let painter = ui.painter();
         for i in 0..8 {
@@ -1226,7 +1192,7 @@ fn stats_grid(ui: &mut Ui, c: &Char, app: &lg_app::App) {
             let gear = boosts.map_or(0, |b| if b[i] >= bonus { b[i] - bonus } else { b[i] });
             let gear = (gear != 0).then(|| format!(" ({gear:+})"));
             let bonus = (bonus > 0).then(|| format!(" (+{bonus})"));
-            let px = if gear.is_some() && bonus.is_some() { 24.0 } else { 28.0 };
+            let px = if gear.is_some() && bonus.is_some() { 20.0 } else { 24.0 };
             let vs = widgets::outlined_size(painter, &value, px);
             let gs = gear.as_ref().map_or(egui::Vec2::ZERO, |g| widgets::outlined_size(painter, g, px));
             let bs = bonus.as_ref().map_or(egui::Vec2::ZERO, |b| widgets::outlined_size(painter, b, px));
@@ -1246,15 +1212,6 @@ fn stats_grid(ui: &mut Ui, c: &Char, app: &lg_app::App) {
                 widgets::outlined_text(painter, Rect::from_min_size(pos2(x + vs.x + gs.x, y), bs), b, px, EXALT_BLUE);
             }
         }
-        ui.label(
-            egui::RichText::new(if boosts.is_some() {
-                "base|potions left, (+gear), (+exaltation bonus). HP and MP potions give 5 each."
-            } else {
-                "base|potions left, (+exaltation bonus). Gear shows while you play it. HP and MP potions give 5 each."
-            })
-            .font(text(15.0))
-            .color(fixed::MUTED),
-        );
     }
 }
 
