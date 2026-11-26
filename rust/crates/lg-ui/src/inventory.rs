@@ -3994,7 +3994,9 @@ fn showcase(
     let (x, w) = (r.left() + 14.0, r.width() - 28.0);
     // what follows the name scrolls in the card
     let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
-    let all = app.holdings.every_copy(&living, item);
+    let mut all = app.holdings.every_copy(&living, item);
+    // the rarest first
+    all.sort_by_key(|h| std::cmp::Reverse(h.enchant_ids.as_ref().map_or(0, |e| e.iter().filter(|x| **x >= 0).count())));
     let ench: Vec<String> = held
         .enchant_ids
         .iter()
@@ -4056,8 +4058,18 @@ fn showcase(
         if view.contains(pr.center()) {
             place_look(ui, &painter, icons, app, h, item, pr, ("showcase-copy", item, n));
         }
-        let place = widgets::fit(&painter, &place_of(app, h), &fs, w - 2.0 * ICON_B - 18.0);
-        jtext::draw(&painter, pos2(pr.right() + 8.0, pr.center().y), Align2::LEFT_CENTER, &place, &fs, p.ink_soft);
+        // where it is, and below it which side it is on
+        let place = widgets::fit(&painter, &place_of(app, h).replace(" (seasonal)", ""), &fs, w - 2.0 * ICON_B - 18.0);
+        jtext::draw(&painter, pos2(pr.right() + 8.0, pr.center().y - 1.0), Align2::LEFT_BOTTOM, &place, &fs, p.ink_soft);
+        let seasonal = h.seasonal == Some(true);
+        jtext::draw(
+            &painter,
+            pos2(pr.right() + 8.0, pr.center().y + 1.0),
+            Align2::LEFT_TOP,
+            if seasonal { "Seasonal" } else { "Regular" },
+            &fs,
+            if seasonal { p.gold } else { fixed::MUTED },
+        );
         // the copy clicked (the first of equal ones)
         if !framed && same(h, held) {
             framed = true;
