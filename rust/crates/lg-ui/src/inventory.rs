@@ -47,6 +47,8 @@ pub struct InventoryView {
     melt_exit: usize,
     /// How far melted (0 apart, 1 one), moving towards `melt`.
     melt_t: f32,
+    /// How many of the collection's icons were made ahead (a few each frame), so the grid comes in whole.
+    warmed: usize,
     /// The inventory optimization on: your spare copies framed in the collection, listed in the column on the left.
     pub opt: bool,
     /// Its list's order: 0 by kind (ST, UT) and how many spare, 1 by feed power, 2 by what dismantling gives.
@@ -499,6 +501,15 @@ impl InventoryView {
         let data = app.world.data();
         let all = ui.max_rect().shrink(8.0);
         let painter = ui.painter().clone();
+        // the collection's icons made ahead, a few each frame: a grid sliding in has them all (made while it slid,
+        // they popped in one by one)
+        if self.warmed < data.items.collectible.len() {
+            for id in data.items.collectible.iter().skip(self.warmed).take(60) {
+                let _ = c.icons.object(ui.ctx(), data, *id, ICON as u32);
+            }
+            self.warmed += 60;
+            ui.ctx().request_repaint();
+        }
         // the focus: its character's own finds while it is on (a run's gathered items, else what it found)
         let focus = crate::focus::focused_char(app, c.props);
         let focus_id = focus.map(|ch| ch.char_id);
@@ -2169,10 +2180,15 @@ impl InventoryView {
                             pos2(top.x + 10.0, card.bottom() + GAP * t),
                             vec2(cols * (cw + GAP) - GAP, (full_h * t).round()),
                         );
-                        let _ = row;
+                        // the joint to the card: sliding over when another set of the row is clicked (the bar open)
+                        let jx = ui.ctx().animate_value_with_time(
+                            ui.scope_id().with(("st-joint", row as i32)),
+                            card.left(),
+                            if t >= 1.0 { 0.22 } else { 0.0 },
+                        );
                         let done = n_of(shown[i]) == 4;
                         let card_fill = if done { mix(p.gold, p.paper, 0.45) } else { p.header };
-                        let look = BarLook { piece: st_piece, card, bar, full_h, t, mode, card_fill };
+                        let look = BarLook { piece: st_piece, card, joint_x: jx, bar, full_h, t, mode, card_fill };
                         if let Some(id) = st_bar(ui, &p, icons, app, rarity, shown[i], &stock, &has, look) {
                             freed_click = Some(id);
                         }
@@ -2183,6 +2199,15 @@ impl InventoryView {
             },
         );
         self.st_filter = filter;
+        // another set of the same row: its bar stays open (only the joint slides over)
+        if let (Some(Some(new)), Some(old)) = (&pick, &self.st_selected)
+            && new != old
+            && let (Some(a), Some(b)) = (shown.iter().position(|s| s.name == *old), shown.iter().position(|s| s.name == *new))
+            && (a as f32 / cols).floor() == (b as f32 / cols).floor()
+            && let Some(t) = self.st_bar_t.remove(old)
+        {
+            self.st_bar_t.insert(new.clone(), t);
+        }
         if let Some(m) = next_mode {
             c.asks.push(crate::window::Ask::Set(Mode::KEY.into(), m.value().into()));
         }
@@ -2500,7 +2525,7 @@ fn paint_cells(
     for (i, c) in cells.iter().enumerate() {
         let (col, row) = ((i % cols) as f32, (i / cols) as f32);
         let (x, y) = (top.x + PAD + col * CELL, top.y + PAD + row * CELL);
-        if y > clip.bottom() || y + CELL < clip.top() {
+        if y > clip.bottom() || y + CELL < clip.top() || x > clip.right() || x + CELL < clip.left() {
             continue;
         }
         if let Some(t) = icons.object(ctx, data, c.id, ICON as u32) {
@@ -3051,6 +3076,8 @@ const FLOW_H: f32 = 72.0;
 struct BarLook {
     piece: Option<i32>,
     card: Rect,
+    /// Where the joint to the card is (its left; sliding to the card when another of the row is clicked).
+    joint_x: f32,
     bar: Rect,
     full_h: f32,
     t: f32,
@@ -3133,13 +3160,16 @@ fn st_bar(
     look: BarLook,
 ) -> Option<i32> {
     use lg_app::st_forge::Mode;
-    let BarLook { piece, card, bar, full_h, t, mode, card_fill } = look;
+    let BarLook { piece, card, joint_x, bar, full_h, t, mode, card_fill } = look;
+    // the card gets its gold frame; the joint (and the fade) stand where the joint is
+    let real_card = card;
+    let card = card.translate(vec2(joint_x - card.left(), 0.0));
     let full = ui.painter().clone();
     let gold = p.gold.gamma_multiply(t);
     // the card and the bar as one: the bar, a joint as wide as the card down to it, gold around both
     full.rect_filled(bar, 0.0, p.paper);
     full.rect_stroke(bar, 0.0, Stroke::new(2.0, gold), StrokeKind::Inside);
-    full.rect_stroke(card, 0.0, Stroke::new(2.0, gold), StrokeKind::Inside);
+    full.rect_stroke(real_card, 0.0, Stroke::new(2.0, gold), StrokeKind::Inside);
     // the card's colour running down through the joint and fading out in the bar
     full.rect_filled(
         // over the card's bottom border too (the selected one's is 3 px)
