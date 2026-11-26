@@ -789,10 +789,10 @@ pub fn pack_divider(painter: &egui::Painter, x: f32, y0: f32, y1: f32, gold: Col
 pub fn optimize_icon_variant(painter: &egui::Painter, c: egui::Pos2, size: f32, ink: Color32, k: usize) {
     use egui::{Shape, Stroke, pos2, vec2};
     let s = size;
-    let w = (s * 0.09).max(1.2);
+    let w = (s * 0.085).max(1.3);
     let line = Stroke::new(w, ink);
     let spark = |at: egui::Pos2, r: f32| {
-        let t = r * 0.3;
+        let t = r * 0.28;
         painter.add(Shape::convex_polygon(
             vec![at + vec2(0.0, -r), at + vec2(t, 0.0), at + vec2(0.0, r), at + vec2(-t, 0.0)],
             ink,
@@ -804,107 +804,132 @@ pub fn optimize_icon_variant(painter: &egui::Painter, c: egui::Pos2, size: f32, 
             Stroke::NONE,
         ));
     };
-    match k {
-        // a wand with a star at its tip and sparkles
-        1 => {
-            painter.line_segment([c + vec2(-s * 0.38, s * 0.38), c + vec2(s * 0.12, -s * 0.12)], Stroke::new(w * 1.4, ink));
-            spark(c + vec2(s * 0.18, -s * 0.18), s * 0.2);
-            spark(c + vec2(-s * 0.2, -s * 0.3), s * 0.09);
-            spark(c + vec2(s * 0.32, s * 0.18), s * 0.09);
-        }
-        // two arrows chasing each other round a gem
-        2 => {
-            let r = s * 0.36;
-            for half in [0.0f32, std::f32::consts::PI] {
-                let pts: Vec<egui::Pos2> =
-                    (0..=12).map(|i| half + 0.35 + i as f32 / 12.0 * 2.3).map(|a| c + vec2(a.cos(), a.sin()) * r).collect();
-                let end = *pts.last().expect("points");
-                let a = half + 0.35 + 2.3;
-                let tang = vec2(-a.sin(), a.cos());
-                let out = vec2(a.cos(), a.sin());
-                painter.add(Shape::line(pts, line));
-                painter.add(Shape::convex_polygon(
-                    vec![end + tang * s * 0.14, end + out * s * 0.1, end - out * s * 0.1],
-                    ink,
-                    Stroke::NONE,
-                ));
-            }
-            let g = s * 0.14;
-            painter.add(Shape::convex_polygon(
-                vec![c + vec2(0.0, -g), c + vec2(g, 0.0), c + vec2(0.0, g), c + vec2(-g, 0.0)],
-                ink,
-                Stroke::NONE,
-            ));
-        }
-        // a chest with an arrow up out of it
-        3 => {
-            let body = Rect::from_center_size(c + vec2(0.0, s * 0.2), vec2(s * 0.72, s * 0.4));
-            painter.rect_stroke(body, 1.0, line, egui::StrokeKind::Middle);
-            painter.line_segment([pos2(body.left(), body.top() + s * 0.12), pos2(body.right(), body.top() + s * 0.12)], line);
-            painter.rect_filled(Rect::from_center_size(pos2(c.x, body.top() + s * 0.12), vec2(s * 0.1, s * 0.12)), 0.0, ink);
-            painter.line_segment([c + vec2(0.0, -s * 0.08), c + vec2(0.0, -s * 0.44)], Stroke::new(w * 1.2, ink));
-            painter.add(Shape::convex_polygon(
-                vec![c + vec2(0.0, -s * 0.5), c + vec2(s * 0.14, -s * 0.32), c + vec2(-s * 0.14, -s * 0.32)],
-                ink,
-                Stroke::NONE,
-            ));
-        }
-        // an anvil with a spark
-        4 => {
-            let y = c.y + s * 0.05;
-            painter.add(Shape::convex_polygon(
-                vec![
-                    pos2(c.x - s * 0.42, y - s * 0.12),
-                    pos2(c.x + s * 0.3, y - s * 0.12),
-                    pos2(c.x + s * 0.3, y + s * 0.02),
-                    pos2(c.x + s * 0.1, y + s * 0.08),
-                    pos2(c.x - s * 0.2, y + s * 0.08),
-                    pos2(c.x - s * 0.3, y),
-                ],
-                ink,
-                Stroke::NONE,
-            ));
-            painter.rect_filled(Rect::from_min_max(pos2(c.x - s * 0.12, y + s * 0.08), pos2(c.x + s * 0.06, y + s * 0.26)), 0.0, ink);
-            painter.rect_filled(Rect::from_min_max(pos2(c.x - s * 0.24, y + s * 0.26), pos2(c.x + s * 0.18, y + s * 0.34)), 0.0, ink);
-            spark(c + vec2(s * 0.28, -s * 0.32), s * 0.16);
-        }
-        // a balance: keep or give
-        5 => {
-            painter.line_segment([c + vec2(0.0, -s * 0.36), c + vec2(0.0, s * 0.34)], line);
-            painter.line_segment([c + vec2(-s * 0.18, s * 0.36), c + vec2(s * 0.18, s * 0.36)], line);
-            painter.line_segment([c + vec2(-s * 0.38, -s * 0.22), c + vec2(s * 0.38, -s * 0.22)], line);
-            for dx in [-s * 0.38, s * 0.38] {
-                let top = c + vec2(dx, -s * 0.22);
-                painter.line_segment([top, top + vec2(-s * 0.1, s * 0.26)], line);
-                painter.line_segment([top, top + vec2(s * 0.1, s * 0.26)], line);
-                painter.line_segment([top + vec2(-s * 0.13, s * 0.26), top + vec2(s * 0.13, s * 0.26)], Stroke::new(w * 1.3, ink));
-            }
-            painter.circle_filled(c + vec2(0.0, -s * 0.38), s * 0.05, ink);
-        }
-        // a sorted list: bars from long to short, a spark beside the first
-        6 => {
-            for (i, f) in [0.62f32, 0.46, 0.3].iter().enumerate() {
-                let y = c.y - s * 0.22 + i as f32 * s * 0.22;
-                painter.rect_filled(Rect::from_min_size(pos2(c.x - s * 0.4, y - s * 0.06), vec2(s * f, s * 0.12)), 1.0, ink);
-            }
-            spark(c + vec2(s * 0.34, -s * 0.24), s * 0.16);
-        }
-        // a cut gem rising (two chevrons above it)
-        7 => {
-            let g = c + vec2(0.0, s * 0.14);
-            let pts = vec![
-                g + vec2(-s * 0.3, -s * 0.08),
-                g + vec2(-s * 0.16, -s * 0.22),
-                g + vec2(s * 0.16, -s * 0.22),
-                g + vec2(s * 0.3, -s * 0.08),
-                g + vec2(0.0, s * 0.26),
-            ];
+    let gem = |at: egui::Pos2, r: f32, filled: bool| {
+        let pts = vec![
+            at + vec2(-r, -r * 0.3),
+            at + vec2(-r * 0.5, -r * 0.8),
+            at + vec2(r * 0.5, -r * 0.8),
+            at + vec2(r, -r * 0.3),
+            at + vec2(0.0, r),
+        ];
+        if filled {
+            painter.add(Shape::convex_polygon(pts, ink, Stroke::NONE));
+        } else {
             painter.add(Shape::convex_polygon(pts, Color32::TRANSPARENT, line));
-            painter.line_segment([g + vec2(-s * 0.3, -s * 0.08), g + vec2(s * 0.3, -s * 0.08)], line);
-            for dy in [-s * 0.38, -s * 0.5] {
-                painter
-                    .add(Shape::line(vec![c + vec2(-s * 0.14, dy + s * 0.12), c + vec2(0.0, dy), c + vec2(s * 0.14, dy + s * 0.12)], line));
+            painter.line_segment([at + vec2(-r, -r * 0.3), at + vec2(r, -r * 0.3)], line);
+        }
+    };
+    match k {
+        // 1: three sparkles, the "suggest" sign
+        1 => {
+            spark(c + vec2(-s * 0.08, s * 0.06), s * 0.34);
+            spark(c + vec2(s * 0.3, -s * 0.28), s * 0.15);
+            spark(c + vec2(s * 0.28, s * 0.32), s * 0.1);
+        }
+        // 2: a backpack with a sparkle
+        2 => {
+            let body = Rect::from_center_size(c + vec2(-s * 0.06, s * 0.08), vec2(s * 0.6, s * 0.66));
+            painter.rect_stroke(body, s * 0.14, line, egui::StrokeKind::Middle);
+            painter.rect_stroke(
+                Rect::from_center_size(pos2(body.center().x, body.bottom() - s * 0.16), vec2(s * 0.34, s * 0.2)),
+                s * 0.05,
+                line,
+                egui::StrokeKind::Middle,
+            );
+            painter.line_segment(
+                [pos2(body.left() + s * 0.1, body.top() + s * 0.2), pos2(body.right() - s * 0.1, body.top() + s * 0.2)],
+                line,
+            );
+            let handle: Vec<egui::Pos2> = (0..=8)
+                .map(|i| {
+                    let a = std::f32::consts::PI * (1.0 + i as f32 / 8.0);
+                    pos2(body.center().x + a.cos() * s * 0.13, body.top() + a.sin() * s * 0.1)
+                })
+                .collect();
+            painter.add(Shape::line(handle, line));
+            spark(c + vec2(s * 0.34, -s * 0.3), s * 0.15);
+        }
+        // 3: a magnifier finding a gem
+        3 => {
+            let lc = c + vec2(-s * 0.08, -s * 0.08);
+            painter.circle_stroke(lc, s * 0.3, Stroke::new(w * 1.2, ink));
+            painter.line_segment([lc + vec2(s * 0.22, s * 0.22), c + vec2(s * 0.44, s * 0.44)], Stroke::new(w * 2.0, ink));
+            gem(lc + vec2(0.0, -s * 0.02), s * 0.15, true);
+        }
+        // 4: a light bulb (a suggestion) with rays
+        4 => {
+            let bc = c + vec2(0.0, -s * 0.1);
+            painter.circle_stroke(bc, s * 0.24, line);
+            painter.line_segment([bc + vec2(-s * 0.12, s * 0.2), bc + vec2(-s * 0.1, s * 0.36)], line);
+            painter.line_segment([bc + vec2(s * 0.12, s * 0.2), bc + vec2(s * 0.1, s * 0.36)], line);
+            painter.line_segment([bc + vec2(-s * 0.11, s * 0.36), bc + vec2(s * 0.11, s * 0.36)], line);
+            painter.line_segment([bc + vec2(-s * 0.08, s * 0.44), bc + vec2(s * 0.08, s * 0.44)], line);
+            for a in [-2.4f32, -1.57, -0.74, -3.1, -0.04] {
+                let d = vec2(a.cos(), a.sin());
+                painter.line_segment([bc + d * s * 0.32, bc + d * s * 0.42], line);
             }
+            spark(bc, s * 0.1);
+        }
+        // 5: a chest with a check
+        5 => {
+            let body = Rect::from_center_size(c + vec2(0.0, s * 0.12), vec2(s * 0.8, s * 0.5));
+            painter.rect_stroke(body, s * 0.05, line, egui::StrokeKind::Middle);
+            painter.line_segment([pos2(body.left(), body.top() + s * 0.14), pos2(body.right(), body.top() + s * 0.14)], line);
+            painter.add(Shape::line(
+                vec![c + vec2(-s * 0.18, s * 0.16), c + vec2(-s * 0.04, s * 0.3), c + vec2(s * 0.2, s * 0.02)],
+                Stroke::new(w * 1.4, ink),
+            ));
+            spark(c + vec2(s * 0.3, -s * 0.32), s * 0.14);
+        }
+        // 6: two items trading places (arrows both ways)
+        6 => {
+            let (l, r) = (c + vec2(-s * 0.28, 0.0), c + vec2(s * 0.28, 0.0));
+            painter.rect_stroke(
+                Rect::from_center_size(l + vec2(0.0, -s * 0.2), vec2(s * 0.3, s * 0.3)),
+                2.0,
+                line,
+                egui::StrokeKind::Middle,
+            );
+            gem(r + vec2(0.0, s * 0.2), s * 0.16, true);
+            painter.line_segment([c + vec2(-s * 0.06, -s * 0.2), c + vec2(s * 0.3, -s * 0.2)], line);
+            painter.add(Shape::convex_polygon(
+                vec![c + vec2(s * 0.42, -s * 0.2), c + vec2(s * 0.28, -s * 0.3), c + vec2(s * 0.28, -s * 0.1)],
+                ink,
+                Stroke::NONE,
+            ));
+            painter.line_segment([c + vec2(s * 0.06, s * 0.2), c + vec2(-s * 0.3, s * 0.2)], line);
+            painter.add(Shape::convex_polygon(
+                vec![c + vec2(-s * 0.42, s * 0.2), c + vec2(-s * 0.28, s * 0.1), c + vec2(-s * 0.28, s * 0.3)],
+                ink,
+                Stroke::NONE,
+            ));
+        }
+        // 7: a gem going up (an upgrade)
+        7 => {
+            gem(c + vec2(-s * 0.08, s * 0.12), s * 0.3, false);
+            painter.line_segment([c + vec2(s * 0.34, s * 0.36), c + vec2(s * 0.34, -s * 0.3)], Stroke::new(w * 1.2, ink));
+            painter.add(Shape::convex_polygon(
+                vec![c + vec2(s * 0.34, -s * 0.44), c + vec2(s * 0.46, -s * 0.26), c + vec2(s * 0.22, -s * 0.26)],
+                ink,
+                Stroke::NONE,
+            ));
+            spark(c + vec2(-s * 0.3, -s * 0.34), s * 0.12);
+        }
+        // 8: a sack (loot bag) with a coin
+        8 => {
+            let sack = vec![
+                c + vec2(-s * 0.12, -s * 0.24),
+                c + vec2(s * 0.12, -s * 0.24),
+                c + vec2(s * 0.36, s * 0.1),
+                c + vec2(s * 0.3, s * 0.36),
+                c + vec2(-s * 0.3, s * 0.36),
+                c + vec2(-s * 0.36, s * 0.1),
+            ];
+            painter.add(Shape::convex_polygon(sack, Color32::TRANSPARENT, line));
+            painter.add(Shape::line(vec![c + vec2(-s * 0.16, -s * 0.36), c + vec2(0.0, -s * 0.26), c + vec2(s * 0.16, -s * 0.36)], line));
+            painter.line_segment([c + vec2(-s * 0.14, -s * 0.24), c + vec2(s * 0.14, -s * 0.24)], Stroke::new(w * 1.4, ink));
+            painter.circle_stroke(c + vec2(0.0, s * 0.1), s * 0.12, line);
+            spark(c + vec2(s * 0.34, -s * 0.34), s * 0.13);
         }
         _ => optimize_icon(painter, c, size, ink),
     }

@@ -177,7 +177,7 @@ fn main() {
                     lg_ui::theme::apply(ui.ctx(), &pal);
                     let painter = ui.painter();
                     painter.rect_filled(ui.max_rect(), 0.0, pal.sand);
-                    for k in 0..8usize {
+                    for k in 0..9usize {
                         let x = 20.0 + k as f32 * 110.0;
                         let f = lg_ui::widgets::text(18.0);
                         lg_ui::jtext::draw(
