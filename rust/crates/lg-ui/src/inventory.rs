@@ -1105,7 +1105,6 @@ impl InventoryView {
         // the optimization: the items you hold spare copies of
         let spare_items: std::collections::HashSet<i32> =
             if self.opt { spares(app, c.props, 0).into_iter().map(|s| s.item).collect() } else { Default::default() };
-        let mut opt = self.opt;
         let title = if self.upe_char != 0 {
             let name = match (app.characters.get(self.upe_char), app.upe.runs.get(&self.upe_char).filter(|r| r.marked)) {
                 (Some(ch), Some(r)) => format!("{} ({})", ch.class_name, lg_app::upe::label(&r.mode)),
@@ -1139,28 +1138,10 @@ impl InventoryView {
                 if let Some(i) = widgets::segmented(ui, &p, pos2(fx, head.top()), h, &FILTERS, filter, true, &[]) {
                     filter = i;
                 }
-                // Suggest Inventory Optimization: on or off
-                let or = Rect::from_min_size(pos2(fx - 4.0 - (h - 6.0), head.top() + 3.0), vec2(h - 6.0, h - 6.0));
-                let oresp = ui
-                    .interact(or, ui.scope_id().with("opt-button"), Sense::click())
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .on_hover_text(if opt { "Inventory optimization on: click to turn it off" } else { "Suggest Inventory Optimization" });
-                painter.rect(or, 0.0, if opt { p.gold } else { p.paper }, Stroke::new(1.0, p.line), StrokeKind::Inside);
-                let oink = if opt {
-                    Color32::from_rgb(0x2A, 0x20, 0x10)
-                } else if oresp.hovered() {
-                    p.gold
-                } else {
-                    p.ink_muted
-                };
-                widgets::optimize_icon(&painter, or.center(), or.height() - 8.0, oink);
-                if oresp.clicked() {
-                    opt = !opt;
-                }
                 // the search box
                 // narrower when the section is (melted): the title keeps its room
                 let sw = if head.width() < 760.0 { 150.0 } else { 220.0 };
-                let sr = Rect::from_min_size(pos2(or.left() - 8.0 - sw, head.top() + 3.0), vec2(sw, h - 6.0));
+                let sr = Rect::from_min_size(pos2(fx - 8.0 - sw, head.top() + 3.0), vec2(sw, h - 6.0));
                 crate::widgets::search_field(ui, &p, sr, &mut search, "Search items or enchants", "collection-search");
                 widgets::tip(
                     ui,
@@ -1407,7 +1388,6 @@ impl InventoryView {
                 self.st_piece = beat_pieces.contains(&id).then_some(id);
             }
         }
-        self.opt = opt;
         if grid_only {
             return;
         }
@@ -3347,8 +3327,8 @@ fn forge_switch(
     let click = ui
         .interact(track.expand(3.0), ui.scope_id().with("collector-mode-switch"), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
-    // hovered anywhere on the pill: the three explained, at once
-    if lit {
+    // hovered anywhere on the pill (but its rarity button): the three explained, at once
+    if lit && !ui.rect_contains_pointer(pick) {
         hover.show_tooltip_ui(|ui| {
             ui.set_max_width(380.0);
             let rows: [(Mode, &str); 3] = [
@@ -3390,12 +3370,23 @@ fn forge_switch(
     // the rarities as a little stack, bright when considered: uncommon on top with a box for common beside it, rare
     // below, legendary and divine at the bottom
     let c = pick.center();
+    // each mark as the game turns it there: uncommon and rare as they are, legendary and divine a quarter turn of a
+    // right angle round (their stones upright squares)
     let mark = |k: usize, at: egui::Pos2| {
         let Some(t) = &rarity[k] else { return };
         let [tw, th] = t.size();
-        let r = Rect::from_center_size(at, vec2(tw as f32, th as f32) * 0.8);
+        let (hw, hh) = (tw as f32 * 0.4, th as f32 * 0.4);
         let tint = if allowed[k] { Color32::WHITE } else { Color32::from_white_alpha(55) };
-        painter.image(t.id(), r, uv(), tint);
+        let turn = if k >= 3 { std::f32::consts::FRAC_PI_4 } else { 0.0 };
+        let (sn, cs) = turn.sin_cos();
+        let rot = |x: f32, y: f32| at + vec2(x * cs - y * sn, x * sn + y * cs);
+        let mut mesh = egui::Mesh::with_texture(t.id());
+        for (x, y, u, v) in [(-hw, -hh, 0.0, 0.0), (hw, -hh, 1.0, 0.0), (hw, hh, 1.0, 1.0), (-hw, hh, 0.0, 1.0)] {
+            mesh.vertices.push(egui::epaint::Vertex { pos: rot(x, y), uv: pos2(u, v), color: tint });
+        }
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        painter.add(egui::Shape::mesh(mesh));
     };
     let row = 8.0;
     mark(1, pos2(c.x - 2.0, c.y - row));
