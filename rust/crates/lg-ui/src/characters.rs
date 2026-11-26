@@ -206,7 +206,7 @@ impl CharactersView {
         self.stats_windows(ui, c);
     }
 
-    /// The stats windows: one opens after a moment on a character's portrait, name or x/8 and stays while the pointer
+    /// The stats windows: one opens after a moment on a character's portrait (following the pointer over it) and stays while the pointer
     /// is on the character or on it; its pin keeps it open (and lets it be dragged) until the pin is clicked again.
     fn stats_windows(&mut self, ui: &Ui, c: &Ctx) {
         const OPEN_AFTER: f64 = 0.1;
@@ -223,6 +223,10 @@ impl CharactersView {
         if let Some(h) = &mut t.hover
             && (on_window || on_char == Some(h.0))
         {
+            // it follows the pointer over the portrait, and stays put once the pointer leaves it (towards it)
+            if !on_window && let Some(q) = ptr {
+                h.1 = q + vec2(14.0, 14.0);
+            }
             h.3 = now;
             t.pending = None;
         } else if let Some(id) = on_char.filter(|_| !dragging) {
@@ -673,7 +677,6 @@ impl CharactersView {
         let when_asc = (15.0f32 * 1050.0 / 1350.0).ceil();
         jtext::draw(&painter, pos2(tx + line_w, base - when_asc), Align2::RIGHT_TOP, &ago_or(c, now), &text(15.0), fixed::MUTED);
         let pr2 = jtext::draw(&painter, pos2(tx, top + row_h + (row_h - ph) / 2.0), Align2::LEFT_TOP, &progress(c), &text(20.0), p.gold);
-        pot_tip(ui, p, Rect::from_min_size(pos2(tx, top), vec2(line_w, 2.0 * row_h)), ("name", c.char_id), c, app);
         let gcol = if gain > 0 { fixed::GREEN } else { fixed::MUTED };
         jtext::draw(
             &painter,
@@ -772,7 +775,6 @@ impl CharactersView {
             34.0,
             if c.stats_maxed == 8 { STATS_MAXED } else { STATS_OPEN },
         );
-        pot_tip(ui, p, Rect::from_min_size(pos2(x, mid - ss.y / 2.0), ss), ("stats", c.char_id), c, app);
         x -= 8.0;
         let lb = loot_bonus(c, data, now);
         let lt = format!("+{}%", percent(lb));
