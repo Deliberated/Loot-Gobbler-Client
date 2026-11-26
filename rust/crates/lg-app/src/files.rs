@@ -47,6 +47,7 @@ pub(crate) fn chars(c: &crate::characters::Characters) -> String {
             .opt_str("account", ch.account.as_deref())
             .int("aliveAt", ch.alive_at)
             .int("lastPlayed", ch.last_played)
+            .raw("baseStats", ch.base_stats.as_deref().map(ints))
             .raw("equipment", ch.equipment.as_deref().map(ints))
             .raw("enchants", ch.enchants.as_deref().map(ints))
             .raw("enchantIds", ch.enchant_ids.as_deref().map(ints2))

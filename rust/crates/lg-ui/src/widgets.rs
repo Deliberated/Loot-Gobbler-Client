@@ -618,6 +618,12 @@ pub fn tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, t: &str
     });
 }
 
+/// A tooltip drawn by `add` when the pointer rests over `r`.
+pub fn custom_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, add: impl FnOnce(&mut Ui)) {
+    let resp = ui.interact(r, ui.scope_id().with(("custom-tip", id)), Sense::hover());
+    show_tip(ui, resp, add);
+}
+
 /// A tooltip over a hover-only area. egui hovers nothing below a clickable widget, so a tip under (registered
 /// before) an item link or a button would never show: it then shows once the pointer rests on the area.
 fn show_tip(ui: &Ui, resp: egui::Response, add: impl FnOnce(&mut Ui)) {

@@ -81,6 +81,9 @@ pub struct Char {
     pub slots: Option<Vec<i32>>,
     pub quickslots: Option<Vec<i32>>,
     pub slot_enchant_ids: Option<Vec<Vec<i32>>>,
+    /// The stats without gear or exaltations, in the game's order: life, mana, attack, defense, speed, dexterity,
+    /// vitality, wisdom.
+    pub base_stats: Option<Vec<i32>>,
     pub dungeons: Option<BTreeMap<String, i32>>,
     pub samples: Vec<Sample>,
 }
@@ -122,6 +125,7 @@ impl Default for Char {
             slots: None,
             quickslots: None,
             slot_enchant_ids: None,
+            base_stats: None,
             dungeons: None,
             samples: Vec::new(),
         }
@@ -411,6 +415,7 @@ impl Characters {
         c.loot_tier_until = until(stats::LT_TIMER, c.loot_tier_until);
         if let Some(base) = p.base_stats {
             c.stats_maxed = data.class(p.object_type).map_or(0, |k| (0..8).filter(|&i| base[i] >= k.max_stats[i]).count() as i32);
+            c.base_stats = Some(base.to_vec());
         }
         let pack = p.value(stats::BACKPACK_SLOTS);
         if let Some(v) = pack {
@@ -677,6 +682,10 @@ fn fill_unknown(n: &mut Char, o: &Char) -> bool {
             c = true;
         }
     }
+    if n.base_stats.is_none() && o.base_stats.is_some() {
+        n.base_stats = o.base_stats.clone();
+        c = true;
+    }
     if n.fame == 0 && o.fame > 0 {
         n.fame = o.fame;
         c = true;
@@ -810,6 +819,9 @@ pub(crate) fn parse_chars(text: &str) -> Result<Vec<(i32, Char)>, crate::java::T
         set!(alive_at, gson::long(f("aliveAt")));
         set!(last_played, gson::long(f("lastPlayed")));
         let opt2 = |x: Option<Vec<Option<Vec<i32>>>>| x.map(|v| v.into_iter().map(Option::unwrap_or_default).collect());
+        if let Some(x) = gson::ints(f("baseStats"))? {
+            c.base_stats = x;
+        }
         if let Some(x) = gson::ints(f("equipment"))? {
             c.equipment = x;
         }

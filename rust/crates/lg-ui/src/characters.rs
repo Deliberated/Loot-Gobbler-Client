@@ -481,6 +481,7 @@ impl CharactersView {
         if c.ritual {
             flame(&painter, pr.center() + vec2(37.0 - 21.0, 37.0 - 27.0));
         }
+        pot_tip(ui, pr, ("portrait", c.char_id), c, app);
         // the loadout: weapon, ability, armor, ring, backpack, at fixed places; reusable quick-slot gear below
         let lx = pr.right() + 3.0 + 14.0;
         let ly = cy - loadout_h / 2.0;
@@ -644,12 +645,7 @@ impl CharactersView {
             34.0,
             if c.stats_maxed == 8 { STATS_MAXED } else { STATS_OPEN },
         );
-        widgets::tip(
-            ui,
-            Rect::from_min_size(pos2(x, mid - ss.y / 2.0), ss),
-            ("stats", c.char_id),
-            &format!("{} of 8 stats maxed", c.stats_maxed),
-        );
+        pot_tip(ui, Rect::from_min_size(pos2(x, mid - ss.y / 2.0), ss), ("stats", c.char_id), c, app);
         x -= 8.0;
         let lb = loot_bonus(c, data, now);
         let lt = format!("+{}%", percent(lb));
@@ -1091,6 +1087,68 @@ pub(crate) fn visit_marks(app: &lg_app::App, icons: &mut Icons, ctx: &egui::Cont
             end: x.start + x.duration_ms,
         })
         .collect()
+}
+
+/// The exaltation bonus colour in the stat tooltip.
+const EXALT_BLUE: Color32 = Color32::from_rgb(0x4A, 0xA8, 0xFF);
+
+/// A character's stats while the pointer rests on `r`: per stat its base, the potions it still needs to max (after
+/// a bar), and the bonus of its class's exaltations; maxed stats in yellow.
+fn pot_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, c: &Char, app: &lg_app::App) {
+    // the stats in the game's order, and where each sits among the exaltations (dex, spd, vit, wis, def, att, mp, hp)
+    const NAMES: [&str; 8] = ["HP", "MP", "ATT", "DEF", "SPD", "DEX", "VIT", "WIS"];
+    const EXALT_AT: [usize; 8] = [7, 6, 5, 4, 1, 0, 2, 3];
+    let max = app.world.data().class(c.class_type).map(|k| k.max_stats);
+    let exalts = app.exalts.progress(c.class_type).cloned();
+    let base = c.base_stats.clone().filter(|b| b.len() >= 8);
+    let maxed = c.stats_maxed;
+    widgets::custom_tip(ui, r, id, |ui| {
+        ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
+        let (Some(base), Some(max)) = (base, max) else {
+            ui.label(egui::RichText::new(format!("{maxed} of 8 stats maxed")).font(text(18.0)));
+            ui.label(
+                egui::RichText::new("Play this character or refresh the list to see its potions left.").font(text(16.0)).color(fixed::MUTED),
+            );
+            return;
+        };
+        // life and mana potions give 5, the others 1
+        let pots: Vec<i32> = (0..8)
+            .map(|i| {
+                let left = (max[i] - base[i]).max(0);
+                if i < 2 { (left + 4) / 5 } else { left }
+            })
+            .collect();
+        let total: i32 = pots.iter().sum();
+        let head = if total == 0 { "Maxed: 8/8".to_string() } else { format!("{maxed}/8 · {total} potion{} to 8/8", if total == 1 { "" } else { "s" }) };
+        ui.label(egui::RichText::new(head).font(text(20.0)).color(STATS_MAXED));
+        let (cw, ch, gap) = (170.0, 58.0, 6.0);
+        let (area, _) = ui.allocate_exact_size(vec2(2.0 * cw + gap, 4.0 * ch + 3.0 * gap), Sense::hover());
+        let painter = ui.painter();
+        for i in 0..8 {
+            let cell = Rect::from_min_size(area.min + vec2((i % 2) as f32 * (cw + gap), (i / 2) as f32 * (ch + gap)), vec2(cw, ch));
+            painter.rect(cell, 0.0, Color32::from_black_alpha(90), Stroke::new(1.5, Color32::from_gray(70)), StrokeKind::Inside);
+            let ls = widgets::outlined_size(painter, NAMES[i], 18.0);
+            widgets::outlined_text(painter, Rect::from_min_size(pos2(cell.center().x - ls.x / 2.0, cell.top() + 3.0), ls), NAMES[i], 18.0, Color32::from_gray(170));
+            let value = if pots[i] == 0 { base[i].to_string() } else { format!("{}|{}", base[i], pots[i]) };
+            let bonus = exalts
+                .as_ref()
+                .and_then(|e| e.get(EXALT_AT[i]))
+                .map_or(0, |&v| lg_app::exalt_store::level(v) * if i < 2 { 5 } else { 1 });
+            let bonus = (bonus > 0).then(|| format!(" (+{bonus})"));
+            let px = 28.0;
+            let vs = widgets::outlined_size(painter, &value, px);
+            let bs = bonus.as_ref().map_or(egui::Vec2::ZERO, |b| widgets::outlined_size(painter, b, px));
+            let y = cell.bottom() - 4.0 - vs.y;
+            let x = cell.center().x - (vs.x + bs.x) / 2.0;
+            widgets::outlined_text(painter, Rect::from_min_size(pos2(x, y), vs), &value, px, if pots[i] == 0 { STATS_MAXED } else { STATS_OPEN });
+            if let Some(b) = &bonus {
+                widgets::outlined_text(painter, Rect::from_min_size(pos2(x + vs.x, y), bs), b, px, EXALT_BLUE);
+            }
+        }
+        ui.label(
+            egui::RichText::new("base|potions left, (+exaltation bonus). HP and MP potions give 5 each.").font(text(15.0)).color(fixed::MUTED),
+        );
+    });
 }
 
 /// Java `resetBox`: a framed box with a circular arrow, lit while hovered.

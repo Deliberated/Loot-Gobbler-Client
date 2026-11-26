@@ -263,7 +263,7 @@ impl Profile {
             &mut (),
             vec![
                 Box::new(|ui: &mut Ui, _: &mut ()| top_dungeons(ui, &p, app)),
-                Box::new(|ui: &mut Ui, _: &mut ()| exaltation(ui, &p, app)),
+                Box::new(|ui: &mut Ui, _: &mut ()| exaltation(ui, &p, app, crate::focus::focused_char(app, props).map(|c| c.class_type))),
                 Box::new(|ui: &mut Ui, _: &mut ()| {
                     heading(ui, &p, "Daily quests");
                     ui.add_space(6.0);
@@ -1234,8 +1234,9 @@ fn top_dungeons(ui: &mut Ui, p: &Palette, app: &App) {
     }
 }
 
-/// Classes fully exalted, a cell per class, the class closest to it (Java `exaltation`).
-fn exaltation(ui: &mut Ui, p: &Palette, app: &App) {
+/// Classes fully exalted, a cell per class, the class closest to it (Java `exaltation`); with a character in focus
+/// its class instead, outlined in the strip, with each stat's exaltations.
+fn exaltation(ui: &mut Ui, p: &Palette, app: &App, focus: Option<i32>) {
     heading(ui, p, "Exaltation");
     ui.add_space(6.0);
     if app.exalts.progress.is_empty() {
@@ -1269,6 +1270,7 @@ fn exaltation(ui: &mut Ui, p: &Palette, app: &App) {
     let w = ui.available_width();
     let (strip, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
     let n = totals.len() as f32;
+    let focused = focus.and_then(|id| classes.iter().position(|k| k.id == id));
     if n > 0.0 {
         let cell = (w - 3.0 * (n - 1.0)) / n;
         for (i, t) in totals.iter().enumerate() {
@@ -1280,10 +1282,42 @@ fn exaltation(ui: &mut Ui, p: &Palette, app: &App) {
                 p.header
             };
             let x = (i as f32 * (cell + 3.0)).round();
-            ui.painter().rect_filled(egui::Rect::from_min_size(pos2(strip.left() + x, strip.top()), vec2(cell.round(), 18.0)), 0.0, c);
+            let cr = egui::Rect::from_min_size(pos2(strip.left() + x, strip.top()), vec2(cell.round(), 18.0));
+            ui.painter().rect_filled(cr, 0.0, c);
+            if focused == Some(i) {
+                ui.painter().rect_stroke(cr.expand(2.0), 0.0, egui::Stroke::new(2.0, p.ink), egui::StrokeKind::Outside);
+            }
         }
     }
     ui.add_space(10.0);
+    if let Some(i) = focused {
+        let k = &classes[i];
+        let left = max - totals[i];
+        let line = if left == 0 {
+            format!("{}: fully exalted!", k.name)
+        } else {
+            format!("{}: {} of {max} exaltations, {left} left", k.name, totals[i])
+        };
+        soft(ui, p, &line);
+        ui.add_space(6.0);
+        // each stat's exaltations (0..5), in the game's order of the stats
+        const STATS: [(&str, usize); 8] =
+            [("HP", 7), ("MP", 6), ("ATT", 5), ("DEF", 4), ("SPD", 1), ("DEX", 0), ("VIT", 2), ("WIS", 3)];
+        let progress = app.exalts.progress(k.id);
+        let w = ui.available_width();
+        let (row, _) = ui.allocate_exact_size(vec2(w, 44.0), Sense::hover());
+        let cw = (w - 4.0 * 7.0) / 8.0;
+        let painter = ui.painter();
+        for (j, (name, at)) in STATS.iter().enumerate() {
+            let lv = progress.and_then(|v| v.get(*at)).map_or(0, |v| lg_app::exalt_store::level(*v));
+            let cr = egui::Rect::from_min_size(pos2(row.left() + j as f32 * (cw + 4.0), row.top()), vec2(cw, 44.0));
+            painter.rect(cr, 0.0, if lv == 5 { p.gold } else { p.header }, egui::Stroke::new(1.0, egui::Color32::BLACK), egui::StrokeKind::Inside);
+            let ink = if lv == 5 { p.on_accent } else { p.ink };
+            crate::jtext::draw(painter, pos2(cr.center().x, cr.top() + 3.0), egui::Align2::CENTER_TOP, name, &text(16.0), ink);
+            crate::jtext::draw(painter, pos2(cr.center().x, cr.bottom() - 3.0), egui::Align2::CENTER_BOTTOM, &format!("{lv}/5"), &text(20.0), ink);
+        }
+        return;
+    }
     match closest {
         Some(i) => {
             let left = max - totals[i];

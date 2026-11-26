@@ -112,6 +112,7 @@ impl Characters {
             }
             c.seasonal = r.seasonal;
             c.stats_maxed = maxed(data, class_type, [r.hp, r.mp, r.atk, r.def, r.spd, r.dex, r.vit, r.wis]);
+            c.base_stats = Some(vec![r.hp, r.mp, r.atk, r.def, r.spd, r.dex, r.vit, r.wis]);
             let slots = int_tag(r, "BackpackSlots")?;
             c.backpack = r.backpack || slots > 0;
             c.extender = slots > 8 || extender(r);
