@@ -46,6 +46,7 @@ pub struct CharactersView {
     pets: crate::pets::PetsView,
     /// The line beside REFRESH (Java's status label).
     pub refresh_status: String,
+    tips: StatsTips,
 }
 
 impl Default for CharactersView {
@@ -63,6 +64,7 @@ impl Default for CharactersView {
             suggestion: None,
             pets: Default::default(),
             refresh_status: String::new(),
+            tips: StatsTips::default(),
         }
     }
 }
@@ -199,7 +201,129 @@ impl CharactersView {
             self.pets.show(ui, c, body);
             return;
         }
+        ui.ctx().data_mut(|d| d.remove::<Vec<(i32, Rect)>>(triggers_id()));
         self.characters_page(ui, c, body);
+        self.stats_windows(ui, c);
+    }
+
+    /// The stats windows: one opens after a moment on a character's portrait, name or x/8 and stays while the pointer
+    /// is on the character or on it; its pin keeps it open (and lets it be dragged) until the pin is clicked again.
+    fn stats_windows(&mut self, ui: &Ui, c: &Ctx) {
+        const OPEN_AFTER: f64 = 0.1;
+        const GRACE: f64 = 0.3;
+        let p = *c.p;
+        let app = c.app;
+        let now = ui.input(|i| i.time);
+        let ptr = ui.input(|i| i.pointer.hover_pos());
+        let triggers = ui.ctx().data(|d| d.get_temp::<Vec<(i32, Rect)>>(triggers_id())).unwrap_or_default();
+        let on_char = ptr.and_then(|q| triggers.iter().find(|(_, r)| r.contains(q)).map(|(id, _)| *id));
+        let t = &mut self.tips;
+        let on_window = ptr.is_some_and(|q| t.hover.is_some_and(|(_, _, r, _)| r.expand(4.0).contains(q)));
+        let dragging = ui.ctx().dragged_id().is_some();
+        if let Some(h) = &mut t.hover
+            && (on_window || on_char == Some(h.0))
+        {
+            h.3 = now;
+            t.pending = None;
+        } else if let Some(id) = on_char.filter(|_| !dragging) {
+            match t.pending {
+                Some((pid, since)) if pid == id => {
+                    if now - since >= OPEN_AFTER {
+                        let at = ptr.unwrap_or_default() + vec2(14.0, 14.0);
+                        t.hover = Some((id, at, Rect::from_min_size(at, vec2(1.0, 1.0)), now));
+                        t.pending = None;
+                    } else {
+                        ui.ctx().request_repaint_after_secs((OPEN_AFTER - (now - since)) as f32);
+                    }
+                }
+                _ => {
+                    t.pending = Some((id, now));
+                    ui.ctx().request_repaint_after_secs(OPEN_AFTER as f32);
+                }
+            }
+        } else {
+            t.pending = None;
+        }
+        if let Some((_, _, _, last)) = t.hover
+            && now - last > GRACE
+        {
+            t.hover = None;
+        }
+        if t.hover.is_some_and(|(id, ..)| t.pinned.iter().any(|(pid, ..)| *pid == id)) {
+            t.hover = None;
+        }
+        if t.hover.is_some() {
+            ui.ctx().request_repaint_after_secs(GRACE as f32);
+        }
+        // a window: the stats in a rounded gold frame, the pin at its top right; whether the pin was clicked
+        let window = |ui: &mut Ui, ch: &Char, pinned: bool| -> (Rect, bool) {
+            let framed = egui::Frame::new()
+                .fill(p.paper)
+                .stroke(Stroke::new(2.0, if pinned { fixed::GREEN } else { p.gold }))
+                .corner_radius(6.0)
+                .inner_margin(10.0)
+                .show(ui, |ui| stats_grid(ui, ch, app));
+            let r = framed.response.rect;
+            let pr = Rect::from_min_size(pos2(r.right() - 34.0, r.top() + 6.0), vec2(26.0, 26.0));
+            let resp = ui
+                .interact(pr, ui.scope_id().with("pin"), Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(if pinned { "Unpin: close it" } else { "Pin: keep it open and drag it anywhere" });
+            pin_icon(ui.painter(), pr, pinned, resp.hovered());
+            (r, resp.clicked())
+        };
+        let shadow = |r: Rect| {
+            let s = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("lg-char-stats-shadow")));
+            s.rect_filled(r.translate(vec2(3.0, 4.0)), 6.0, Color32::from_black_alpha(90));
+        };
+        // the one open by hovering
+        if let Some((id, at, _, last)) = t.hover {
+            match app.characters.get(id) {
+                Some(ch) => {
+                    let mut pin = false;
+                    let shown = egui::Area::new(egui::Id::unique("lg-char-stats-hover"))
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(at)
+                        .constrain(true)
+                        .show(ui.ctx(), |ui| {
+                            let (_, clicked) = window(ui, ch, false);
+                            pin = clicked;
+                        });
+                    let r = shown.response.rect;
+                    shadow(r);
+                    t.hover = Some((id, at, r, last));
+                    if pin {
+                        t.serial += 1;
+                        t.pinned.push((id, t.serial, Some(r.min)));
+                        t.hover = None;
+                    }
+                }
+                None => t.hover = None,
+            }
+        }
+        // the pinned ones: dragged where the player likes, gone when unpinned
+        let mut unpin = None;
+        for (id, serial, at) in &mut t.pinned {
+            let Some(ch) = app.characters.get(*id) else { continue };
+            let mut area = egui::Area::new(egui::Id::unique(("lg-char-stats-pinned", *serial)))
+                .order(egui::Order::Foreground)
+                .movable(true)
+                .constrain(false);
+            // first right where it was pinned; then where it is dragged
+            if let Some(q) = at.take() {
+                area = area.current_pos(q);
+            }
+            let shown = area.show(ui.ctx(), |ui| {
+                let (_, clicked) = window(ui, ch, true);
+                if clicked {
+                    unpin = Some(*serial);
+                }
+            });
+            shadow(shown.response.rect);
+        }
+        if let Some(sn) = unpin {
+            t.pinned.retain(|(_, s, _)| *s != sn);
+        }
     }
 
     fn characters_page(&mut self, ui: &mut Ui, c: &mut Ctx, body: Rect) {
@@ -1097,37 +1221,53 @@ const EXALT_BLUE: Color32 = Color32::from_rgb(0x4A, 0xA8, 0xFF);
 /// The gear bonus colour in the stat tooltip.
 const GEAR_GREEN: Color32 = Color32::from_rgb(0x5C, 0xE0, 0x4A);
 
-/// A character's stats while the pointer rests on `r` (see `stats_grid`), in a rounded window framed in gold by the
-/// pointer.
-fn pot_tip(ui: &Ui, p: &Palette, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, c: &Char, app: &lg_app::App) {
-    let resp = ui.interact(r, ui.scope_id().with(("stats-tip", id)), Sense::hover());
-    if !resp.contains_pointer() || ui.ctx().dragged_id().is_some() {
-        return;
+/// Where hovering opens a character's stats this frame (shown by `CharactersView::stats_windows`).
+fn pot_tip(ui: &Ui, _p: &Palette, r: Rect, _id: impl std::hash::Hash + std::fmt::Debug, c: &Char, _app: &lg_app::App) {
+    let r = r.intersect(ui.clip_rect());
+    if r.is_positive() {
+        ui.ctx().data_mut(|d| d.get_temp_mut_or_default::<Vec<(i32, Rect)>>(triggers_id()).push((c.char_id, r)));
     }
-    // quicker than the other tips
-    const DELAY: f32 = 0.1;
-    let rest = ui.input(|i| i.pointer.time_since_last_movement());
-    if rest < DELAY {
-        ui.ctx().request_repaint_after_secs(DELAY - rest);
-        return;
+}
+
+fn triggers_id() -> egui::Id {
+    egui::Id::unique("lg-char-stats-triggers")
+}
+
+/// The stats windows: the one open by hovering, and those pinned.
+#[derive(Default)]
+struct StatsTips {
+    /// The character hovered and since when (opens after a moment).
+    pending: Option<(i32, f64)>,
+    /// The window open by hovering: its character, where, its rect last frame, when the pointer was last on it or
+    /// on the character.
+    hover: Option<(i32, egui::Pos2, Rect, f64)>,
+    /// The pinned windows: their character, a number of their own (a fresh place each time one is pinned), and where
+    /// it was pinned while not yet shown there.
+    pinned: Vec<(i32, u64, Option<egui::Pos2>)>,
+    serial: u64,
+}
+
+/// A pin (head and needle), grey or green when pinned, in `r`.
+fn pin_icon(painter: &egui::Painter, r: Rect, on: bool, hover: bool) {
+    let c = if on {
+        fixed::GREEN
+    } else if hover {
+        Color32::from_gray(200)
+    } else {
+        Color32::from_gray(160)
+    };
+    if hover {
+        painter.rect_filled(r.expand(2.0), 4.0, Color32::from_black_alpha(40));
     }
-    let Some(at) = ui.input(|i| i.pointer.hover_pos()) else { return };
-    let shown = egui::Area::new(egui::Id::unique("lg-char-stats-tip"))
-        .order(egui::Order::Tooltip)
-        .fixed_pos(at + vec2(16.0, 16.0))
-        .constrain(true)
-        .interactable(false)
-        .show(ui.ctx(), |ui| {
-            egui::Frame::new()
-                .fill(p.paper)
-                .stroke(Stroke::new(2.0, p.gold))
-                .corner_radius(6.0)
-                .inner_margin(10.0)
-                .show(ui, |ui| stats_grid(ui, c, app));
-        });
-    // a soft shadow under it
-    let shadow = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("lg-char-stats-shadow")));
-    shadow.rect_filled(shown.response.rect.translate(vec2(3.0, 4.0)), 6.0, Color32::from_black_alpha(90));
+    let s = r.width();
+    let head = r.left_top() + vec2(s * 0.62, s * 0.36);
+    let tip = r.left_top() + vec2(s * 0.12, s * 0.9);
+    painter.line_segment([head, tip], Stroke::new(2.5, Color32::from_gray(60)));
+    let (a, b) = (head + vec2(-s * 0.32, -s * 0.12), head + vec2(s * 0.12, s * 0.32));
+    painter.line_segment([a, b], Stroke::new(5.0, Color32::from_black_alpha(160)));
+    painter.line_segment([a, b], Stroke::new(3.0, c));
+    painter.circle_filled(head + vec2(s * 0.08, -s * 0.08), s * 0.24, c);
+    painter.circle_stroke(head + vec2(s * 0.08, -s * 0.08), s * 0.24, Stroke::new(1.0, Color32::from_black_alpha(140)));
 }
 
 /// A character's stats: per stat its base, the potions it still needs to max (after a bar), the gear bonus while it
