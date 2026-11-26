@@ -174,7 +174,17 @@ impl InventoryView {
     /// The Optimization section at the top of `at` (the right column, or above the ST sets when crafting): what to
     /// do with the spare copies, and Feed / Craft / Forge (Feed and Forge order the list, Craft melts Items and ST
     /// Sets; again: back). Gives its rect.
-    fn opt_section(ui: &mut Ui, p: &Palette, at: Rect, opt_sort: &mut usize, melt: &mut bool, melt_exit: &mut usize) -> Rect {
+    #[allow(clippy::too_many_arguments)]
+    fn opt_section(
+        ui: &mut Ui,
+        p: &Palette,
+        at: Rect,
+        opt_sort: &mut usize,
+        melt: &mut bool,
+        melt_exit: &mut usize,
+        props: &lg_app::properties::Properties,
+        asks: &mut Vec<crate::window::Ask>,
+    ) -> Rect {
         let painter = ui.painter().clone();
         let head = widgets::section_head_height(&painter);
         let lh16 = jtext::height(&painter, &text(16.0));
@@ -182,13 +192,18 @@ impl InventoryView {
         let sort = *opt_sort;
         let crafting = *melt;
         let mut choice: Option<usize> = None;
+        // the forge mode, one setting for the whole app: the same switch as on the ST Sets page
+        let (mode, _) = forge_mode(props);
+        let mut next_mode = None;
         widgets::section(
             ui,
             p,
             or,
             "Optimization",
             fixed::GREEN,
-            |_, _| {},
+            |ui, head| {
+                next_mode = forge_switch(ui, p, pos2(head.right() - 6.0, head.top() + 3.0), head.height() - 6.0, mode);
+            },
             |ui, r| {
                 let painter = ui.painter().clone();
                 let (x, w) = (r.left() + 10.0, r.width() - 20.0);
@@ -234,6 +249,9 @@ impl InventoryView {
                 *melt_exit = 0;
             }
             None => {}
+        }
+        if let Some(m) = next_mode {
+            asks.push(crate::window::Ask::Set(lg_app::st_forge::Mode::KEY.into(), m.value().into()));
         }
         or
     }
@@ -654,7 +672,16 @@ impl InventoryView {
                     // crafting from the optimization: its section stays on top, the sets come in below it
                     let r = if self.opt {
                         let side = Rect::from_min_max(pos2(r.left() + 8.0, r.top()), r.max);
-                        let or = Self::opt_section(&mut child, &p, side, &mut self.opt_sort, &mut self.melt, &mut self.melt_exit);
+                        let or = Self::opt_section(
+                            &mut child,
+                            &p,
+                            side,
+                            &mut self.opt_sort,
+                            &mut self.melt,
+                            &mut self.melt_exit,
+                            c.props,
+                            c.asks,
+                        );
                         Rect::from_min_max(pos2(r.left(), or.bottom() + 8.0), r.max)
                     } else {
                         r
@@ -1292,7 +1319,7 @@ impl InventoryView {
         let pct = if grid.is_empty() { 0.0 } else { 100.0 * have as f64 / grid.len() as f64 };
         let mut side = side;
         if self.opt {
-            let or = Self::opt_section(ui, &p, side, &mut self.opt_sort, &mut self.melt, &mut self.melt_exit);
+            let or = Self::opt_section(ui, &p, side, &mut self.opt_sort, &mut self.melt, &mut self.melt_exit, c.props, c.asks);
             side = Rect::from_min_max(pos2(side.left(), or.bottom() + 8.0), side.max);
         }
         let prog = Rect::from_min_size(
@@ -1941,37 +1968,9 @@ impl InventoryView {
                 if let Some(i) = widgets::segmented(ui, &p, pos2(fx, head.top()), h, &filters, filter, true, &[]) {
                     filter = i;
                 }
-                // the forge suggestions: off, collector, collector with a backup (a click: the next)
-                let sr = Rect::from_min_size(pos2(fx - 4.0 - (h - 6.0), head.top() + 3.0), vec2(h - 6.0, h - 6.0));
-                let sresp = ui
-                    .interact(sr, ui.scope_id().with("st-suggest"), Sense::click())
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .on_hover_text(match mode {
-                        Mode::Off => "Forge suggestions: off. Click: collector",
-                        Mode::Collector => {
-                            "Forge suggestions: collector. The best copy of each ST item is kept, the others can be dismantled; \
-                             the pieces you could forge blink. Click: collector + backup"
-                        }
-                        Mode::Backup => {
-                            "Forge suggestions: collector + backup. The best copy and a backup of each ST item are kept. Click: off"
-                        }
-                    });
-                let on = mode != Mode::Off;
-                painter.rect(sr, 0.0, if on { p.gold } else { p.paper }, Stroke::new(1.0, p.line), StrokeKind::Inside);
-                let ink = if on {
-                    Color32::from_rgb(0x2A, 0x20, 0x10)
-                } else if sresp.hovered() {
-                    p.gold
-                } else {
-                    p.ink_muted
-                };
-                widgets::optimize_icon(&painter, sr.center(), sr.height() - 8.0, ink);
-                if mode == Mode::Backup {
-                    // the backup: a green lock in its corner
-                    lock(&painter, pos2(sr.left() + 7.0, sr.bottom() - 7.0), 9.0, fixed::GREEN, false);
-                }
-                if sresp.clicked() {
-                    next_mode = Some(mode.next());
+                // the forge suggestions: a pill with a switch of three places (a click: the next)
+                if let Some(m) = forge_switch(ui, &p, pos2(fx - 8.0, head.top() + 3.0), h - 6.0, mode) {
+                    next_mode = Some(m);
                 }
             },
             |ui, r| {
@@ -3034,11 +3033,13 @@ fn item_icon(
     h: &lg_app::loadout::Held,
     r: Rect,
 ) {
-    if let Some(tx) = icons.object(ui.ctx(), app.world.data(), item, r.width() as u32) {
-        painter.image(tx.id(), r, uv(), Color32::WHITE);
+    // the item a little inside its box, its rarity big at the corner
+    let ir = r.shrink(4.0);
+    if let Some(tx) = icons.object(ui.ctx(), app.world.data(), item, ir.width() as u32) {
+        painter.image(tx.id(), ir, uv(), Color32::WHITE);
     }
     let ench = h.enchant_ids.as_ref().map_or(0, |e| e.iter().filter(|x| **x >= 0).count());
-    enchant_badge(painter, rarity, pos2(r.right() - 1.0, r.bottom() - 1.0), ench, 5.0);
+    enchant_badge(painter, rarity, pos2(r.right(), r.bottom()), ench, 7.5);
 }
 
 /// Where a copy is, as a look in `r` (the character, or the vault's chest); where it is in words when hovered.
@@ -3084,6 +3085,73 @@ struct BarLook {
     mode: lg_app::st_forge::Mode,
     /// The card's own colour, fading down into the bar.
     card_fill: Color32,
+}
+
+/// The ST Sets' forge suggestions switch, its right end at `right_top`, `h` tall: a grey pill saying "FORGE
+/// SUGGESTIONS" with a track whose knob stands left (off, grey), in the middle (collector, gold) or right (with a
+/// backup, green); hovered, the three explained. Gives the next mode when clicked.
+fn forge_switch(ui: &Ui, p: &Palette, right_top: egui::Pos2, h: f32, mode: lg_app::st_forge::Mode) -> Option<lg_app::st_forge::Mode> {
+    use lg_app::st_forge::Mode;
+    let painter = ui.painter().clone();
+    let font = small();
+    let label = "FORGE SUGGESTIONS";
+    let tw = jtext::width(&painter, label, &font);
+    let (track_w, pad) = (54.0, 10.0);
+    let w = pad + tw + 10.0 + track_w + pad;
+    let r = Rect::from_min_size(pos2(right_top.x - w, right_top.y), vec2(w, h));
+    let resp = ui.interact(r, ui.scope_id().with("forge-switch"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+    let hover = resp.hovered();
+    // the pill: greyed in
+    painter.rect(r, h / 2.0, mix(p.paper, p.line, 0.5), Stroke::new(1.0, if hover { p.gold } else { p.line }), StrokeKind::Inside);
+    jtext::draw(&painter, pos2(r.left() + pad, r.center().y), Align2::LEFT_CENTER, label, &font, if hover { p.ink } else { p.ink_soft });
+    // the track (dark, a soft rim, tinted by the mode) and its silver knob sliding to its place
+    let track = Rect::from_min_size(pos2(r.right() - pad - track_w, r.center().y - 9.0), vec2(track_w, 18.0));
+    let (place, tint) = match mode {
+        Mode::Off => (0.0, None),
+        Mode::Collector => (0.5, Some(p.gold)),
+        Mode::Backup => (1.0, Some(fixed::GREEN)),
+    };
+    let at = ui.ctx().animate_value_with_time(ui.scope_id().with("forge-switch-knob"), place, 0.18);
+    let dark = Color32::from_rgb(0x2B, 0x26, 0x18);
+    let fill = tint.map_or(dark, |c| mix(c, dark, 0.35));
+    painter.rect_filled(track, 9.0, Color32::from_rgb(0x14, 0x11, 0x0A));
+    painter.rect_filled(track.shrink(1.5), 7.5, fill);
+    // a darker band along its top (it sits in), a light rim below
+    painter.rect_filled(Rect::from_min_size(track.min + vec2(4.0, 2.0), vec2(track_w - 8.0, 3.0)), 1.5, Color32::from_black_alpha(70));
+    painter.rect_stroke(track, 9.0, Stroke::new(1.0, Color32::from_rgba_unmultiplied(0xC8, 0xB0, 0x70, 90)), StrokeKind::Inside);
+    let kc = pos2(track.left() + 9.0 + at * (track_w - 18.0), track.center().y);
+    // the knob: a ring, a silver face lighter to its middle, a highlight up left
+    painter.circle_filled(kc + vec2(0.0, 1.5), 10.5, Color32::from_black_alpha(110));
+    painter.circle_filled(kc, 10.5, Color32::from_rgb(0x6E, 0x6E, 0x6E));
+    painter.circle_filled(kc, 9.5, Color32::from_rgb(0xC9, 0xC9, 0xC9));
+    painter.circle_filled(kc, 7.5, Color32::from_rgb(0xB4, 0xB4, 0xB4));
+    painter.circle_stroke(kc, 7.5, Stroke::new(1.0, Color32::from_rgb(0xE6, 0xE6, 0xE6)));
+    painter.circle_filled(kc, 5.5, Color32::from_rgb(0xD8, 0xD8, 0xD8));
+    painter.circle_filled(kc + vec2(-2.5, -2.5), 2.2, Color32::from_white_alpha(200));
+    // hovered: the three, each with its sign and what it does
+    let resp = resp.on_hover_ui(|ui| {
+        ui.set_max_width(420.0);
+        let rows: [(Mode, &str); 3] = [
+            (Mode::Off, "Off: no suggestions, nothing blinks and no locks."),
+            (Mode::Collector, "Collector: the best copy of each ST item is kept (gold lock), every other copy can be dismantled; the pieces you could forge blink."),
+            (Mode::Backup, "Collector + backup: the best copy (gold lock) and a backup, the second best (green lock), are kept; the rest can be dismantled. A green lock clicked lets that backup go."),
+        ];
+        for (m, t) in rows {
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                match m {
+                    Mode::Off => {
+                        ui.painter().circle(r.center(), 6.0, p.paper, Stroke::new(1.0, p.ink_muted));
+                    }
+                    Mode::Collector => lock(ui.painter(), r.center(), 14.0, p.gold, false),
+                    Mode::Backup => lock(ui.painter(), r.center(), 14.0, fixed::GREEN, false),
+                }
+                let strong = m == mode;
+                ui.label(egui::RichText::new(t).color(if strong { p.ink } else { p.ink_soft }).strong());
+            });
+        }
+    });
+    resp.clicked().then(|| mode.next())
 }
 
 /// A padlock centred on `c`, `s` tall (open: its shackle lifted on one side).
@@ -3177,40 +3245,39 @@ fn st_bar(
         0.0,
         card_fill,
     );
-    let fade_end = (bar.top() + 90.0).min(bar.bottom() - 2.0);
+    let fade_end = (bar.top() + 150.0).min(bar.bottom() - 2.0);
     if fade_end > bar.top() + 2.0 {
-        // softly out downwards and sideways past the card's edges (a grid of points, each a mix of the two colours)
-        let spread = 70.0;
-        let smooth = |v: f32| {
-            let v = v.clamp(0.0, 1.0);
-            v * v * (3.0 - 2.0 * v)
-        };
+        // softly out, rounded: each point of a fine grid a mix of the two colours by its distance from the card
+        // (an ellipse: as far down as `fade_end`, `spread` out to either side)
+        let spread = 150.0;
         let (l, r) = (card.left() + 2.0, card.right() - 2.0);
-        let xs: Vec<f32> = [l - spread, l - spread * 0.66, l - spread * 0.33, l, r, r + spread * 0.33, r + spread * 0.66, r + spread]
-            .iter()
-            .map(|x| x.clamp(bar.left() + 2.0, bar.right() - 2.0))
-            .collect();
-        let rows = 6;
-        let side = |x: f32| {
-            if x < l {
-                smooth(1.0 - (l - x) / spread)
+        let (x0, x1) = ((l - spread).max(bar.left() + 2.0), (r + spread).min(bar.right() - 2.0));
+        let depth = fade_end - bar.top() - 2.0;
+        let weight = |x: f32, y: f32| {
+            let dx = if x < l {
+                (l - x) / spread
             } else if x > r {
-                smooth(1.0 - (x - r) / spread)
+                (x - r) / spread
             } else {
-                1.0
-            }
+                0.0
+            };
+            let dy = (y - bar.top() - 2.0) / depth;
+            let d = (dx * dx + dy * dy).sqrt().min(1.0);
+            // eased twice: a long, soft tail
+            let e = 1.0 - d;
+            e * e * (3.0 - 2.0 * e) * e
         };
+        let (cols_n, rows_n) = (28usize, 14usize);
         let mut mesh = egui::Mesh::default();
-        for k in 0..=rows {
-            let v = k as f32 / rows as f32;
-            let y = bar.top() + 2.0 + (fade_end - bar.top() - 2.0) * v;
-            for &x in &xs {
-                let w = side(x) * smooth(1.0 - v);
-                mesh.colored_vertex(pos2(x, y), mix(card_fill, p.paper, f64::from(w)));
+        for k in 0..=rows_n {
+            let y = bar.top() + 2.0 + depth * k as f32 / rows_n as f32;
+            for i in 0..=cols_n {
+                let x = x0 + (x1 - x0) * i as f32 / cols_n as f32;
+                mesh.colored_vertex(pos2(x, y), mix(card_fill, p.paper, f64::from(weight(x, y))));
             }
         }
-        let n = xs.len() as u32;
-        for k in 0..rows as u32 {
+        let n = cols_n as u32 + 1;
+        for k in 0..rows_n as u32 {
             for i in 0..n - 1 {
                 let (a, b) = (k * n + i, k * n + i + 1);
                 mesh.add_triangle(a, b, a + n);
