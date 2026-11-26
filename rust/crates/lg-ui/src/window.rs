@@ -292,7 +292,7 @@ impl Window {
             self.tab_seen = self.shell.selected.clone();
         }
         let Some((tab, start)) = self.tab_flash.clone() else { return };
-        const LENGTH: f64 = 0.38;
+        const LENGTH: f64 = 0.55;
         let t = ((time - start) / LENGTH) as f32;
         if t >= 1.0 {
             self.tab_flash = None;
@@ -321,7 +321,7 @@ impl Window {
         let Some(id) = id else { return };
         // fast out of the start, slowing as it grows; gone by the end
         let grow = 1.0 - (1.0 - t).powi(3);
-        let size = 72.0 + 168.0 * grow;
+        let size = 96.0 + 224.0 * grow;
         let alpha = (1.0 - t).powf(1.6) * 0.85;
         let screen = ctx.content_rect();
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("lg-tab-flash")));

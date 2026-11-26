@@ -248,7 +248,8 @@ pub fn segmented(
         x += w + if joined { 0.0 } else { 8.0 };
     }
     if let Some((from, to, t)) = ui.data(|d| d.get_temp::<(usize, usize, f32)>(id.with("t"))) {
-        let t = (t + ui.input(|i| i.stable_dt).min(0.1) / 0.45).min(1.0);
+        let length = 0.45 + 0.15 * (from.abs_diff(to) as f32 - 1.0);
+        let t = (t + ui.input(|i| i.stable_dt).min(0.1) / length).min(1.0);
         pour(ui, p, at, h, names, joined, from, to, t);
         ui.data_mut(|d| {
             if t < 1.0 {
@@ -262,67 +263,60 @@ pub fn segmented(
     clicked
 }
 
-/// Gold pouring from one section button into another (`t` 0..1), drawn over the row: the one left drains towards the
-/// side it pours from, a stream runs behind the buttons between, the one selected fills from the side it comes in;
-/// never both lit.
+/// Gold pouring from one section button into another (`t` 0..1), drawn over the row: the gold moves as one body about a
+/// button long, so every button on the way fills and drains in turn (a stream over the gaps); the label dark where the
+/// gold is.
 #[allow(clippy::too_many_arguments)]
 pub fn pour(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, names: &[&str], joined: bool, from: usize, to: usize, t: f32) {
     let painter = ui.painter().clone();
     let font = small();
     let rects = segment_rects(&painter, at, h, names, joined);
     let (Some(src), Some(dst)) = (rects.get(from).copied(), rects.get(to).copied()) else { return };
-    let gold = p.gold;
     let ease = |v: f32| {
         let v = v.clamp(0.0, 1.0);
         v * v * (3.0 - 2.0 * v)
     };
     let right = to > from;
-    let box_ = |r: Rect, label: &str| {
-        painter.rect(r, 0.0, p.paper, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
-        jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, label, &font, p.ink_soft);
-    };
-    // the stream: its front runs from the one left to the one selected, its tail follows once that one fills
-    let (a, b) = if right { (src.right() - 1.5, dst.left() + 1.5) } else { (src.left() + 1.5, dst.right() - 1.5) };
-    let front = a + (b - a) * ease(t / 0.4);
-    let tail = a + (b - a) * ease((t - 0.55) / 0.35);
-    let (sh, cy) = (6.0, src.center().y);
-    if t < 0.92 {
-        painter.rect_filled(Rect::from_min_max(pos2(tail.min(front), cy - sh / 2.0), pos2(tail.max(front), cy + sh / 2.0)), 3.0, gold);
-    }
-    // the buttons between over it
-    for k in from.min(to) + 1..from.max(to) {
-        box_(rects[k], &names[k].to_uppercase());
-    }
-    // a button with gold in `gold_r`: the label dark over the gold, light elsewhere; the gold kept inside it
-    let lit = |r: Rect, label: &str, gold_r: Rect, round: Option<egui::Pos2>| {
-        box_(r, label);
-        let inner = r.shrink(1.5);
-        let clip = painter.with_clip_rect(inner.intersect(painter.clip_rect()));
-        clip.rect_filled(gold_r, 0.0, gold);
-        if let Some(c) = round {
-            clip.circle_filled(c, ((h - 3.0) / 2.0 * 0.5).min(gold_r.width().max(0.0) + 4.0), gold);
+    // along the row in the pour's direction: the body's front and back, from filling the one left to filling the one
+    // selected
+    let (lead0, lead1, back0, back1) =
+        if right { (src.right(), dst.right(), src.left(), dst.left()) } else { (src.left(), dst.left(), src.right(), dst.right()) };
+    // the body about one button long (a little shorter on the way, stretched thin), moving as one
+    let e = ease(t);
+    let lead = lead0 + (lead1 - lead0) * e;
+    let len = ((lead0 - back0) + ((lead1 - back1) - (lead0 - back0)) * e) * (1.0 - 0.3 * (std::f32::consts::PI * e).sin());
+    let back = lead - len;
+    let (lo, hi) = (lead.min(back), lead.max(back));
+    let gold = p.gold;
+    let cy = src.center().y;
+    // the stream over the gaps the body spans
+    for k in from.min(to)..from.max(to) {
+        let (g0, g1) = (rects[k].right() - 1.5, rects[k + 1].left() + 1.5);
+        let (x0, x1) = (g0.max(lo), g1.min(hi));
+        if x1 > x0 {
+            painter.rect_filled(Rect::from_min_max(pos2(x0, cy - 3.0), pos2(x1, cy + 3.0)), 2.0, gold);
         }
-        let dark = painter.with_clip_rect(gold_r.intersect(inner).intersect(painter.clip_rect()));
-        jtext::draw(&dark, r.center(), Align2::CENTER_CENTER, label, &font, p.on_accent);
-    };
-    // the one left draining towards the stream
-    let w = (src.width() - 3.0) * (1.0 - ease(t / 0.55));
-    let gr = if right {
-        Rect::from_min_max(pos2(src.right() - 1.5 - w, src.top() + 1.5), pos2(src.right() - 1.5, src.bottom() - 1.5))
-    } else {
-        Rect::from_min_size(src.min + vec2(1.5, 1.5), vec2(w, h - 3.0))
-    };
-    lit(src, &names[from].to_uppercase(), gr, None);
-    // the one selected filling from the side the stream comes in, its front rounded
-    let fill = ease((t - 0.3) / 0.6);
-    let fw = (dst.width() - 3.0) * fill;
-    let fr = if right {
-        Rect::from_min_size(dst.min + vec2(1.5, 1.5), vec2(fw, h - 3.0))
-    } else {
-        Rect::from_min_max(pos2(dst.right() - 1.5 - fw, dst.top() + 1.5), pos2(dst.right() - 1.5, dst.bottom() - 1.5))
-    };
-    let front = (fill > 0.0 && fill < 1.0).then(|| pos2(if right { fr.right() } else { fr.left() }, fr.center().y));
-    lit(dst, &names[to].to_uppercase(), fr, front);
+    }
+    // each button on the way: the part of the body in it, its front rounded
+    for k in from.min(to)..=from.max(to) {
+        let r = rects[k];
+        let label = names[k].to_uppercase();
+        painter.rect(r, 0.0, p.paper, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+        jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, &label, &font, p.ink_soft);
+        let inner = r.shrink(1.5);
+        let (x0, x1) = (inner.left().max(lo), inner.right().min(hi));
+        if x1 <= x0 {
+            continue;
+        }
+        let gr = Rect::from_min_max(pos2(x0, inner.top()), pos2(x1, inner.bottom()));
+        let clip = painter.with_clip_rect(inner.intersect(painter.clip_rect()));
+        clip.rect_filled(gr, 0.0, gold);
+        if lead > inner.left() + 1.0 && lead < inner.right() - 1.0 {
+            clip.circle_filled(pos2(lead, inner.center().y), ((h - 3.0) / 4.0).min(gr.width() + 4.0), gold);
+        }
+        let dark = painter.with_clip_rect(gr.intersect(painter.clip_rect()));
+        jtext::draw(&dark, r.center(), Align2::CENTER_CENTER, &label, &font, p.on_accent);
+    }
 }
 
 /// Java's banner (SEASONAL / CRUCIBLE / UPE): a slab with notched corners, a dark bottom side, white text with a
