@@ -124,6 +124,47 @@ fn main() {
             println!("card {id}");
             continue;
         }
+        // "mock:melt": ways the Items and ST Sets tabs could melt together, each as frames from apart to one
+        if tab == "mock:melt" {
+            let pal = lg_ui::theme::palette(None);
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(w, h))
+                .with_pixels_per_point(1.0)
+                .with_accessibility_check(false)
+                .wgpu()
+                .build_ui(|ui| {
+                    lg_ui::theme::apply(ui.ctx(), &pal);
+                    let painter = ui.painter();
+                    painter.rect_filled(ui.max_rect(), 0.0, pal.sand);
+                    let names = ["A  liquid bridge", "B  slide together", "C  pour", "D  zipper", "E  grow over"];
+                    let label_f = lg_ui::widgets::text(18.0);
+                    for (k, name) in names.iter().enumerate() {
+                        let y = 20.0 + k as f32 * 70.0;
+                        lg_ui::jtext::draw(painter, egui::pos2(16.0, y + 18.0), egui::Align2::LEFT_CENTER, name, &label_f, pal.gold);
+                        for f in 0..6 {
+                            let t = f as f32 / 5.0;
+                            let at = egui::pos2(200.0 + f as f32 * 215.0, y);
+                            melt_frame(painter, &pal, at, k, t);
+                        }
+                    }
+                    for f in 0..6 {
+                        let t = f as f32 / 5.0;
+                        lg_ui::jtext::draw(
+                            painter,
+                            egui::pos2(200.0 + f as f32 * 215.0 + 90.0, 20.0 + 5.0 * 70.0),
+                            egui::Align2::CENTER_CENTER,
+                            &format!("{:.0} %", t * 100.0),
+                            &lg_ui::widgets::text(16.0),
+                            pal.ink_muted,
+                        );
+                    }
+                });
+            harness.run_steps(2);
+            let img = harness.render().expect("render");
+            img.save(std::path::Path::new(out).join("mock-melt.png")).expect("save");
+            println!("mock melt");
+            continue;
+        }
         // "icons:optimize": the optimization icon's candidates, numbered: on a gold button, an idle one, and large
         if tab == "icons:optimize" {
             let pal = lg_ui::theme::palette(None);
@@ -676,5 +717,173 @@ fn main() {
         let path = std::path::Path::new(out).join(format!("{}.png", tab.replace(' ', "_").replace(':', "-")));
         img.save(&path).expect("save");
         println!("tab {tab}");
+    }
+}
+
+/// One frame (`t` 0 apart, 1 one) of a way (`k`) the Items and ST Sets tabs could melt together, at `at`.
+fn melt_frame(painter: &egui::Painter, p: &lg_ui::theme::Palette, at: egui::Pos2, k: usize, t: f32) {
+    use egui::{Color32, Rect, Stroke, StrokeKind, pos2, vec2};
+    let font = lg_ui::widgets::small();
+    let h = 36.0;
+    let w0 = lg_ui::jtext::width(painter, "ITEMS", &font) + 30.0;
+    let w1 = lg_ui::jtext::width(painter, "ST SETS", &font) + 30.0;
+    let r0 = Rect::from_min_size(at, vec2(w0, h));
+    let r1 = Rect::from_min_size(pos2(at.x + w0 + 8.0, at.y), vec2(w1, h));
+    let gold = p.gold;
+    let ease = |v: f32| {
+        let v = v.clamp(0.0, 1.0);
+        v * v * (3.0 - 2.0 * v)
+    };
+    let box_ = |r: Rect, fill: Color32, label: &str, ink: Color32| {
+        painter.rect(r, 0.0, fill, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+        lg_ui::jtext::draw(painter, r.center(), egui::Align2::CENTER_CENTER, label, &font, ink);
+    };
+    let one = |r: Rect, alpha: f32| {
+        painter.rect(r, 0.0, gold, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+        lg_ui::jtext::draw(painter, r.center(), egui::Align2::CENTER_CENTER, "ITEMS AND ST SETS", &font, p.on_accent.gamma_multiply(alpha));
+    };
+    let lerp = |a: Color32, b: Color32, v: f32| lg_ui::theme::mix(b, a, f64::from(v.clamp(0.0, 1.0)));
+    match k {
+        // A: a molten neck grows from the middle of the gap, pinched in the middle, until it fills the gap
+        0 => {
+            let st = lerp(p.paper, gold, t * 2.0);
+            if t >= 0.85 {
+                one(r0.union(r1), ease((t - 0.85) / 0.15));
+                return;
+            }
+            box_(r0, gold, "ITEMS", p.on_accent);
+            box_(r1, st, "ST SETS", if t > 0.3 { p.on_accent } else { p.ink_soft });
+            let grow = ease((t - 0.1) / 0.7);
+            let (x0, x1) = (r0.right() - 1.5, r1.left() + 1.5);
+            let n = 24;
+            for i in 0..n {
+                let u = (i as f32 + 0.5) / n as f32;
+                // thick at both ends (where it sticks), thinnest in the middle
+                let pinch = 1.0 - (std::f32::consts::PI * u).sin() * (1.0 - grow);
+                let half = (h / 2.0 - 1.5) * grow.max(0.0).sqrt() * pinch;
+                if half <= 0.0 {
+                    continue;
+                }
+                let x = x0 + (x1 - x0) * i as f32 / n as f32;
+                painter.rect_filled(
+                    Rect::from_min_max(pos2(x, r0.center().y - half), pos2(x + (x1 - x0) / n as f32 + 0.5, r0.center().y + half)),
+                    0.0,
+                    gold,
+                );
+            }
+        }
+        // B: ST Sets slides over to Items, the seam between them fades, the name fades in
+        1 => {
+            let slide = ease(t / 0.6) * 8.0;
+            let r1 = r1.translate(vec2(-slide, 0.0));
+            if t >= 0.6 {
+                let r = Rect::from_min_max(r0.min, r1.max);
+                painter.rect(r, 0.0, gold, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+                // the seam fading
+                let seam = 1.0 - ease((t - 0.6) / 0.25);
+                painter.line_segment(
+                    [pos2(r0.right(), r.top() + 2.0), pos2(r0.right(), r.bottom() - 2.0)],
+                    Stroke::new(1.5, Color32::BLACK.gamma_multiply(seam)),
+                );
+                let names = 1.0 - ease((t - 0.6) / 0.2);
+                lg_ui::jtext::draw(painter, r0.center(), egui::Align2::CENTER_CENTER, "ITEMS", &font, p.on_accent.gamma_multiply(names));
+                lg_ui::jtext::draw(painter, r1.center(), egui::Align2::CENTER_CENTER, "ST SETS", &font, p.on_accent.gamma_multiply(names));
+                lg_ui::jtext::draw(
+                    painter,
+                    r.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "ITEMS AND ST SETS",
+                    &font,
+                    p.on_accent.gamma_multiply(ease((t - 0.75) / 0.25)),
+                );
+                return;
+            }
+            box_(r0, gold, "ITEMS", p.on_accent);
+            box_(r1, lerp(p.paper, gold, t / 0.6), "ST SETS", if t > 0.3 { p.on_accent } else { p.ink_soft });
+        }
+        // C: gold pours over: a thin stream across the gap, then ST Sets fills from its left, then the gap closes
+        2 => {
+            if t >= 0.9 {
+                one(r0.union(r1), ease((t - 0.9) / 0.1));
+                return;
+            }
+            box_(r0, gold, "ITEMS", p.on_accent);
+            box_(r1, p.paper, "ST SETS", p.ink_soft);
+            let stream = ease(t / 0.25);
+            let sh = 6.0 + 24.0 * ease((t - 0.55) / 0.35);
+            painter.rect_filled(
+                Rect::from_min_max(
+                    pos2(r0.right() - 1.5, r0.center().y - sh / 2.0),
+                    pos2(r0.right() + (10.0 * stream), r0.center().y + sh / 2.0),
+                ),
+                3.0,
+                gold,
+            );
+            let fill = ease((t - 0.2) / 0.5);
+            if fill > 0.0 {
+                let fr = Rect::from_min_size(r1.min + vec2(1.5, 1.5), vec2((r1.width() - 3.0) * fill, h - 3.0));
+                painter.rect_filled(fr, 0.0, gold);
+                // its front a little rounded, like something running
+                painter.circle_filled(pos2(fr.right(), fr.center().y), (h - 3.0) / 2.0 * (1.0 - fill).min(0.5) * 2.0 * 0.5, gold);
+                painter.rect_stroke(r1, 0.0, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+                lg_ui::jtext::draw(
+                    painter,
+                    r1.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "ST SETS",
+                    &font,
+                    if fill > 0.5 { p.on_accent } else { p.ink_soft },
+                );
+            }
+        }
+        // D: the gap zips shut from top and bottom, a bright seam where the halves meet, fading
+        3 => {
+            let st = lerp(p.paper, gold, t * 2.5);
+            if t >= 0.85 {
+                one(r0.union(r1), ease((t - 0.85) / 0.15));
+                let glow = 1.0 - ease((t - 0.85) / 0.15);
+                painter.line_segment(
+                    [pos2(r0.right() + 1.0, r0.center().y - 4.0), pos2(r1.left() - 1.0, r0.center().y + 4.0)],
+                    Stroke::new(2.0, Color32::WHITE.gamma_multiply(glow)),
+                );
+                return;
+            }
+            box_(r0, gold, "ITEMS", p.on_accent);
+            box_(r1, st, "ST SETS", if t > 0.2 { p.on_accent } else { p.ink_soft });
+            let z = ease((t - 0.2) / 0.6) * (h / 2.0);
+            let gap = Rect::from_min_max(pos2(r0.right() - 1.5, r0.top() + 1.5), pos2(r1.left() + 1.5, r0.bottom() - 1.5));
+            painter.rect_filled(Rect::from_min_size(gap.min, vec2(gap.width(), z)), 0.0, gold);
+            painter.rect_filled(Rect::from_min_max(pos2(gap.left(), gap.bottom() - z), gap.max), 0.0, gold);
+            // the teeth's tips
+            if z > 2.0 && z < h / 2.0 - 1.0 {
+                for (y, d) in [(gap.top() + z, 1.0f32), (gap.bottom() - z, -1.0)] {
+                    painter.line_segment(
+                        [pos2(gap.left(), y), pos2(gap.right(), y + d * 2.0)],
+                        Stroke::new(1.5, Color32::WHITE.gamma_multiply(0.7)),
+                    );
+                }
+            }
+        }
+        // E: both grow toward each other and over the gap; a flash where they meet; the name
+        _ => {
+            if t >= 0.8 {
+                one(r0.union(r1), ease((t - 0.8) / 0.2));
+                return;
+            }
+            let g = ease(t / 0.6) * 5.0;
+            let a = Rect::from_min_max(r0.min, pos2(r0.right() + g, r0.bottom()));
+            let b = Rect::from_min_max(pos2(r1.left() - g, r1.top()), r1.max);
+            box_(b, lerp(p.paper, gold, t * 2.0), "ST SETS", if t > 0.25 { p.on_accent } else { p.ink_soft });
+            box_(a, gold, "ITEMS", p.on_accent);
+            if t > 0.5 {
+                let flash = 1.0 - ((t - 0.65) / 0.15).abs().min(1.0);
+                let mid = (r0.right() + r1.left()) / 2.0;
+                painter.rect_filled(
+                    Rect::from_center_size(pos2(mid, r0.center().y), vec2(8.0 + 10.0 * flash, h - 3.0)),
+                    2.0,
+                    lerp(gold, Color32::WHITE, flash * 0.8),
+                );
+            }
+        }
     }
 }
