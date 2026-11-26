@@ -776,3 +776,11 @@ pub fn optimize_icon(painter: &egui::Painter, c: egui::Pos2, size: f32, ink: Col
         ));
     }
 }
+
+/// The divider between an inventory's packs (Characters' inventory): a gold line with short caps at its ends.
+pub fn pack_divider(painter: &egui::Painter, x: f32, y0: f32, y1: f32, gold: Color32) {
+    let line = egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(gold.r(), gold.g(), gold.b(), 170));
+    painter.line_segment([egui::pos2(x, y0), egui::pos2(x, y1)], line);
+    painter.line_segment([egui::pos2(x - 3.0, y0), egui::pos2(x + 3.0, y0)], line);
+    painter.line_segment([egui::pos2(x - 3.0, y1), egui::pos2(x + 3.0, y1)], line);
+}

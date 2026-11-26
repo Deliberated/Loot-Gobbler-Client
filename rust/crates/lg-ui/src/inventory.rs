@@ -2433,7 +2433,7 @@ fn copy_chip(
     id: impl std::hash::Hash + std::fmt::Debug,
 ) {
     let data = app.world.data();
-    painter.rect_filled(cr, 0.0, p.header);
+    let _ = p;
     let look = if h.char_id > 0 {
         app.characters.get(h.char_id).and_then(|c| {
             icons.skin(ui.ctx(), data, if c.skin > 0 { c.skin } else { c.class_type }, c.tex1, c.tex2, (cr.width() - 2.0) as u32)
@@ -2484,11 +2484,12 @@ fn st_bar(
     full.rect_stroke(card, 0.0, Stroke::new(2.0, gold), StrokeKind::Inside);
     // the card's colour running down through the joint and fading out in the bar
     full.rect_filled(
-        Rect::from_min_max(pos2(card.left() + 2.0, card.bottom() - 2.0), pos2(card.right() - 2.0, bar.top() + 2.0)),
+        // over the card's bottom border too (the selected one's is 3 px)
+        Rect::from_min_max(pos2(card.left() + 2.0, card.bottom() - 4.0), pos2(card.right() - 2.0, bar.top() + 2.0)),
         0.0,
         card_fill,
     );
-    let fade_end = (bar.top() + 46.0).min(bar.bottom() - 2.0);
+    let fade_end = (bar.top() + 90.0).min(bar.bottom() - 2.0);
     if fade_end > bar.top() + 2.0 {
         crate::overlays::gradient_round_rect(
             &full,
@@ -2499,7 +2500,7 @@ fn st_bar(
         );
     }
     for x in [card.left() + 1.0, card.right() - 1.0] {
-        full.line_segment([pos2(x, card.bottom() - 2.0), pos2(x, bar.top() + 2.0)], Stroke::new(2.0, gold));
+        full.line_segment([pos2(x, card.bottom() - 4.0), pos2(x, bar.top() + 2.0)], Stroke::new(2.0, gold));
     }
     let painter = full.with_clip_rect(bar.shrink(2.0).intersect(full.clip_rect()));
     let data = app.world.data();
@@ -2514,7 +2515,7 @@ fn st_bar(
     let (f16, fs) = (text(16.0), text(13.0));
     let lhs = jtext::height(&painter, &fs);
     let colw = (bar.width() - 16.0) / pieces.len() as f32;
-    const CHIP: f32 = 24.0;
+    const CHIP: f32 = 32.0;
     let mut toggled = None;
     let same = |a: &lg_app::loadout::Held, b: &lg_app::loadout::Held| {
         a.char_id == b.char_id && a.vault == b.vault && a.slot == b.slot && a.enchant_ids == b.enchant_ids
@@ -2522,7 +2523,7 @@ fn st_bar(
     for (k, id) in pieces.iter().enumerate() {
         let x0 = bar.left() + 8.0 + k as f32 * colw;
         if k > 0 {
-            painter.line_segment([pos2(x0 - 4.0, bar.top() + 8.0), pos2(x0 - 4.0, bar.top() + full_h - 8.0)], Stroke::new(1.0, p.line));
+            widgets::pack_divider(&painter, x0 - 4.0, bar.top() + 8.0, bar.top() + full_h - 8.0, p.gold);
         }
         // the piece
         let y0 = bar.top() + 6.0;

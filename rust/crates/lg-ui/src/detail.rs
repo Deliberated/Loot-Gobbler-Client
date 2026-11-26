@@ -497,12 +497,9 @@ pub fn inventory(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, rarity:
         }
     }
     let (y0, y1) = (y + PAD - 2.0 - 7.0, y + PAD + 2.0 * S + GAP + 2.0 + 7.0);
-    let line = Stroke::new(2.0, Color32::from_rgba_unmultiplied(g.r(), g.g(), g.b(), 170));
     for pack in 1..packs {
         let x = cell(0, pack * 4).left() - DIVIDER / 2.0;
-        painter.line_segment([pos2(x, y0), pos2(x, y1)], line);
-        painter.line_segment([pos2(x - 3.0, y0), pos2(x + 3.0, y0)], line);
-        painter.line_segment([pos2(x - 3.0, y1), pos2(x + 3.0, y1)], line);
+        crate::widgets::pack_divider(&painter, x, y0, y1, g);
     }
     // the items: each pack fills its 4 x 2 slots row by row; a rarity marker and UT / ST / tier tag on each
     for row in 0..2 {
