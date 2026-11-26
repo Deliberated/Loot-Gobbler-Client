@@ -3286,7 +3286,7 @@ fn forge_switch(
     let font = small();
     let label = "COLLECTOR MODE";
     let tw = jtext::width(&painter, label, &font);
-    let (track_w, pad, pick_w) = (56.0, 16.0, 34.0);
+    let (track_w, pad, pick_w) = (56.0, 16.0, 40.0);
     let w = pad + tw + 14.0 + track_w + 12.0 + pick_w + pad - 6.0;
     let r = Rect::from_min_size(pos2(right_top.x - w, right_top.y), vec2(w, h));
     // the pill, sunk into the page
@@ -3302,7 +3302,7 @@ fn forge_switch(
     let lit = hover.contains_pointer();
     jtext::draw(&painter, pos2(r.left() + pad, r.center().y), Align2::LEFT_CENTER, label, &font, if lit { p.ink } else { p.ink_soft });
     // the switch: a dark track (tinted by the mode) and its silver knob sliding to its place; it alone is clicked
-    let pick = Rect::from_min_size(pos2(r.right() - pad + 6.0 - pick_w, r.center().y - 14.0), vec2(pick_w, 28.0));
+    let pick = Rect::from_min_size(pos2(r.right() - pad + 6.0 - pick_w, r.center().y - 15.0), vec2(pick_w, 30.0));
     let track = Rect::from_min_size(pos2(pick.left() - 12.0 - track_w, r.center().y - 9.0), vec2(track_w, 18.0));
     let (place, tint) = match mode {
         Mode::Off => (0.0, None),
@@ -3355,10 +3355,7 @@ fn forge_switch(
     // the rarities considered: a button with the rarity marks; a click opens the five to tick
     let pid = ui.scope_id().with("rarity-pick-open");
     let open = ui.data(|d| d.get_temp::<bool>(pid)).unwrap_or(false);
-    let presp = ui
-        .interact(pick, ui.scope_id().with("rarity-pick"), Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text("Which rarities are considered for forging and crafting");
+    let presp = ui.interact(pick, ui.scope_id().with("rarity-pick"), Sense::hover());
     let some_off = allowed.iter().any(|a| !a);
     painter.rect(
         pick,
@@ -3371,12 +3368,13 @@ fn forge_switch(
     // counter-clockwise, standing on one line, touching), rare on top where they meet, uncommon on rare's left stone and
     // a box for common on its right one
     let size = |k: usize| rarity[k].as_ref().map_or(vec2(8.0, 8.0), |t| vec2(t.size()[0] as f32, t.size()[1] as f32));
-    let turned = |v: egui::Vec2| (v.x + v.y) / std::f32::consts::SQRT_2;
+    // a mark's stones fill a diamond in its picture: turned, they stand in a square of its width over the root of two
+    let turned = |v: egui::Vec2| v.x.max(v.y) / std::f32::consts::SQRT_2;
     let (l, d, ra, un) = (size(3), size(4), size(2), size(1));
     // heights at scale 1: the bottom row, rare, uncommon; then scaled to fit the button
     let bottom_h = turned(l).max(turned(d));
     let full = bottom_h + ra.y + un.y;
-    let k = ((pick.height() - 6.0) / full).min(1.0);
+    let k = (pick.height() - 6.0) / full;
     let base = pick.bottom() - 3.0;
     let meet = pick.center().x + (turned(l) - turned(d)) * k / 2.0;
     let mark = |r: usize, center: egui::Pos2, turn: bool| {
@@ -3396,8 +3394,8 @@ fn forge_switch(
     };
     let (lw, dw) = (turned(l) * k, turned(d) * k);
     // their pictures have an empty edge: a little closer, so the stones meet
-    mark(3, pos2(meet - lw / 2.0 + 1.5, base - lw / 2.0), true);
-    mark(4, pos2(meet + dw / 2.0 - 1.5, base - dw / 2.0), true);
+    mark(3, pos2(meet - lw / 2.0, base - lw / 2.0), true);
+    mark(4, pos2(meet + dw / 2.0, base - dw / 2.0), true);
     let row_top = base - bottom_h * k;
     let rare_c = pos2(meet, row_top - ra.y * k / 2.0);
     mark(2, rare_c, false);
@@ -3410,7 +3408,12 @@ fn forge_switch(
         Stroke::new(1.0, if allowed[0] { p.ink } else { p.ink_muted.gamma_multiply(0.5) }),
         StrokeKind::Inside,
     );
-    let mut open = if presp.clicked() { !open } else { open };
+    // open while the mouse is on the button or on the panel (and the way between them)
+    let aid = ui.scope_id().with("rarity-pick-panel");
+    let panel_was: Option<Rect> = ui.data(|d| d.get_temp(aid));
+    let pointer = ui.input(|i| i.pointer.hover_pos());
+    let on_panel = pointer.is_some_and(|q| panel_was.is_some_and(|r| r.expand(6.0).union(pick.expand(4.0)).contains(q)));
+    let mut open = presp.hovered() || (open && on_panel);
     let mut next_rarities = None;
     if open {
         let area = egui::Area::new(ui.scope_id().with("rarity-pick-area"))
@@ -3464,11 +3467,8 @@ fn forge_switch(
                     }
                 });
             });
-        // a click anywhere else closes it
-        if ui.input(|i| i.pointer.primary_clicked())
-            && !presp.clicked()
-            && !ui.input(|i| i.pointer.interact_pos()).is_some_and(|q| area.response.rect.contains(q))
-        {
+        ui.data_mut(|d| d.insert_temp(aid, area.response.rect));
+        if !presp.hovered() && !pointer.is_some_and(|q| area.response.rect.expand(6.0).union(pick.expand(4.0)).contains(q)) {
             open = false;
         }
     }
