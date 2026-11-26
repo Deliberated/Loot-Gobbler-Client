@@ -547,6 +547,7 @@ impl CharactersView {
         let when_asc = (15.0f32 * 1050.0 / 1350.0).ceil();
         jtext::draw(&painter, pos2(tx + line_w, base - when_asc), Align2::RIGHT_TOP, &ago_or(c, now), &text(15.0), fixed::MUTED);
         let pr2 = jtext::draw(&painter, pos2(tx, top + row_h + (row_h - ph) / 2.0), Align2::LEFT_TOP, &progress(c), &text(20.0), p.gold);
+        pot_tip(ui, Rect::from_min_size(pos2(tx, top), vec2(line_w, 2.0 * row_h)), ("name", c.char_id), c, app);
         let gcol = if gain > 0 { fixed::GREEN } else { fixed::MUTED };
         jtext::draw(
             &painter,
@@ -1091,6 +1092,8 @@ pub(crate) fn visit_marks(app: &lg_app::App, icons: &mut Icons, ctx: &egui::Cont
 
 /// The exaltation bonus colour in the stat tooltip.
 const EXALT_BLUE: Color32 = Color32::from_rgb(0x4A, 0xA8, 0xFF);
+/// The gear bonus colour in the stat tooltip.
+const GEAR_GREEN: Color32 = Color32::from_rgb(0x5C, 0xE0, 0x4A);
 
 /// A character's stats while the pointer rests on `r`: per stat its base, the potions it still needs to max (after
 /// a bar), and the bonus of its class's exaltations; maxed stats in yellow.
@@ -1098,9 +1101,16 @@ fn pot_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, c: &Cha
     // the stats in the game's order, and where each sits among the exaltations (dex, spd, vit, wis, def, att, mp, hp)
     const NAMES: [&str; 8] = ["HP", "MP", "ATT", "DEF", "SPD", "DEX", "VIT", "WIS"];
     const EXALT_AT: [usize; 8] = [7, 6, 5, 4, 1, 0, 2, 3];
+    use lg_world::stats::*;
     let max = app.world.data().class(c.class_type).map(|k| k.max_stats);
     let exalts = app.exalts.progress(c.class_type).cloned();
-    let base = c.base_stats.clone().filter(|b| b.len() >= 8);
+    // online: the game's live numbers, with the boosts (gear, and the exaltations, taken off again below)
+    let me = app.world.me().filter(|e| e.char_id == c.char_id);
+    let boosts = me.map(|e| {
+        [MAX_HP_BOOST, MAX_MP_BOOST, ATTACK_BOOST, DEFENSE_BOOST, SPEED_BOOST, DEXTERITY_BOOST, VITALITY_BOOST, WISDOM_BOOST]
+            .map(|s| e.value(s).unwrap_or(0))
+    });
+    let base = me.and_then(|e| e.base_stats).map(|b| b.to_vec()).or_else(|| c.base_stats.clone()).filter(|b| b.len() >= 8);
     let maxed = c.stats_maxed;
     widgets::custom_tip(ui, r, id, |ui| {
         ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
@@ -1134,19 +1144,32 @@ fn pot_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, c: &Cha
                 .as_ref()
                 .and_then(|e| e.get(EXALT_AT[i]))
                 .map_or(0, |&v| lg_app::exalt_store::level(v) * if i < 2 { 5 } else { 1 });
+            // the game's boost holds the exaltations too
+            let gear = boosts.map_or(0, |b| if b[i] >= bonus { b[i] - bonus } else { b[i] });
+            let gear = (gear != 0).then(|| format!(" ({gear:+})"));
             let bonus = (bonus > 0).then(|| format!(" (+{bonus})"));
-            let px = 28.0;
+            let px = if gear.is_some() && bonus.is_some() { 24.0 } else { 28.0 };
             let vs = widgets::outlined_size(painter, &value, px);
+            let gs = gear.as_ref().map_or(egui::Vec2::ZERO, |g| widgets::outlined_size(painter, g, px));
             let bs = bonus.as_ref().map_or(egui::Vec2::ZERO, |b| widgets::outlined_size(painter, b, px));
             let y = cell.bottom() - 4.0 - vs.y;
-            let x = cell.center().x - (vs.x + bs.x) / 2.0;
+            let x = cell.center().x - (vs.x + gs.x + bs.x) / 2.0;
             widgets::outlined_text(painter, Rect::from_min_size(pos2(x, y), vs), &value, px, if pots[i] == 0 { STATS_MAXED } else { STATS_OPEN });
+            if let Some(g) = &gear {
+                widgets::outlined_text(painter, Rect::from_min_size(pos2(x + vs.x, y), gs), g, px, GEAR_GREEN);
+            }
             if let Some(b) = &bonus {
-                widgets::outlined_text(painter, Rect::from_min_size(pos2(x + vs.x, y), bs), b, px, EXALT_BLUE);
+                widgets::outlined_text(painter, Rect::from_min_size(pos2(x + vs.x + gs.x, y), bs), b, px, EXALT_BLUE);
             }
         }
         ui.label(
-            egui::RichText::new("base|potions left, (+exaltation bonus). HP and MP potions give 5 each.").font(text(15.0)).color(fixed::MUTED),
+            egui::RichText::new(if boosts.is_some() {
+                "base|potions left, (+gear), (+exaltation bonus). HP and MP potions give 5 each."
+            } else {
+                "base|potions left, (+exaltation bonus). Gear shows while you play it. HP and MP potions give 5 each."
+            })
+            .font(text(15.0))
+            .color(fixed::MUTED),
         );
     });
 }

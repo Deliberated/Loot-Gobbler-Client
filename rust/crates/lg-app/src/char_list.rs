@@ -317,6 +317,18 @@ impl Characters {
         self.login.fetching = false;
     }
 
+    /// The base stats of characters that have none yet, from the list saved at the last login (kept since before
+    /// the stats were saved with the characters).
+    pub fn fill_base_stats(&mut self) {
+        let Some(xml) = self.saved_list.as_deref() else { return };
+        let Ok(Some(list)) = crate::realm_character::char_list(xml, &mut Default::default()) else { return };
+        for r in list {
+            if let Some(c) = self.chars.get_mut(&r.char_id).filter(|c| c.base_stats.is_none()) {
+                c.base_stats = Some(vec![r.hp, r.mp, r.atk, r.def, r.spd, r.dex, r.vit, r.wis]);
+            }
+        }
+    }
+
     /// The list saved at the last login, read on the first enchantment lookup (Java `slotEnchants`).
     pub fn read_saved_list(&mut self, now: i64) {
         if self.saved_list_read {

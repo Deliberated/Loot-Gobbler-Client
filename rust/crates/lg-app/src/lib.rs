@@ -167,6 +167,7 @@ impl App {
         let mut characters = java_data.map(characters::Characters::import).unwrap_or_default();
         // Java's char-list.xml: the list saved at the last login (read on the first enchantment lookup)
         characters.saved_list = java_data.and_then(|d| std::fs::read_to_string(d.join("char-list.xml")).ok());
+        characters.fill_base_stats();
         let mut app = App {
             world,
             heard: Vec::new(),
