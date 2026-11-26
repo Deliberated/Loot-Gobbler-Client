@@ -45,6 +45,8 @@ pub struct InventoryView {
     /// Crafts planned (while the app runs): what they take is no longer offered to other crafts.
     st_planned: Vec<Planned>,
     st_show_t: f32,
+    /// How far the item shown was dragged from its place.
+    st_show_off: egui::Vec2,
     st_show_last: Option<(i32, usize, lg_app::loadout::Held)>,
     /// How far each set's bar is open (the one clicked opening, the one before closing), by the set's name.
     st_bar_t: HashMap<String, f32>,
@@ -2025,6 +2027,8 @@ impl InventoryView {
         }
         let show_now = self.st_show.clone().or_else(|| self.st_show_last.clone().filter(|_| self.st_show_t > 0.0));
         let show_t = self.st_show_t;
+        let show_off = self.st_show_off;
+        let mut show_drag = vec2(0.0, 0.0);
         let mut show_pick: Option<(i32, usize, lg_app::loadout::Held)> = None;
         let mut show_card: Option<Rect> = None;
         let bars: Vec<(String, f32)> = self.st_bar_t.iter().map(|(n, t)| (n.clone(), t * t * (3.0 - 2.0 * t))).collect();
@@ -2092,7 +2096,7 @@ impl InventoryView {
                     // a click on the grid's blank space closes it
                     let rows_n = (shown.len() as f32 / cols).ceil();
                     let blank = Rect::from_min_size(top, vec2(r.width() - 12.0, 20.0 + rows_n * (ch + GAP) + extra));
-                    if ui.interact(blank, ui.scope_id().with("st-blank"), Sense::click()).clicked() {
+                    if ui.interact(blank, ui.scope_id().with("st-blank"), Sense::click()).clicked() && show_now.is_none() {
                         pick = Some(None);
                     }
                     let mut bar_cards: HashMap<usize, Rect> = HashMap::new();
@@ -2140,10 +2144,18 @@ impl InventoryView {
                         for (k, id) in s.pieces.iter().enumerate() {
                             let tr = Rect::from_min_size(pos2(tx + k as f32 * (TILE + 6.0), ty), vec2(TILE, TILE));
                             let have = has(*id);
+                            // a missing piece whose craft is planned: a soft green under it
+                            let planned_here = !have && planned_now.iter().any(|pl| pl.piece == *id);
                             painter.rect_filled(
                                 tr,
                                 0.0,
-                                if have { mix(p.gold, Color32::from_rgb(0xFF, 0xF6, 0xC0), 0.7) } else { Color32::from_rgb(5, 5, 5) },
+                                if have {
+                                    mix(p.gold, Color32::from_rgb(0xFF, 0xF6, 0xC0), 0.7)
+                                } else if planned_here {
+                                    mix(fixed::GREEN, Color32::from_rgb(5, 5, 5), 0.35)
+                                } else {
+                                    Color32::from_rgb(5, 5, 5)
+                                },
                             );
                             if let Some(t) = icons.object(ui.ctx(), data, *id, (TILE - 10.0) as u32) {
                                 painter.image(
@@ -2270,7 +2282,7 @@ impl InventoryView {
                         let done = n_of(shown[i]) == 4;
                         let card_fill = if done { mix(p.gold, p.paper, 0.45) } else { p.header };
                         let look = BarLook { piece: st_piece, card, joint_x: jx, bar, full_h, t, mode, card_fill };
-                        let show = show_now.as_ref().map(|s| (s, show_t));
+                        let show = show_now.as_ref().map(|s| (s, show_t, show_off));
                         let out = st_bar(ui, &p, icons, app, rarity, shown[i], &stock, &has, look, show, &planned_now);
                         if out.plan.is_some() {
                             plan_click = out.plan;
@@ -2284,6 +2296,7 @@ impl InventoryView {
                         if out.card.is_some() {
                             show_card = out.card;
                         }
+                        show_drag += out.drag;
                     }
                     let rows = (shown.len() as f32 / cols).ceil();
                     ui.allocate_exact_size(vec2(r.width() - 12.0, 20.0 + rows * (ch + GAP) + extra), Sense::hover());
@@ -2298,9 +2311,11 @@ impl InventoryView {
             None => {}
         }
         // an item clicked in the bar: shown; a click anywhere else (not on what is shown) lets it go
+        self.st_show_off += show_drag;
         if show_pick.is_some() {
             self.st_show = show_pick;
             self.st_show_t = self.st_show_t.min(0.0);
+            self.st_show_off = vec2(0.0, 0.0);
         } else if self.st_show.is_some()
             && ui.input(|i| i.pointer.primary_clicked())
             && !ui.input(|i| i.pointer.interact_pos()).is_some_and(|q| show_card.is_some_and(|c| c.contains(q)))
@@ -3355,7 +3370,7 @@ fn st_bar(
     stock: &lg_app::st_forge::Stock,
     has: &dyn Fn(i32) -> bool,
     look: BarLook,
-    show: Option<(&(i32, usize, lg_app::loadout::Held), f32)>,
+    show: Option<(&(i32, usize, lg_app::loadout::Held), f32, egui::Vec2)>,
     planned: &[Planned],
 ) -> BarOut {
     use lg_app::st_forge::Mode;
@@ -3372,8 +3387,9 @@ fn st_bar(
     // the card's frame as wide as the selected one's (3 px), so the joint's sides run on from it
     full.rect_stroke(real_card, 0.0, Stroke::new(3.0, gold), StrokeKind::Inside);
     // the card's colour running down through the joint and fading out in the bar
-    // a set not complete: its dark card glows gold where it opens into the bar, so the fade shows on it too
-    let glow = if card_fill == p.header { mix(p.gold, p.paper, 0.3) } else { card_fill };
+    // a set complete fades its gold into the bar; one not complete (no colour of its own) just opens into it
+    let glow = card_fill;
+    let fades = card_fill != p.header;
     crate::overlays::gradient_round_rect(
         &full,
         // over the card's bottom border too (the selected one's is 3 px)
@@ -3383,7 +3399,7 @@ fn st_bar(
         glow,
     );
     let fade_end = (bar.top() + 110.0).min(bar.bottom() - 2.0);
-    if fade_end > bar.top() + 3.0 {
+    if fades && fade_end > bar.top() + 3.0 {
         // softly out, rounded: each point of a fine grid a mix of the two colours by its distance from the card
         // (an ellipse: as far down as `fade_end`, `spread` out to either side)
         let spread = 110.0;
@@ -3631,7 +3647,7 @@ fn st_bar(
         }
         // a piece clicked: the other columns a little darker; an item shown: all but its own column
         let dim = match show {
-            Some(((_, col, _), st)) if st > 0.0 => k != *col,
+            Some(((_, col, _), st, _)) if st > 0.0 => k != *col,
             _ => one.is_some() && !focus,
         };
         if dim {
@@ -3687,17 +3703,27 @@ fn st_bar(
     }
     // the item clicked shown in the column beside its own (right, or left for the last one), over it
     let mut card_r = None;
-    if let Some(((item, col, held), st)) = show
+    let mut drag = vec2(0.0, 0.0);
+    if let Some(((item, col, held), st, off)) = show
         && st > 0.0
     {
         let sc = if *col + 1 < pieces.len() { col + 1 } else { col.saturating_sub(1) };
         let bottom = if plan.is_empty() { bar.top() + full_h - 8.0 } else { bar.top() + full_h - FLOW_H - 6.0 };
         let x = bar.left() + 8.0 + sc as f32 * colw;
-        let r = Rect::from_min_max(pos2(x + 2.0, bar.top() + 10.0), pos2(x + colw - 6.0, bottom));
-        showcase(ui, &painter, p, icons, app, rarity, *item, held, r, st);
+        // at least wide enough for its rows; kept inside the bar
+        let w = (colw - 8.0).max(320.0);
+        let left = (x + 2.0).min(bar.right() - 6.0 - w).max(bar.left() + 6.0);
+        let r = Rect::from_min_max(pos2(left, bar.top() + 10.0), pos2(left + w, bottom)).translate(off);
+        // dragged anywhere by the mouse
+        let resp = ui.interact(r, ui.scope_id().with("st-showcase"), Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+        if resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            drag = resp.drag_delta();
+        }
+        showcase(ui, p, icons, app, rarity, *item, held, r, st);
         card_r = Some(r);
     }
-    BarOut { toggled, plan: plan_click, show: shown, card: card_r }
+    BarOut { toggled, plan: plan_click, show: shown, card: card_r, drag }
 }
 
 /// The label of a craft that can be made: "CRAFTABLE" in gold, or once planned "PLANNED" in green in a grey box,
@@ -3749,14 +3775,16 @@ struct BarOut {
     plan: Option<Result<Planned, (i32, bool)>>,
     show: Option<(i32, usize, lg_app::loadout::Held)>,
     card: Option<Rect>,
+    /// How far the item shown was dragged this frame.
+    drag: egui::Vec2,
 }
 
-/// An item shown in a set's bar (`t` how far faded in): its icon, name, slot and tier; the copy's enchantments by
-/// name, where that copy is, its feed power and what dismantling it gives; every other copy and where.
+/// An item shown in a set's bar (`t` how far faded in), as the bar shows its pieces: its icon and name, then under
+/// muted captions this copy (the item and where it is), its enchantments, what it is worth, and every copy of it; on
+/// a card of its own above the bar (it can be dragged).
 #[allow(clippy::too_many_arguments)]
 fn showcase(
     ui: &Ui,
-    painter: &egui::Painter,
     p: &Palette,
     icons: &mut crate::icons::Icons,
     app: &lg_app::App,
@@ -3767,23 +3795,41 @@ fn showcase(
     t: f32,
 ) {
     let data = app.world.data();
-    let mut painter = painter.with_clip_rect(r.expand(2.0).intersect(painter.clip_rect()));
+    // above all of the bar, its own layer
+    let layer = egui::LayerId::new(egui::Order::Foreground, ui.scope_id().with("st-showcase-layer"));
+    let shadow = ui.ctx().layer_painter(layer);
+    let mut shadow = shadow.clone();
+    shadow.set_opacity(t);
+    shadow.rect_filled(r.translate(vec2(3.0, 4.0)), 6.0, Color32::from_black_alpha(90));
+    let mut painter = ui.ctx().layer_painter(layer).with_clip_rect(r);
     painter.set_opacity(t);
-    painter.rect(r, 6.0, mix(p.header, p.paper, 0.5), Stroke::new(2.0, p.gold), StrokeKind::Inside);
+    painter.rect(r, 6.0, p.paper, Stroke::new(2.0, p.gold), StrokeKind::Inside);
     let (f18, f16, fs) = (text(18.0), text(16.0), text(14.0));
     let (lh16, lhs) = (jtext::height(&painter, &f16), jtext::height(&painter, &fs));
-    let (x, w) = (r.left() + 12.0, r.width() - 24.0);
-    let mut y = r.top() + 12.0;
-    // the item
-    let ir = Rect::from_min_size(pos2(x, y), vec2(44.0, 44.0));
-    item_icon(&painter, icons, ui, app, rarity, item, held, ir);
+    let (x, w) = (r.left() + 14.0, r.width() - 28.0);
+    let mut y = r.top() + BAR_TOP - 6.0;
+    // the item, as a piece of the set is shown
+    if let Some(tx) = icons.object(ui.ctx(), data, item, 32) {
+        painter.image(tx.id(), Rect::from_min_size(pos2(x, y), vec2(32.0, 32.0)), uv(), Color32::WHITE);
+    }
     let it = data.items.item(item);
     let name = it.map_or(format!("Item {item}"), |i| i.name.clone());
-    jtext::draw(&painter, pos2(ir.right() + 10.0, y + 4.0), Align2::LEFT_TOP, &widgets::fit(&painter, &name, &f18, w - 56.0), &f18, p.gold);
-    let kind = it.map_or(String::new(), |i| format!("{} {}", i.slot_name(), i.tier_tag()).trim().to_string());
-    jtext::draw(&painter, pos2(ir.right() + 10.0, y + 26.0), Align2::LEFT_TOP, &kind, &fs, fixed::MUTED);
-    y += 44.0 + 12.0;
-    // this copy: its enchantments, where it is
+    jtext::draw(&painter, pos2(x + 40.0, y + 16.0), Align2::LEFT_CENTER, &widgets::fit(&painter, &name, &f18, w - 42.0), &f18, p.ink);
+    y += 32.0 + 14.0;
+    let caption = |y: &mut f32, t: &str| {
+        jtext::draw(&painter, pos2(x, *y), Align2::LEFT_TOP, t, &f16, fixed::MUTED);
+        *y += lh16 + 8.0;
+    };
+    // this copy: the item (its enchantments' rarity) beside where it is
+    caption(&mut y, "THIS COPY");
+    let ir = Rect::from_min_size(pos2(x, y), vec2(ICON_B, ICON_B));
+    item_icon(&painter, icons, ui, app, rarity, item, held, ir);
+    let pr = Rect::from_min_size(pos2(ir.right() + 6.0, y), vec2(ICON_B, ICON_B));
+    place_look(ui, &painter, icons, app, held, item, pr, ("showcase-this", item));
+    let place = widgets::fit(&painter, &place_of(app, held), &fs, w - 2.0 * ICON_B - 18.0);
+    jtext::draw(&painter, pos2(pr.right() + 8.0, pr.center().y), Align2::LEFT_CENTER, &place, &fs, p.ink_soft);
+    y += ICON_B + 14.0;
+    // its enchantments by name
     let ench: Vec<String> = held
         .enchant_ids
         .iter()
@@ -3791,54 +3837,38 @@ fn showcase(
         .filter(|e| **e >= 0)
         .map(|e| data.enchant_looks.get(e).map_or(format!("Enchantment {e}"), |l| l.name.clone()))
         .collect();
-    jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, "THIS COPY", &fs, fixed::MUTED);
-    y += lhs + 4.0;
-    jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, &widgets::fit(&painter, &place_of(app, held), &f16, w), &f16, p.ink);
-    y += lh16 + 2.0;
+    caption(&mut y, "ENCHANTMENTS");
     if ench.is_empty() {
-        jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, "No enchantments", &fs, fixed::MUTED);
-        y += lhs + 2.0;
+        jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, "none", &f16, fixed::MUTED);
+        y += lh16 + 4.0;
     }
     for e in &ench {
-        jtext::draw(
-            &painter,
-            pos2(x + 6.0, y),
-            Align2::LEFT_TOP,
-            &widgets::fit(&painter, &format!("· {e}"), &fs, w - 6.0),
-            &fs,
-            p.ink_soft,
-        );
-        y += lhs + 2.0;
+        jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, &widgets::fit(&painter, e, &fs, w), &fs, p.ink_soft);
+        y += lhs + 3.0;
     }
-    y += 8.0;
+    y += 10.0;
     // what it is worth
+    caption(&mut y, "WORTH");
     let fp = it.map_or(0, |i| i.feed_power.max(0));
-    let es = essence(data, item);
-    let worth = format!("{fp} feed power   ·   {es} forge essence");
+    let worth = format!("{fp} feed power  ·  {} essence", essence(data, item));
     jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, &widgets::fit(&painter, &worth, &fs, w), &fs, p.ink_soft);
-    y += lhs + 10.0;
-    // every copy of it
+    y += lhs + 14.0;
+    // every copy: the item beside where it is
     let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
     let all = app.holdings.every_copy(&living, item);
-    jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, &format!("ALL COPIES ({})", all.len()), &fs, fixed::MUTED);
-    y += lhs + 4.0;
-    for h in &all {
-        if y + 28.0 > r.bottom() - 6.0 {
+    caption(&mut y, &format!("ALL COPIES ({})", all.len()));
+    for (n, h) in all.iter().enumerate() {
+        if y + ICON_B > r.bottom() - 8.0 {
+            if y + lhs < r.bottom() - 4.0 {
+                jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, &format!("+{} more", all.len() - n), &fs, fixed::MUTED);
+            }
             break;
         }
-        let pr = Rect::from_min_size(pos2(x, y), vec2(26.0, 26.0));
-        place_look(ui, &painter, icons, app, h, item, pr, ("showcase-copy", item, h.char_id, &h.slot));
-        let ench = h.enchant_ids.as_ref().map_or(0, |e| e.iter().filter(|x| **x >= 0).count());
-        enchant_badge(&painter, rarity, pos2(pr.right(), pr.bottom()), ench, 5.0);
-        jtext::draw(
-            &painter,
-            pos2(pr.right() + 8.0, pr.center().y),
-            Align2::LEFT_CENTER,
-            &widgets::fit(&painter, &place_of(app, h), &fs, w - 34.0),
-            &fs,
-            p.ink_soft,
-        );
-        y += 30.0;
+        let ir = Rect::from_min_size(pos2(x, y), vec2(ICON_B, ICON_B));
+        item_icon(&painter, icons, ui, app, rarity, item, h, ir);
+        let pr = Rect::from_min_size(pos2(ir.right() + 6.0, y), vec2(ICON_B, ICON_B));
+        place_look(ui, &painter, icons, app, h, item, pr, ("showcase-copy", item, n));
+        y += ICON_B + BAR_ROW_GAP;
     }
 }
 
