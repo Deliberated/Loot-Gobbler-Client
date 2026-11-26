@@ -88,6 +88,23 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
         })
         .collect();
     infos.sort_by(|a, b| b.total.cmp(&a.total).then(b.sum.cmp(&a.sum)).then(a.name.cmp(&b.name)));
+    // the class of the character in focus: its card first and lit; a new focus opens it on the right
+    let focus = crate::focus::focused_char(app, c.props).map(|x| x.class_type);
+    if let Some(f) = focus
+        && let Some(i) = infos.iter().position(|x| x.id == f)
+    {
+        let it = infos.remove(i);
+        infos.insert(0, it);
+    }
+    let seen_id = egui::Id::unique("lg-class-focus-seen");
+    if ui.ctx().data(|d| d.get_temp::<Option<i32>>(seen_id)) != Some(focus) {
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(seen_id, focus);
+            if let Some(f) = focus {
+                d.insert_temp(selected_id(), f);
+            }
+        });
+    }
 
     // the split: the side 280 px, the main area snapped down to whole columns of cards (Java `SideSplit.setSnap`)
     let overhead = 2.0 + 12.0;
@@ -115,8 +132,8 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
                     let (col, row) = ((i as f32 % cols), (i as f32 / cols).floor());
                     let cr = Rect::from_min_size(pos2(top.x + 10.0 + col * (cw + GAP), top.y + 10.0 + row * (ch + GAP)), vec2(cw, ch));
                     card(ui, &p, icons, data, info, cr);
-                    // the class clicked: a gold frame with a soft glow around it
-                    if picked == Some(info.id) {
+                    // the class clicked, or the focused character's: a gold frame with a soft glow around it
+                    if picked == Some(info.id) || focus == Some(info.id) {
                         for i in 1..=4 {
                             let a = 0.35 * (1.0 - (i - 1) as f32 / 4.0);
                             painter.rect_stroke(cr.expand(i as f32), 0.0, Stroke::new(1.0, p.gold.gamma_multiply(a)), StrokeKind::Outside);
@@ -130,6 +147,13 @@ pub fn show(ui: &mut Ui, c: &mut Ctx, body: Rect) {
                         .on_hover_text(format!("Deaths and best dungeons of the {}", info.name));
                     if resp.clicked() {
                         ui.ctx().data_mut(|d| d.insert_temp(selected_id(), info.id));
+                    }
+                    if focus == Some(info.id) {
+                        let f = small();
+                        let tw = jtext::width(&painter, "IN FOCUS", &f) + 12.0;
+                        let tr = Rect::from_min_size(pos2(cr.right() - tw - 6.0, cr.bottom() - 26.0), vec2(tw, 20.0));
+                        painter.rect_filled(tr, 0.0, p.gold);
+                        jtext::draw(&painter, tr.center(), egui::Align2::CENTER_CENTER, "IN FOCUS", &f, p.on_accent);
                     }
                 }
                 let rows = (infos.len() as f32 / cols).ceil();

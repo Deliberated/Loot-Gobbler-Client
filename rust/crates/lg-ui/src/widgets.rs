@@ -382,8 +382,27 @@ fn pour_body(
     // the drop over them in one piece (inside the buttons' height, over their edges and the gaps between)
     let band = Rect::from_min_max(pos2(rects[first].left() + 1.5, src.top() + 1.5), pos2(rects[last].right() - 1.5, src.bottom() - 1.5));
     let clip = painter.with_clip_rect(band.intersect(painter.clip_rect()));
-    let (b0, b1) = (back.min(neck), back.max(neck));
+    // the back the round end of the drop (flat at the start and the end, and while spreading, where it stays put)
+    let half = band.height() / 2.0;
+    let round = if keep { 0.0 } else { (half * (std::f32::consts::PI * e).sin()).min((neck - back).abs() / 2.0) };
+    let tail = back + dir * round;
+    let (b0, b1) = (tail.min(neck), tail.max(neck));
     clip.rect_filled(Rect::from_min_max(pos2(b0, band.top()), pos2(b1, band.bottom())), 0.0, gold);
+    if round > 0.5 {
+        let mut mesh = egui::Mesh::default();
+        let c = pos2(tail, band.center().y);
+        mesh.colored_vertex(c, gold);
+        let n = 20;
+        for i in 0..=n {
+            // the half ellipse behind the body: from its top round the back to its bottom
+            let a = std::f32::consts::PI * i as f32 / n as f32;
+            mesh.colored_vertex(pos2(tail - dir * round * a.sin(), c.y - half * a.cos()), gold);
+            if i > 0 {
+                mesh.add_triangle(0, i as u32, i as u32 + 1);
+            }
+        }
+        clip.add(Shape::mesh(mesh));
+    }
     if tip_len > 0.5 {
         // a teardrop's outline (x = cos θ, y = sin θ · sin(θ/2)^1.3) from its point to where it is widest
         const M: f32 = 1.3;
