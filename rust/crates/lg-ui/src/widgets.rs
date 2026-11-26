@@ -167,6 +167,21 @@ pub fn segmented_width(painter: &egui::Painter, names: &[&str], joined: bool) ->
 
 /// Java `Segmented`: toggle buttons in a row (`joined`: touching, as one control), the selected one gold. Drawn with
 /// its left top at `at`, `h` high; gives the clicked one.
+/// Where [`segmented`]'s buttons stand (the same arguments).
+pub fn segment_rects(painter: &egui::Painter, at: egui::Pos2, h: f32, names: &[&str], joined: bool) -> Vec<Rect> {
+    let font = small();
+    let mut x = at.x;
+    names
+        .iter()
+        .map(|n| {
+            let w = jtext::width(painter, &n.to_uppercase(), &font) + 30.0;
+            let r = Rect::from_min_size(pos2(x, at.y), vec2(w, h));
+            x += w + if joined { 0.0 } else { 8.0 };
+            r
+        })
+        .collect()
+}
+
 pub fn segmented(
     ui: &Ui,
     p: &Palette,

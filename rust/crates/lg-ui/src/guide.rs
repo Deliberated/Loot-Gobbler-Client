@@ -817,6 +817,7 @@ fn card_size(painter: &egui::Painter, p: &Palette, v: &View, back: bool, skip: b
 /// A card button (FlatLaf's: gold when primary, greyed when off); true when clicked.
 fn button(ui: &mut Ui, p: &Palette, r: Rect, t: &str, primary: bool, on: bool) -> bool {
     let resp = ui.interact(r, ui.scope_id().with(("guide-button", t)), if on { Sense::click() } else { Sense::hover() });
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, on, t));
     let painter = ui.painter();
     let (fill, fg) = if primary {
         (if resp.hovered() && on { p.gold_hover } else { p.gold }, p.on_accent)
@@ -914,8 +915,8 @@ pub struct Tour {
     pub steps: Vec<TourStep>,
 }
 
-fn step(title: &str, body: &str, open: Option<&str>, spots: Vec<&'static str>) -> TourStep {
-    TourStep { title: title.into(), body: body.into(), open: open.map(str::to_string), spots, clicks: Vec::new(), merged: false }
+fn step(title: &str, body: &str, open: Option<&str>, spots: Vec<&'static str>, clicks: Vec<&'static str>) -> TourStep {
+    TourStep { title: title.into(), body: body.into(), open: open.map(str::to_string), spots, clicks, merged: false }
 }
 
 const KEY_TOURS_SEEN: &str = "featureToursSeen";
@@ -930,40 +931,60 @@ pub fn tours() -> Vec<Tour> {
         id: "v0.0.3",
         steps: vec![
             step(
-                "ST Sets: a bar per set",
-                "Click a set and a bar opens below it: every copy of its pieces, seasonal and regular, beside the character or chest it sits in.\n\nClick one of the pieces to list just its copies; click any other item to see it on a card of its own (drag it anywhere).",
-                Some("Inventory:st:craftable"),
-                vec!["inventory.st.bar"],
-            ),
-            step(
-                "Forge what is missing",
-                "A missing piece the forge can make shows the tokens it needs (held / needed) and the spare ST item to dismantle.\n\nCRAFTABLE: you have it all. Click it to plan the craft: its tokens and spare are set aside, so other sets no longer count them.",
-                Some("Inventory:st:craftable"),
-                vec!["inventory.craftable"],
+                "Inventory Optimization",
+                "New on your Overview: Inventory Optimization looks through your items for the copies you have more of than you need.\n\nClick it.",
+                Some("Profile"),
+                vec!["profile.optimization"],
+                vec!["profile.optimization"],
             ),
             step(
                 "Collector Mode",
-                "Decides which copies the forge may use.\n\nOff: every copy can be used.\nCollector: the best copy of each ST item is kept (gold lock).\nCollector + Backup: the second best is kept too (green lock), but can still be used.",
-                Some("Inventory:st:craftable"),
-                vec!["inventory.collector"],
+                "The switch decides which copies count as spare:\n\nOff: every copy can go.\nCollector: the best copy of each ST item is kept (gold lock).\nCollector + Backup: the second best is kept too (green lock), but can still be used.\n\nTry it: click the switch.",
+                Some("Inventory:optimize"),
+                vec!["inventory.opt"],
+                Vec::new(),
+            ),
+            step(
+                "Feed",
+                "What are your spares worth as pet food? Click FEED.",
+                Some("Inventory:optimize"),
+                vec!["inventory.opt"],
+                vec!["inventory.opt.feed"],
+            ),
+            step(
+                "Your spare copies",
+                "Sorted by feed power, the most first: each spare item with where every copy of it is. In the collection they are framed.",
+                Some("Inventory:optimize:feed"),
+                vec!["inventory.opt.column"],
+                Vec::new(),
+            ),
+            step(
+                "Craft",
+                "Spares can also become ST pieces. Click CRAFT (or the ST Sets tab): your items and the ST sets melt into one page.",
+                Some("Inventory:optimize:feed"),
+                vec!["inventory.opt", "inventory.st.tab"],
+                vec!["inventory.opt.craft", "inventory.st.tab"],
+            ),
+            step(
+                "Forge what is missing",
+                "A set whose missing piece the forge can make (Collector Mode is on for it): the tokens it needs (needed / held) and the spare ST item to dismantle, on each side.\n\nCRAFTABLE: you have it all. Click it to plan the craft.",
+                Some("Inventory:melt:craftable"),
+                vec!["inventory.st.bar"],
+                vec!["inventory.craftable"],
+            ),
+            step(
+                "Planned",
+                "Its tokens and the spare are set aside and the piece turns green, so other sets no longer count them (until the app closes). Click PLANNED again to let them go.",
+                None,
+                vec!["inventory.planned", "inventory.st.bar"],
+                Vec::new(),
             ),
             step(
                 "Which rarities",
-                "Hover the rarity button to choose which rarities may be used for forging and crafting. The rarest spare is always offered first.",
-                Some("Inventory:st:craftable"),
+                "Hover the rarity button to choose which rarities may be used for forging and crafting; the rarest spare is always offered first.\n\nTry it: untick one.",
+                None,
                 vec!["inventory.rarity"],
-            ),
-            step(
-                "Items and ST Sets",
-                "Click ST Sets while on Items (or Items while on ST Sets) and the two melt into one page: your collection on the left, the sets on the right.\n\nClick a set there and its pieces beat in the collection.",
-                Some("Inventory:melt"),
-                vec!["inventory.pages"],
-            ),
-            step(
-                "Inventory Optimization",
-                "Your spare copies: framed in the collection and listed on the left, with where each copy is and its feed power. Click the box to show or hide them.\n\nFeed sorts by feed power, Forge by what dismantling gives, Craft brings in the ST sets.",
-                Some("Inventory:optimize"),
-                vec!["inventory.opt"],
+                Vec::new(),
             ),
         ],
     }]
@@ -982,6 +1003,8 @@ pub struct FeatureTour {
     pending: Out,
     sets: Vec<(&'static str, String)>,
     scroll: Option<Vec<(&'static str, bool)>>,
+    /// The step changed: the next frame is drawn at once (the view it opens and its card together).
+    moved: bool,
 }
 
 fn seen_tours(props: &lg_app::properties::Properties) -> Vec<String> {
@@ -1010,8 +1033,15 @@ impl FeatureTour {
     /// A tour's step at once (for pictures of it): `at` -1 the greeting.
     pub fn preview(&mut self, id: &str, at: i32) {
         if let Some(t) = tours().into_iter().find(|t| t.id == id) {
+            // the view as the steps before left it: the last one that opened one
+            let view = t.steps.iter().take(at.max(0) as usize + 1).rev().find_map(|s| s.open.clone());
             self.tour = Some(t);
             self.go(at);
+            if let Some(v) = view
+                && !self.pending.open.contains(&v)
+            {
+                self.pending.open.push(v);
+            }
         }
     }
 
@@ -1073,6 +1103,7 @@ impl FeatureTour {
     fn go(&mut self, i: i32) {
         let Some(t) = &self.tour else { return };
         self.index = i.max(-1);
+        self.moved = true;
         if let Some(s) = (self.index >= 0).then(|| t.steps.get(self.index as usize)).flatten() {
             if let Some(o) = &s.open {
                 self.pending.open.push(o.clone());
@@ -1145,6 +1176,9 @@ impl FeatureTour {
                 _ => {}
             }
             ctx.request_repaint_after(std::time::Duration::from_millis(6));
+        }
+        if std::mem::take(&mut self.moved) {
+            ctx.request_repaint();
         }
         for (k, v) in self.sets.drain(..) {
             asks.push(Ask::Set(k.into(), v));

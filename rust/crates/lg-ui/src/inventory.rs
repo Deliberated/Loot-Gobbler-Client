@@ -66,6 +66,9 @@ pub struct InventoryView {
     pub opt_sort: usize,
     /// The set whose pieces beat in the collection, and since when.
     beat: Option<(String, f64)>,
+    /// A tour asks for a set to show: the sets page clicks the first it shows whose missing piece is craftable (else
+    /// one with something to forge).
+    pub tour_pick: bool,
     /// The key clicked on the Keys page: the side shows what it gives (a mystery key) or its dungeon.
     pub key_selected: Option<i32>,
     /// The item whose history replaces the Recent list (Java `historyItem`).
@@ -187,29 +190,6 @@ fn essence(data: &lg_gamedata::GameData, item: i32) -> i32 {
 }
 
 impl InventoryView {
-    /// A set to show (for the tours): the first whose missing piece is craftable, else one the forge makes from
-    /// tokens, else any with something to forge, else the first; clicked, its class alone in the grid (`class`).
-    pub fn pick_forgeable(&mut self, app: &lg_app::App, class: bool) {
-        let data = app.world.data();
-        let stock = lg_app::st_forge::Stock::of(app, 0);
-        let has = |id: i32| app.collection.entry(id).is_some_and(|e| e.held() > 0);
-        let plans: Vec<_> = data.st_sets.iter().map(|s| (s, stock.plan(data, s, &has))).collect();
-        let pick = plans
-            .iter()
-            .find(|(_, p)| p.iter().any(|c| c.craftable))
-            .or_else(|| plans.iter().find(|(_, p)| p.iter().any(|c| !c.tokens.is_empty())))
-            .or_else(|| plans.iter().find(|(_, p)| !p.is_empty()))
-            .or_else(|| plans.first());
-        if let Some((s, _)) = pick {
-            self.st_selected = Some(s.name.clone());
-            if class {
-                self.st_class = Some(s.class_name.clone());
-            }
-        }
-    }
-}
-
-impl InventoryView {
     /// The Optimization section at the top of `at` (the right column, or above the ST sets when crafting): what to
     /// do with the spare copies, and Feed / Craft / Forge (Feed and Forge order the list, Craft melts Items and ST
     /// Sets; again: back). Gives its rect.
@@ -302,6 +282,9 @@ impl InventoryView {
                         _ => usize::MAX,
                     }
                 };
+                let segs = widgets::segment_rects(ui.painter(), pos2(x, y), 34.0, &names, false);
+                crate::guide::mark(ui, "inventory.opt.feed", segs[0]);
+                crate::guide::mark(ui, "inventory.opt.craft", segs[1]);
                 if let Some(i) = widgets::segmented(ui, p, pos2(x, y), 34.0, &names, on, false, &[]) {
                     choice = Some(i);
                 }
@@ -714,6 +697,9 @@ impl InventoryView {
         // the forge resources, right-aligned on the same row: the regular side at the right, the seasonal one before it
         let pages_end = pages_x + widgets::segmented_width(ui.painter(), &PAGES, false) + 10.0;
         crate::guide::mark(ui, "inventory.pages", Rect::from_min_max(pos2(pages_x, all.top()), pos2(pages_end - 10.0, all.top() + 36.0)));
+        if let Some(r) = widgets::segment_rects(ui.painter(), pos2(pages_x, all.top()), 36.0, &PAGES, false).get(1) {
+            crate::guide::mark(ui, "inventory.st.tab", *r);
+        }
         resource_row(ui, &p, c.icons, app, pos2(all.right(), all.top()), 36.0, pages_end, focus.map(|ch| ch.seasonal));
         let mut body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
         // the optimization: its list in a column of its own, sliding out from the left
@@ -726,6 +712,9 @@ impl InventoryView {
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(at));
             child.set_clip_rect(Rect::from_min_max(body.min, pos2(body.left() + shown, body.bottom())).intersect(ui.clip_rect()));
             self.opt_column(&mut child, c, rarity, at);
+            if ot >= 1.0 {
+                crate::guide::mark(ui, "inventory.opt.column", at);
+            }
             body = Rect::from_min_max(pos2(body.left() + shown, body.top()), body.max);
             if ot < 1.0 {
                 ui.ctx().request_repaint();
@@ -2020,6 +2009,18 @@ impl InventoryView {
             })
             .collect();
         shown.sort_by(|a, b| n_of(b).cmp(&n_of(a)).then(a.title.cmp(&b.title)));
+        // a tour's set: picked from what this page counts and shows
+        if std::mem::take(&mut self.tour_pick) {
+            let pick = shown
+                .iter()
+                .find(|s| s.pieces.iter().any(|p| craftable.contains(p)))
+                .or_else(|| shown.iter().find(|s| stock.plan(data, s, &has).iter().any(|c| !c.tokens.is_empty())))
+                .or_else(|| shown.iter().find(|s| !stock.plan(data, s, &has).is_empty()));
+            if let Some(s) = pick {
+                self.st_selected = Some(s.name.clone());
+                self.st_piece = None;
+            }
+        }
         // low-high-low, once every 2.8 s
         let time = ui.input(|i| i.time);
         let blink = (0.5 - 0.5 * (std::f64::consts::TAU * time / 2.8).cos()) as f32;
@@ -3971,9 +3972,7 @@ fn plan_label(
     let w = jtext::width(painter, label, font);
     let h = jtext::height(painter, font);
     let r = Rect::from_min_size(pos2(at.x, at.y - h / 2.0 - 4.0), vec2(w + pad, h + 8.0));
-    if !planned {
-        crate::guide::mark_first(ui, "inventory.craftable", r);
-    }
+    crate::guide::mark_first(ui, if planned { "inventory.planned" } else { "inventory.craftable" }, r);
     let resp =
         ui.interact(r, ui.scope_id().with(id), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(if planned {
             "Planned: what it takes is set aside. Click: not planned any more"

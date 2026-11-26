@@ -683,6 +683,18 @@ fn main() {
         // a tour: the view it opened settled (bars open, the melt done), the frames placed on it
         if tab.starts_with("tour:") {
             harness.run_steps(60);
+            // UI_SHOT_TOUR_CLICKS="NEXT,NEXT": its buttons pressed in turn, a picture a few frames after each
+            let clicks = std::env::var("UI_SHOT_TOUR_CLICKS").unwrap_or_default();
+            for (n, label) in clicks.split(',').filter(|l| !l.is_empty()).enumerate() {
+                {
+                    use egui_kittest::kittest::Queryable;
+                    harness.get_by_label(label).click();
+                }
+                harness.run_steps(3);
+                let img = harness.render().expect("render");
+                img.save(std::path::Path::new(out).join(format!("{}-click{n}.png", tab.replace(':', "-")))).expect("save");
+                println!("clicked {label}");
+            }
         }
         if let Some(at) = hover {
             harness.input_mut().events.push(egui::Event::PointerMoved(at));

@@ -927,6 +927,7 @@ const SUGGESTIONS: usize = 4;
 
 /// The first suggestion box: Inventory Optimization (the optimization icon); a click opens Inventory > Items.
 fn optimization_box(ui: &Ui, p: &Palette, r: egui::Rect) {
+    crate::guide::mark(ui, "profile.optimization", r);
     let resp = ui
         .interact(r, ui.scope_id().with("suggest-optimization"), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand)

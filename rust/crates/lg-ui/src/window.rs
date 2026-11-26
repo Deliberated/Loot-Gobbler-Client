@@ -257,23 +257,21 @@ impl Window {
         }
     }
 
-    /// [`Window::open`], and the views the tours open that need the records: "Inventory:st:craftable" (ST Sets, the
-    /// bar of a set whose missing piece can be forged open), "Inventory:melt" (Items and ST Sets melted, that set
-    /// clicked).
-    pub fn open_with(&mut self, spec: &str, app: &lg_app::App) {
+    /// [`Window::open`], and the views only the tours open: "Inventory:melt:craftable" (Items and ST Sets melted,
+    /// the bar of a set whose missing piece can be forged open; Collector Mode on, as off there are no suggestions).
+    pub fn open_tour(&mut self, spec: &str) {
         match spec {
-            "Inventory:st:craftable" => {
-                self.open("Inventory:st");
-                self.inventory.melt = false;
-                self.inventory.st_piece = None;
-                self.inventory.pick_forgeable(app, true);
-            }
-            "Inventory:melt" => {
+            "Inventory:melt:craftable" => {
                 self.open("Inventory");
-                self.inventory.opt = false;
-                self.inventory.melt = true;
-                self.inventory.melt_exit = 0;
-                self.inventory.pick_forgeable(app, true);
+                if !self.inventory.melt {
+                    self.inventory.melt = true;
+                    self.inventory.melt_exit = 0;
+                }
+                self.inventory.tour_pick = true;
+                use lg_app::st_forge::Mode;
+                if Mode::of(self.props.get(Mode::KEY)) == Mode::Off {
+                    self.asks.push(Ask::Set(Mode::KEY.into(), Mode::Collector.value().into()));
+                }
             }
             _ => self.open(spec),
         }
@@ -295,6 +293,13 @@ impl Window {
                 self.inventory.page = 0;
                 self.inventory.melt = false;
                 self.inventory.opt = true;
+            }
+            // the same, the spare copies by feed power
+            ("Inventory", "optimize:feed") => {
+                self.inventory.page = 0;
+                self.inventory.melt = false;
+                self.inventory.opt = true;
+                self.inventory.opt_sort = 1;
             }
             ("Inventory", p) if p.starts_with("item:") => {
                 // Java `showItem`: the Items page, the item scrolled to and pulsing, its history beside the grid
@@ -712,7 +717,7 @@ impl Window {
         for spec in &out.open {
             match spec.strip_prefix("tab:") {
                 Some(tab) => self.shell.selected = tab.to_string(),
-                None => self.open_with(spec, app),
+                None => self.open_tour(spec),
             }
         }
         if let Some(open) = out.menu {
