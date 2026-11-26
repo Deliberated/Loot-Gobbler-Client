@@ -493,6 +493,7 @@ impl Gui {
             sync.upload_soon(now);
         }
         self.app.server.tick();
+        self.app.server.drop_log_tick(now);
         self.app.server.watch(now);
         self.app.server.mates_tick(now);
         // gUPE trades: checked against the partner's report; the verdicts go into the runs

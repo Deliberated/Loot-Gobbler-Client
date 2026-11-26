@@ -31,6 +31,39 @@ const MAX_ZOOM: f64 = 3.0;
 const MAX_FIT: f32 = 1.7;
 const FIT_MARGIN: f32 = 120.0;
 const POLL_MS: i64 = 60_000;
+/// How many rows of items a wagon is piled up to: then they go up onto a hot air balloon tied to it (its driver
+/// riding up there with them), and the wagon fills up again below, wider now that its seat is free; and so on.
+pub static PILE_ROWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(15);
+/// A wagon's columns of items once its driver rides the balloon.
+const WIDE_COLS: usize = 7;
+/// The widest the heap on the balloon grows; past it, it grows upwards.
+const HEAP_MAX_BASE: usize = 26;
+/// The most items the heap shows: past it, that many picked evenly stand for the rest.
+const HEAP_SHOWN: usize = HEAP_MAX_BASE * (HEAP_MAX_BASE + 1) / 2;
+
+/// The items of the balloon's the heap shows: all up to the most it shows, past that that many picked evenly
+/// (rarest first as given).
+fn heap_pick<'a>(items: &[&'a CaravanItem]) -> Vec<&'a CaravanItem> {
+    let (n, k) = (items.len(), items.len().min(HEAP_SHOWN));
+    (0..k).map(|i| items[i * n / k.max(1)]).collect()
+}
+/// The balloon: its envelope's radius; the platform under it (the driver's seat at its front, its deck), the items
+/// heaped on it, the gap above them up to the envelope's mouth, the ropes down to the wagon.
+const ENVELOPE_R: f32 = 72.0;
+/// The most it inflates to: fully inflated, two balloons side by side (a wagon's step apart) keep a gap.
+const ENVELOPE_MAX_R: f32 = 118.0;
+/// The narrowest platform; it widens with the heap on it.
+const PLATFORM_MIN_W: f32 = 150.0;
+const PLATFORM_FRONT: f32 = 58.0;
+const PLATFORM_H: f32 = 12.0;
+const HEAP_ITEM: f32 = 8.5;
+/// The heap's items overlap: this far apart side by side, and row over row.
+const HEAP_CELL: f32 = 6.5;
+const HEAP_ROW: f32 = 5.5;
+const MOUTH_GAP: f32 = 26.0;
+const TETHER: f32 = 34.0;
+
+const GORES: [Color32; 5] = [rgb(0x9FB3AC), rgb(0xEDE6DA), rgb(0xC98A9A), rgb(0xEDE6DA), rgb(0x9FB3AC)];
 
 /// Bag colours, rarest first: the order of the bag counts, and the pile order from the top down.
 const BAG_ORDER: [&str; 11] = ["White", "Orange", "Red", "Gold", "Teal", "Blue", "Purple", "Egg Basket", "Pink", "Brown", "Other"];
@@ -98,17 +131,93 @@ pub fn score(data: &GameData, w: &lg_app::server::ScoreWeights, m: &CaravanMembe
     (sum * 10.0 + 0.5).floor() / 10.0
 }
 
+/// A wagon's pile split for the balloon: the items on the balloon (the oldest found, in whole batches: the first
+/// full wagon, then each full wider one) and those on the wagon now, both rarest first; none on the balloon until the
+/// first wagon is full.
+fn balloon_split<'a>(m: &'a CaravanMember, once: Vec<&'a CaravanItem>) -> (Vec<&'a CaravanItem>, Vec<&'a CaravanItem>) {
+    let rows = PILE_ROWS.load(std::sync::atomic::Ordering::Relaxed).max(1);
+    let (first, later) = (PILE_COLS * rows, WIDE_COLS * rows);
+    if once.len() <= first {
+        return (Vec::new(), once);
+    }
+    let up_n = first + (once.len() - first - 1) / later * later;
+    // each item's first find
+    let mut first: HashMap<i32, &str> = HashMap::new();
+    for it in &m.items {
+        let t = first.entry(it.item_id).or_insert(it.time.as_str());
+        if it.time.as_str() < *t {
+            *t = it.time.as_str();
+        }
+    }
+    let first_find = |id: i32| first.get(&id).copied().unwrap_or("");
+    let mut by_age: Vec<i32> = once.iter().map(|it| it.item_id).collect();
+    by_age.sort_by(|a, b| first_find(*a).cmp(first_find(*b)));
+    let up: std::collections::HashSet<i32> = by_age.into_iter().take(up_n).collect();
+    once.into_iter().partition(|it| up.contains(&it.item_id))
+}
+
+/// The rows of the heap on the balloon from the bottom up (how many items each holds): a pyramid, as wide as it must
+/// be up to the widest, past that full rows of the widest under a pyramid of it.
+fn heap_rows(n: usize) -> Vec<usize> {
+    let mut base = 1;
+    while base * (base + 1) / 2 < n && base < HEAP_MAX_BASE {
+        base += 1;
+    }
+    let pyramid = base * (base + 1) / 2;
+    let full = n.saturating_sub(pyramid).div_ceil(base);
+    let mut rows: Vec<usize> = std::iter::repeat_n(base, full).chain((1..=base).rev()).collect();
+    // only as many rows as it takes
+    let mut room = 0;
+    let mut used = 0;
+    for r in &rows {
+        if room >= n {
+            break;
+        }
+        room += r;
+        used += 1;
+    }
+    rows.truncate(used.max(1));
+    rows
+}
+
+/// The platform under a heap of `n` items shown: the seat, the heap and a little room, at least the narrowest.
+fn platform_w(n: usize) -> f32 {
+    let base = heap_rows(n).first().copied().unwrap_or(1);
+    (PLATFORM_FRONT + base as f32 * HEAP_CELL + HEAP_ITEM + 16.0).max(PLATFORM_MIN_W)
+}
+
+/// The envelope's radius over a platform that wide: a little more for each widening, up to fully inflated.
+fn envelope_r(plat_w: f32) -> f32 {
+    let widest = PLATFORM_FRONT + HEAP_MAX_BASE as f32 * HEAP_CELL + HEAP_ITEM + 16.0;
+    let share = ((plat_w - PLATFORM_MIN_W) / (widest - PLATFORM_MIN_W)).clamp(0.0, 1.0);
+    ENVELOPE_R + (ENVELOPE_MAX_R - ENVELOPE_R) * share
+}
+
+/// The balloon's half width at `dy` below its envelope's centre (negative: above) for radius `r`, None outside it.
+fn envelope_half(dy: f32, r: f32) -> Option<f32> {
+    let low = r * 1.3;
+    if !(-r..=low).contains(&dy) {
+        return None;
+    }
+    if dy <= 0.0 {
+        return Some((r * r - dy * dy).sqrt());
+    }
+    let v = dy / low;
+    Some(14.0 + (r - 14.0) * (v * std::f32::consts::FRAC_PI_2).cos().powf(1.15))
+}
+
 /// Java `pile`: what a wagon carries, rarest first: every item once, with its copies.
 fn pile(m: &CaravanMember) -> (Vec<&CaravanItem>, HashMap<i32, i32>) {
     let mut loot: Vec<&CaravanItem> = m.items.iter().collect();
     loot.sort_by_key(|it| rarity(it));
     let mut once: Vec<&CaravanItem> = Vec::new();
-    let mut copies = HashMap::new();
+    let mut copies: HashMap<i32, i32> = HashMap::new();
     for it in loot {
-        if !once.iter().any(|o| o.item_id == it.item_id) {
+        let n = copies.entry(it.item_id).or_insert(0);
+        if *n == 0 {
             once.push(it);
         }
-        *copies.entry(it.item_id).or_insert(0) += 1;
+        *n += 1;
     }
     (once, copies)
 }
@@ -131,6 +240,25 @@ impl T {
     fn r(&self, x: f32, y: f32, w: f32, h: f32) -> Rect {
         Rect::from_min_max(self.p(x, y), self.p(x + w, y + h))
     }
+}
+
+/// The gold chest's stones set into the planks (every four of a colour one block): a grid of blocks this big, edge to
+/// edge, over the wagon bed and the balloon's deck, each stone in a cell of its own picked at random.
+const INLAY: f32 = 4.0;
+
+/// The balloon deck's rows of stones, and its grid (columns, rows) for a platform that wide.
+const DECK_ROWS: usize = ((PLATFORM_H - 4.0) / INLAY) as usize;
+fn deck_grid(plat_w: f32) -> (usize, usize) {
+    (((plat_w - 6.0) / INLAY) as usize, DECK_ROWS)
+}
+
+/// One stone set into a plank: a little block of its colour, lit at its top left, dark at its bottom right.
+fn inlay(p: &egui::Painter, t: &T, x: f32, y: f32, col: Color32) {
+    p.rect_filled(t.r(x, y, INLAY, INLAY), 0.0, col);
+    p.rect_filled(t.r(x, y, INLAY, 1.0), 0.0, brighter(col));
+    p.rect_filled(t.r(x, y, 1.0, INLAY), 0.0, brighter(col));
+    p.rect_filled(t.r(x, y + INLAY - 1.0, INLAY, 1.0), 0.0, darker(col));
+    p.rect_filled(t.r(x + INLAY - 1.0, y, 1.0, INLAY), 0.0, darker(col));
 }
 
 /// A filled block with a dark pixel outline.
@@ -183,15 +311,24 @@ impl Scene<'_> {
     }
 
     fn content_height(&self) -> f32 {
-        let rows = self.riders.iter().map(|m| pile(m).0.len().div_ceil(PILE_COLS)).max().unwrap_or(0);
-        150f32.max(32.0 + BED_H + rows as f32 * (ITEM + ITEM_GAP) + 12.0)
+        let tall = |m: &CaravanMember| {
+            let (up, rest) = balloon_split(m, pile(m).0);
+            let cols = if up.is_empty() { PILE_COLS } else { WIDE_COLS };
+            let rows = rest.len().div_ceil(cols) as f32 * (ITEM + ITEM_GAP);
+            let shown = up.len().min(HEAP_SHOWN);
+            let heap = (heap_rows(shown).len() as f32 * HEAP_ROW + HEAP_ITEM).max(DRIVER - 8.0);
+            rows + if up.is_empty() { 0.0 } else { TETHER + PLATFORM_H + heap + MOUTH_GAP + envelope_r(platform_w(shown)) * 2.3 + 8.0 }
+        };
+        let h = self.riders.iter().map(|m| tall(m)).fold(0.0, f32::max);
+        150f32.max(32.0 + BED_H + h + 12.0)
     }
 
     /// Java `fit`: enlarged up to MAX_FIT while it fits the width (with a margin) and the sky.
     fn fit(&self, painter: &egui::Painter, width: f32) -> f32 {
         let by_width = (width - 2.0 * FIT_MARGIN) / self.content_width(painter);
         let by_height = (HEIGHT - 34.0 - 16.0) / self.content_height();
-        by_height.min(1f32.max(MAX_FIT.min(by_width.min(by_height))))
+        // never smaller than drawn: what does not fit is dragged into view (balloons up high, more wagons)
+        MAX_FIT.min(by_width).min(by_height).max(1.0)
     }
 
     fn paint_ox(&self, p: &egui::Painter, t: &T, x: f32, ground: f32) {
@@ -244,7 +381,8 @@ impl Scene<'_> {
         let (mut row, mut i) = (0usize, 0usize);
         let mut placed = Vec::new();
         while i < gems.len() {
-            let in_row = 1.max(per_row.saturating_sub(row)).min(gems.len() - i);
+            // narrowing every second row: a heap, not a column
+            let in_row = 1.max(per_row.saturating_sub(row / 2)).min(gems.len() - i);
             let row_w = (in_row - 1) as f32 * step;
             for k in 0..in_row {
                 let gx = (cx - (row_w / 2.0).floor() + k as f32 * step) as i32 + rnd.next_int(3) - 1;
@@ -261,7 +399,7 @@ impl Scene<'_> {
     }
 
     /// Java `paintStep` and `paintHoard`: the step at the back with a stone per enchanted item (a chest when many).
-    fn step(&self, p: &egui::Painter, t: &T, m: &CaravanMember, x: f32, y: f32) {
+    fn step(&self, p: &egui::Painter, t: &T, m: &CaravanMember, x: f32, y: f32, left: [usize; 5]) {
         let mut stones: Vec<usize> = m.items.iter().filter(|it| it.enchants > 0).map(|it| it.enchants.min(4) as usize).collect();
         stones.sort_unstable();
         block(p, t, x, y, STEP_W, 7.0, WOOD);
@@ -285,6 +423,8 @@ impl Scene<'_> {
         let mut shown = Vec::new();
         for (r, n) in count.iter().enumerate().skip(1) {
             let k = if *n == 0 { 0 } else { 1.max(n / per) };
+            // in the gold chest what has not gone out onto the planks
+            let k = if per == 10 { left[r] } else { k };
             shown.extend(std::iter::repeat_n(r, k));
         }
         if per == 1 {
@@ -305,6 +445,55 @@ impl Scene<'_> {
         p.rect_filled(t.r(bx + 3.0, rim + 3.0, w - 6.0, 2.0), 0.0, band);
         p.rect_filled(t.r(cx - 4.0, rim + 4.0, 8.0, 9.0), 0.0, INK);
         p.rect_filled(t.r(cx - 2.0, rim + 6.0, 4.0, 5.0), 0.0, lock);
+    }
+
+    /// The planks' grid of `cells` (the wagon bed's, then the balloon deck's) and the gold chest: each colour's stones
+    /// go out four at a time as one stone in the grid once a fifth comes. A stone takes a free cell picked at random;
+    /// with none free it replaces one of a lower rarity picked at random (blue only green, purple green or blue, gold
+    /// any of them); a stone that finds no place stays in the chest, which holds at most four of a colour. The rarity
+    /// in each cell (0: none) and the stones left in the chest by rarity. Only for the gold chest (over 50 enchanted
+    /// items, each stone ten of them): else nothing goes out.
+    fn planks(m: &CaravanMember, cells: usize) -> (Vec<usize>, [usize; 5]) {
+        let mut count = [0usize; 5];
+        for it in m.items.iter().filter(|it| it.enchants > 0) {
+            count[it.enchants.min(4) as usize] += 1;
+        }
+        let mut grid = vec![0usize; cells];
+        let mut chest = [0usize; 5];
+        let gold = count.iter().sum::<usize>() > 50;
+        for (r, n) in count.iter().enumerate().skip(1) {
+            chest[r] = if *n == 0 { 0 } else { 1.max(n / if gold { 10 } else { 1 }) };
+        }
+        if !gold {
+            return (grid, chest);
+        }
+        // the stones going out, colours mixed (the same each time for a member)
+        let mut rnd = lg_app::java::JavaRandom::new(m.id.wrapping_mul(7919));
+        let mut out: Vec<usize> = (1..5).flat_map(|r| std::iter::repeat_n(r, chest[r].saturating_sub(1) / 4)).collect();
+        for i in (1..out.len()).rev() {
+            out.swap(i, rnd.next_int(i as i32 + 1) as usize);
+        }
+        let mut free: Vec<usize> = (0..cells).collect();
+        for i in (1..free.len()).rev() {
+            free.swap(i, rnd.next_int(i as i32 + 1) as usize);
+        }
+        let mut placed = [0usize; 5];
+        for r in out {
+            if let Some(c) = free.pop() {
+                grid[c] = r;
+            } else {
+                let lower: Vec<usize> = (0..cells).filter(|c| grid[*c] < r).collect();
+                if lower.is_empty() {
+                    continue; // no place: it stays in the chest
+                }
+                grid[lower[rnd.next_int(lower.len() as i32) as usize]] = r;
+            }
+            placed[r] += 1;
+        }
+        for r in 1..5 {
+            chest[r] = (chest[r] - 4 * placed[r]).min(4);
+        }
+        (grid, chest)
     }
 
     /// The member's most played character, facing left.
@@ -334,14 +523,31 @@ impl Scene<'_> {
         let bob = (2.0 * (self.phase * 0.25 + index as f64).sin()).round() as f32;
         let loot_bob = (2.0 * (self.phase * 0.06 + index as f64).sin()).round() as f32;
         let mine = m.id == self.me;
-        let (mut pile_items, copies) = pile(m);
+        let (once, copies) = pile(m);
+        let (up, mut pile_items) = balloon_split(m, once);
+        // the planks' stones: the bed's grid, then the balloon deck's
+        let (bed_cols, bed_rows) = (((WAGON_W - 6.0) / INLAY) as usize, ((BED_H - 6.0) / INLAY) as usize);
+        let deck_cells = if up.is_empty() { 0 } else { deck_grid(platform_w(up.len().min(HEAP_SHOWN))).0 * DECK_ROWS };
+        let (grid, left) = Scene::planks(m, bed_cols * bed_rows + deck_cells);
         pile_items.reverse(); // drawn from the bottom up
-        let pile_x = x + 52.0;
-        let pile_w = PILE_COLS as f32 * (ITEM + ITEM_GAP);
-        let mut top = bed_y;
+        // the driver up on the balloon: the seat free for items too
+        let cols = if up.is_empty() { PILE_COLS } else { WIDE_COLS };
+        let pile_w = cols as f32 * (ITEM + ITEM_GAP);
+        let pile_x = if up.is_empty() { x + 52.0 } else { x + ((WAGON_W - pile_w) / 2.0).floor() };
+        let rows_h = pile_items.len().div_ceil(cols) as f32 * (ITEM + ITEM_GAP);
+        // the balloon above the pile, its ropes behind it
+        let balloon_top = if up.is_empty() {
+            None
+        } else {
+            let cx = pile_x + (pile_w / 2.0).floor();
+            let deck_y = bed_y - rows_h - TETHER - PLATFORM_H + loot_bob;
+            let deck = grid.get(bed_cols * bed_rows..).unwrap_or(&[]);
+            Some(self.balloon(ui, icons, p, t, m, &up, deck, cx, deck_y, (x + 10.0, x + WAGON_W - 10.0, bed_y), mine, hits))
+        };
+        let mut top = balloon_top.unwrap_or(bed_y);
         for (i, it) in pile_items.iter().enumerate() {
-            let (row, col) = (i / PILE_COLS, i % PILE_COLS);
-            let in_row = PILE_COLS.min(pile_items.len() - row * PILE_COLS);
+            let (row, col) = (i / cols, i % cols);
+            let in_row = cols.min(pile_items.len() - row * cols);
             let row_x = pile_x + ((pile_w - in_row as f32 * (ITEM + ITEM_GAP)) / 2.0).floor();
             let ix = row_x + col as f32 * (ITEM + ITEM_GAP);
             let iy = bed_y - (row as f32 + 1.0) * (ITEM + ITEM_GAP) + loot_bob;
@@ -363,11 +569,19 @@ impl Scene<'_> {
                 jtext::draw(p, at, Align2::RIGHT_BOTTOM, &c.to_string(), &f, Color32::WHITE);
             }
         }
-        self.step(p, t, m, x + WAGON_W, bed_y + BED_H - 4.0);
-        self.driver(ui, icons, p, m, t.r(x - 4.0, bed_y - DRIVER + 14.0 + bob, DRIVER, DRIVER), Color32::WHITE);
+        self.step(p, t, m, x + WAGON_W, bed_y + BED_H - 4.0, left);
+        if up.is_empty() {
+            self.driver(ui, icons, p, m, t.r(x - 4.0, bed_y - DRIVER + 14.0 + bob, DRIVER, DRIVER), Color32::WHITE);
+        }
         // the bed with the score plate and the name
         block(p, t, x, bed_y, WAGON_W, BED_H, WOOD);
         p.rect_filled(t.r(x + 3.0, bed_y + BED_H - 9.0, WAGON_W - 6.0, 6.0), 0.0, WOOD_DARK);
+        // the stones set into the bed, under the plate and the name
+        for (i, r) in grid.iter().take(bed_cols * bed_rows).enumerate() {
+            if *r > 0 {
+                inlay(p, t, x + 3.0 + (i % bed_cols) as f32 * INLAY, bed_y + 3.0 + (i / bed_cols) as f32 * INLAY, STONE[*r]);
+            }
+        }
         let pf = text(19.0);
         let sf = text(19.0 * t.f);
         let wid = |s: &str| jtext::width(p, s, &pf);
@@ -412,6 +626,124 @@ impl Scene<'_> {
         self.wheel(p, t, x + 15.0 + 19.0, ground - 19.0);
         self.wheel(p, t, x + WAGON_W - 15.0 - 19.0, ground - 19.0);
         hits.members.push((t.r(x, top, WAGON_W, ground - top), m.id));
+    }
+
+    /// A hot air balloon carrying a platform (its deck's top at `deck_y`): the driver sitting at its front, the items
+    /// heaped as a pyramid on the rest of it; tied down to the wagon bed's corners. Its top.
+    #[allow(clippy::too_many_arguments)]
+    fn balloon(
+        &self,
+        ui: &Ui,
+        icons: &mut crate::icons::Icons,
+        p: &egui::Painter,
+        t: &T,
+        m: &CaravanMember,
+        items: &[&CaravanItem],
+        deck: &[usize],
+        cx: f32,
+        deck_y: f32,
+        tie: (f32, f32, f32),
+        mine: bool,
+        hits: &mut Hits,
+    ) -> f32 {
+        // the heap: about the sweet spot of them at most, the others counted on the tag
+        let shown = heap_pick(items);
+        let rows = heap_rows(shown.len());
+        let plat_w = platform_w(shown.len());
+        let er = envelope_r(plat_w);
+        let (bx, by) = (cx - plat_w / 2.0, deck_y);
+        // the heap's ground: the deck after the seat, its middle where the pyramid stands
+        let heap_cx = bx + PLATFORM_FRONT + (plat_w - PLATFORM_FRONT) / 2.0;
+        let load_top = by - (rows.len() as f32 * HEAP_ROW + HEAP_ITEM).max(DRIVER - 8.0);
+        // the envelope above the load
+        let low = er * 1.3;
+        let mouth = load_top - MOUTH_GAP;
+        let ey = mouth - low;
+        // the tethers down to the wagon, the ropes up to the mouth
+        let rope = Stroke::new(2.0 * t.f, INK);
+        p.line_segment([t.p(bx + 8.0, by + PLATFORM_H), t.p(tie.0, tie.2)], rope);
+        p.line_segment([t.p(bx + plat_w - 8.0, by + PLATFORM_H), t.p(tie.1, tie.2)], rope);
+        for (a, b) in [(-14.0, 4.0), (14.0, plat_w - 4.0), (-5.0, PLATFORM_FRONT), (5.0, plat_w * 0.78)] {
+            p.line_segment([t.p(cx + a, mouth), t.p(bx + b, by)], Stroke::new(1.5 * t.f, INK));
+        }
+        // the envelope: outline, the gores in their colours (sampled down it), seams, crown and mouth ring
+        let steps = 48;
+        let ys: Vec<f32> = (0..=steps).map(|i| -er + (er + low) * i as f32 / steps as f32).collect();
+        let half = |dy: f32| envelope_half(dy, er).unwrap_or(0.0);
+        let outline: Vec<Pos2> = ys
+            .iter()
+            .map(|dy| t.p(cx + half(*dy) + 3.0, ey + dy))
+            .chain(ys.iter().rev().map(|dy| t.p(cx - half(*dy) - 3.0, ey + dy)))
+            .collect();
+        p.add(egui::Shape::convex_polygon(outline.clone(), INK, Stroke::NONE));
+        let n = GORES.len() as f32;
+        // a gore is bounded by meridians: x = cx + sin(k * pi/2) * half
+        let at = |k: f32, dy: f32| cx + (k * std::f32::consts::FRAC_PI_2).sin() * half(dy);
+        for (g, col) in GORES.iter().enumerate() {
+            let (a, b) = (-1.0 + 2.0 * g as f32 / n, -1.0 + 2.0 * (g as f32 + 1.0) / n);
+            // one mesh down the gore (pieces side by side would show seams)
+            let mut mesh = egui::Mesh::default();
+            for dy in &ys {
+                mesh.colored_vertex(t.p(at(a, *dy), ey + dy), *col);
+                mesh.colored_vertex(t.p(at(b, *dy), ey + dy), *col);
+            }
+            for i in 0..ys.len() as u32 - 1 {
+                let k = 2 * i;
+                mesh.add_triangle(k, k + 1, k + 2);
+                mesh.add_triangle(k + 1, k + 3, k + 2);
+            }
+            p.add(egui::Shape::mesh(mesh));
+        }
+        for k in 1..GORES.len() {
+            let kk = -1.0 + 2.0 * k as f32 / n;
+            let pts: Vec<Pos2> = ys.iter().map(|dy| t.p(at(kk, *dy), ey + dy)).collect();
+            p.add(egui::Shape::line(pts, Stroke::new(1.5 * t.f, INK.gamma_multiply(0.7))));
+        }
+        p.add(egui::Shape::closed_line(outline, Stroke::new(t.f, INK)));
+        block(p, t, cx - 12.0, ey - er - 6.0, 24.0, 9.0, WOOD_DARK);
+        block(p, t, cx - 17.0, mouth - 3.0, 34.0, 8.0, WOOD_DARK);
+        // the driver sitting at the front, low on the deck
+        let bob = (2.0 * (self.phase * 0.25).sin()).round() as f32;
+        self.driver(ui, icons, p, m, t.r(bx + 2.0, by - DRIVER + 12.0 + bob, DRIVER, DRIVER), Color32::WHITE);
+        // the deck: planks over a beam, a post at each end
+        block(p, t, bx + 12.0, by + PLATFORM_H - 3.0, plat_w - 24.0, 7.0, WOOD_DARK);
+        block(p, t, bx, by, plat_w, PLATFORM_H, WOOD);
+        let mut px = bx + 22.0;
+        while px < bx + plat_w - 6.0 {
+            p.rect_filled(t.r(px, by + 3.0, 2.0, PLATFORM_H - 6.0), 0.0, WOOD_DARK);
+            px += 22.0;
+        }
+        for x in [bx + 1.0, bx + plat_w - 6.0] {
+            block(p, t, x, by - 14.0, 5.0, 16.0, WOOD_DARK);
+        }
+        // its share of the planks' stones
+        let (deck_cols, _) = deck_grid(plat_w);
+        for (i, r) in deck.iter().enumerate() {
+            if *r > 0 {
+                inlay(p, t, bx + 3.0 + (i % deck_cols) as f32 * INLAY, by + 2.0 + (i / deck_cols) as f32 * INLAY, STONE[*r]);
+            }
+        }
+        // the heap: from the bottom row up, each row from its middle outwards, the rarest on top
+        let mut slots: Vec<(f32, f32)> = Vec::new();
+        for (row, in_row) in rows.iter().copied().enumerate() {
+            let row_w = in_row as f32 * HEAP_CELL;
+            let mut order: Vec<usize> = (0..in_row).collect();
+            let mid = (in_row as f32 - 1.0) / 2.0;
+            order.sort_by(|a, b| (*a as f32 - mid).abs().total_cmp(&(*b as f32 - mid).abs()).then(a.cmp(b)));
+            for k in order {
+                // nudged a little, as a heap lies
+                let j = ((row * 7 + k * 13) % 5) as f32 * 0.4 - 0.8;
+                slots.push((heap_cx - row_w / 2.0 + k as f32 * HEAP_CELL + j, by - HEAP_ITEM - row as f32 * HEAP_ROW - j.abs() * 0.5));
+            }
+        }
+        for (it, (ix, iy)) in shown.iter().rev().zip(slots.iter()) {
+            let ir = t.r(*ix, *iy, HEAP_ITEM, HEAP_ITEM);
+            hits.items.push((ir, it.item_id, points(self.data, self.weights, it), mine));
+            if let Some(tex) = icons.object(ui.ctx(), self.data, it.item_id, HEAP_ITEM as u32) {
+                p.image(tex.id(), ir, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+            }
+        }
+        ey - er - 6.0
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -591,82 +923,95 @@ impl CaravanView {
                     let f_scale = if has { scene.fit(&painter, view_w) * zoom as f32 } else { 1.0 };
                     let scene_h = if has { HEIGHT.max((scene.content_height() * f_scale).ceil() + 34.0 + 20.0) } else { HEIGHT };
                     let content_w = if has { 400f32.max(PAD + (scene.content_width(&painter) * f_scale).ceil() + PAD) } else { 400.0 };
-                    let frame = Rect::from_min_size(pos2(x, y), vec2(w, scene_h + 18.0 + 4.0));
+                    // a window onto the scene as high as the road: dragged with the mouse (or scrolled) up to its edges,
+                    // the road at the bottom first
+                    let frame = Rect::from_min_size(pos2(x, y), vec2(w, HEIGHT + 18.0 + 4.0));
                     painter.rect_stroke(frame, 0.0, Stroke::new(2.0, p.line), StrokeKind::Inside);
-                    let vp = Rect::from_min_size(frame.min + vec2(2.0, 2.0), vec2(view_w, scene_h + 18.0));
+                    let vp = Rect::from_min_size(frame.min + vec2(2.0, 2.0), vec2(view_w, HEIGHT + 18.0));
                     let mut road = ui.new_child(egui::UiBuilder::new().max_rect(vp));
                     let mut hits = Hits::default();
-                    egui::ScrollArea::horizontal().id_salt("caravan-road").show(&mut road, |ui| {
-                        let sw = content_w.max(view_w);
-                        let (sr, _) = ui.allocate_exact_size(vec2(sw, scene_h), Sense::hover());
-                        let p2 = ui.painter().with_clip_rect(sr.intersect(ui.clip_rect()));
-                        let extra = scene_h - HEIGHT;
-                        if extra > 0.0 {
-                            p2.rect_filled(Rect::from_min_size(sr.min, vec2(sw, extra)), 0.0, SKY);
-                        }
-                        crate::guild::backdrop(&p2, Rect::from_min_size(sr.min + vec2(0.0, extra), vec2(sw, HEIGHT)), scene.phase, 1.0);
-                        if !has {
-                            return;
-                        }
-                        let ground = HEIGHT - 34.0;
-                        let drawn = scene.content_width(&p2) * f_scale;
-                        let start = if drawn + 2.0 * PAD > sw { PAD } else { (sw - drawn) / 2.0 };
-                        let t = T { o: sr.min + vec2(0.0, extra), start, ground, f: f_scale, gy: sr.min.y + extra + ground };
-                        let mut xx = PAD;
-                        scene.paint_ox(&p2, &t, xx, ground);
-                        xx += OX_W;
-                        let plate_w =
-                            scene.riders.iter().map(|m| jtext::width(&p2, &scene.plate(m), &text(19.0)) + 10.0).fold(0.0, f32::max);
-                        for (i, m) in scene.riders.iter().enumerate() {
-                            let bar = if i == 0 { BAR } else { STEP_W + BAR };
-                            p2.rect_filled(t.r(xx, ground - 40.0, bar, 4.0), 0.0, INK);
-                            xx += bar;
-                            scene.wagon(ui, icons, &p2, &t, m, i, xx, ground, plate_w, &mut hits);
-                            xx += WAGON_W;
-                        }
-                        if !scene.walkers.is_empty() {
-                            xx += 46.0;
-                        }
-                        for (i, m) in scene.walkers.iter().enumerate() {
-                            let slot = scene.walker_width(&p2, m);
-                            scene.walker(ui, icons, &p2, &t, m, i, xx, slot, ground, &mut hits);
-                            xx += slot;
-                        }
-                        // clicks and tips: a pile item first, then a member
-                        let resp = ui.interact(sr, ui.scope_id().with("caravan-scene"), Sense::click());
-                        if let Some(pos) = resp.hover_pos() {
-                            let zd = ui.input(|i| if i.modifiers.ctrl || i.modifiers.command { i.zoom_delta() } else { 1.0 });
-                            if (zd - 1.0).abs() > 1e-3 {
-                                new_zoom = Some((zoom * f64::from(zd)).clamp(MIN_ZOOM, MAX_ZOOM));
+                    egui::ScrollArea::both()
+                        .id_salt("caravan-road")
+                        .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                        .stick_to_bottom(true)
+                        .show(&mut road, |ui| {
+                            let sw = content_w.max(view_w);
+                            let (sr, _) = ui.allocate_exact_size(vec2(sw, scene_h), Sense::hover());
+                            let p2 = ui.painter().with_clip_rect(sr.intersect(ui.clip_rect()));
+                            let extra = scene_h - HEIGHT;
+                            if extra > 0.0 {
+                                p2.rect_filled(Rect::from_min_size(sr.min, vec2(sw, extra)), 0.0, SKY);
                             }
-                            if let Some((_, id, pts, mine)) = hits.items.iter().find(|h| h.0.contains(pos)) {
-                                let name =
-                                    data.items.item(*id).filter(|i| !i.name.is_empty()).map_or(format!("Item {id}"), |i| i.name.clone());
-                                let tip = format!(
-                                    "{name}  ·  {} pts{}",
-                                    lg_app::guild::format(*pts),
-                                    if *mine { "  (click: show in Inventory)" } else { "" }
-                                );
-                                let resp = resp.clone().on_hover_text(tip);
-                                if *mine {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                    if resp.clicked() {
-                                        open_item = Some(*id);
+                            crate::guild::backdrop(&p2, Rect::from_min_size(sr.min + vec2(0.0, extra), vec2(sw, HEIGHT)), scene.phase, 1.0);
+                            if !has {
+                                return;
+                            }
+                            let ground = HEIGHT - 34.0;
+                            let drawn = scene.content_width(&p2) * f_scale;
+                            let start = if drawn + 2.0 * PAD > sw { PAD } else { (sw - drawn) / 2.0 };
+                            let t = T { o: sr.min + vec2(0.0, extra), start, ground, f: f_scale, gy: sr.min.y + extra + ground };
+                            let mut xx = PAD;
+                            scene.paint_ox(&p2, &t, xx, ground);
+                            xx += OX_W;
+                            let plate_w =
+                                scene.riders.iter().map(|m| jtext::width(&p2, &scene.plate(m), &text(19.0)) + 10.0).fold(0.0, f32::max);
+                            for (i, m) in scene.riders.iter().enumerate() {
+                                let bar = if i == 0 { BAR } else { STEP_W + BAR };
+                                p2.rect_filled(t.r(xx, ground - 40.0, bar, 4.0), 0.0, INK);
+                                xx += bar;
+                                scene.wagon(ui, icons, &p2, &t, m, i, xx, ground, plate_w, &mut hits);
+                                xx += WAGON_W;
+                            }
+                            if !scene.walkers.is_empty() {
+                                xx += 46.0;
+                            }
+                            for (i, m) in scene.walkers.iter().enumerate() {
+                                let slot = scene.walker_width(&p2, m);
+                                scene.walker(ui, icons, &p2, &t, m, i, xx, slot, ground, &mut hits);
+                                xx += slot;
+                            }
+                            // clicks and tips: a pile item first, then a member
+                            let resp = ui.interact(sr, ui.scope_id().with("caravan-scene"), Sense::click());
+                            if let Some(pos) = resp.hover_pos() {
+                                let zd = ui.input(|i| if i.modifiers.ctrl || i.modifiers.command { i.zoom_delta() } else { 1.0 });
+                                if (zd - 1.0).abs() > 1e-3 {
+                                    new_zoom = Some((zoom * f64::from(zd)).clamp(MIN_ZOOM, MAX_ZOOM));
+                                }
+                                if let Some((_, id, pts, mine)) = hits.items.iter().find(|h| h.0.contains(pos)) {
+                                    let name = data
+                                        .items
+                                        .item(*id)
+                                        .filter(|i| !i.name.is_empty())
+                                        .map_or(format!("Item {id}"), |i| i.name.clone());
+                                    let tip = format!(
+                                        "{name}  ·  {} pts{}",
+                                        lg_app::guild::format(*pts),
+                                        if *mine { "  (click: show in Inventory)" } else { "" }
+                                    );
+                                    let resp = resp.clone().on_hover_text(tip);
+                                    if *mine {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                        if resp.clicked() {
+                                            open_item = Some(*id);
+                                        }
                                     }
-                                }
-                            } else if let Some((_, id)) = hits.members.iter().find(|h| h.0.contains(pos))
-                                && let Some(m) = members.iter().find(|m| m.id == *id)
-                            {
-                                let cls = m.character.as_ref().map_or(String::new(), |c| format!(" ({})", c.class_name));
-                                let n = if m.total == 1 { "item" } else { "items" };
-                                let tip = format!("{}{cls}: {} points, {} {n}", m.ign, lg_app::guild::whole(scores[&m.id]), m.total);
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                if resp.clone().on_hover_text(tip).clicked() {
-                                    picked = m.id;
+                                } else if let Some((_, id)) = hits.members.iter().find(|h| h.0.contains(pos))
+                                    && let Some(m) = members.iter().find(|m| m.id == *id)
+                                {
+                                    let cls = m.character.as_ref().map_or(String::new(), |c| format!(" ({})", c.class_name));
+                                    let n = if m.total == 1 { "item" } else { "items" };
+                                    let tip = format!("{}{cls}: {} points, {} {n}", m.ign, lg_app::guild::whole(scores[&m.id]), m.total);
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                    if resp.clone().on_hover_text(tip).clicked() {
+                                        picked = m.id;
+                                    }
+                                } else {
+                                    // the scene itself: dragged around
+                                    let held = ui.input(|i| i.pointer.primary_down());
+                                    ui.ctx().set_cursor_icon(if held { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
                                 }
                             }
-                        }
-                    });
+                        });
                     y = frame.bottom() + 8.0;
                     // the status line
                     let status = match caravan {
@@ -846,5 +1191,33 @@ mod tests {
         use super::*;
         assert_eq!(darker(rgb(0xF4E6C6)), Color32::from_rgb(170, 161, 138));
         assert_eq!(brighter(rgb(0x4CD15A)), Color32::from_rgb(108, 255, 128));
+    }
+
+    /// A member with this many enchanted items of each rarity (green, blue, purple, gold).
+    fn hoarder(per: [usize; 4]) -> super::CaravanMember {
+        use super::*;
+        let mut items = Vec::new();
+        for (r, n) in per.iter().enumerate() {
+            items.extend((0..*n).map(|k| CaravanItem { item_id: k as i32, enchants: r as i32 + 1, ..Default::default() }));
+        }
+        CaravanMember { id: 3, items, ..Default::default() }
+    }
+
+    #[test]
+    fn planks_fill_then_rarer_stones_replace_lower_ones() {
+        use super::*;
+        // within 50 enchanted items: a plain chest, nothing goes out
+        let (grid, left) = Scene::planks(&hoarder([10, 10, 0, 0]), 4);
+        assert_eq!((grid, left), (vec![0; 4], [0, 10, 10, 0, 0]));
+        // gold chest: 90 green = 9 stones: two go out (1 left), on free cells
+        let (grid, left) = Scene::planks(&hoarder([90, 0, 0, 0]), 4);
+        assert_eq!((grid.iter().filter(|c| **c == 1).count(), left[1]), (2, 1));
+        // a full grid of green: green finds no place and stays (at most four), blue takes green cells
+        let (grid, left) = Scene::planks(&hoarder([200, 90, 0, 0]), 2);
+        assert_eq!(grid.iter().filter(|c| **c == 2).count(), 2);
+        assert_eq!((left[1], left[2]), (4, 1));
+        // all gold at last: the chest keeps four of each
+        let (grid, left) = Scene::planks(&hoarder([400, 400, 400, 400]), 3);
+        assert_eq!((grid, left), (vec![4, 4, 4], [0, 4, 4, 4, 4]));
     }
 }

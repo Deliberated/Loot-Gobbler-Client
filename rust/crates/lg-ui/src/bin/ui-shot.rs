@@ -47,6 +47,10 @@ fn main() {
         }
         tabs => (None, tabs),
     };
+    // UI_SHOT_PILE_ROWS=<n>: the loot caravan's wagons piled this high before the balloon takes their items
+    if let Some(n) = std::env::var("UI_SHOT_PILE_ROWS").ok().and_then(|v| v.trim().parse::<usize>().ok()) {
+        lg_ui::caravan::PILE_ROWS.store(n, std::sync::atomic::Ordering::Relaxed);
+    }
     // UI_SHOT_NOW=<ms>: the views' clock (pictures of the last 24 hours of an older sample)
     let now = std::env::var("UI_SHOT_NOW")
         .ok()
@@ -441,11 +445,31 @@ fn main() {
                     character: chars.get(ch % chars.len().max(1)).cloned(),
                 }
             };
+            // UI_SHOT_CARAVAN_ITEMS=<n>: the first wagon with n different collectibles, found one after the other
+            let mut first = member(1, "Goldwhisker", 40, 1, 160, 0);
+            if let Some(n) = std::env::var("UI_SHOT_CARAVAN_ITEMS").ok().and_then(|v| v.trim().parse::<usize>().ok()) {
+                let data = app.world.data();
+                let mut ids: Vec<i32> = data.items.items.iter().filter(|(_, it)| it.is_collectible()).map(|(id, _)| *id).collect();
+                ids.sort_unstable();
+                first.items = ids
+                    .into_iter()
+                    .take(n)
+                    .enumerate()
+                    .map(|(k, id)| CaravanItem {
+                        item_id: id,
+                        enchants: (k % 5) as i32,
+                        bag: "White".into(),
+                        time: format!("2026-01-01T{:02}:{:02}:{:02}", k / 3600, k / 60 % 60, k % 60),
+                        r#where: "Lost Halls".into(),
+                    })
+                    .collect();
+                first.total = first.items.len() as i64;
+            }
             app.server.guild.caravan = Some(Ok(Caravan {
                 guild: "Gilded Goblins".into(),
                 range: "all".into(),
                 members: vec![
-                    member(1, "Goldwhisker", 40, 1, 160, 0),
+                    first,
                     member(2, "Valhirs", 30, 2, 90, 1),
                     member(3, "Saltusk", 20, 3, 45, 2),
                     member(4, "Fendor", 10, 5, 16, 3),
@@ -708,8 +732,17 @@ fn main() {
             },
         }
         let switch_to: std::cell::Cell<Option<String>> = std::cell::Cell::new(None);
+        // "x,y" or several "x,y;x,y": clicked in turn, a few frames apart
+        let click_at: Option<Vec<egui::Pos2>> = std::env::var("UI_SHOT_CLICK_AT").ok().map(|v| {
+            v.split(';')
+                .filter_map(|q| {
+                    let (a, b) = q.split_once(',')?;
+                    Some(egui::pos2(a.trim().parse().ok()?, b.trim().parse().ok()?))
+                })
+                .collect()
+        });
         let mut harness = egui_kittest::Harness::builder()
-            .with_step_dt(if tab.starts_with("switch:") { 1.0 / 60.0 } else { 0.25 })
+            .with_step_dt(if tab.starts_with("switch:") || click_at.is_some() { 1.0 / 60.0 } else { 0.25 })
             .with_size(egui::vec2(w, h))
             .with_pixels_per_point(1.0)
             .with_accessibility_check(false)
@@ -731,6 +764,29 @@ fn main() {
                 harness.run_steps(if n == 0 { 2 } else { 4 });
                 let img = harness.render().expect("render");
                 img.save(std::path::Path::new(out).join(format!("{}-{n}.png", tab.replace(':', "-").replace(' ', "_")))).expect("save");
+            }
+        }
+        // UI_SHOT_CLICK_AT="x,y": a click there once the view settled, then frames of what it sets off (60 a second)
+        if let Some(points) = click_at {
+            harness.run_steps(20);
+            for at in points {
+                for pressed in [true, false] {
+                    harness.input_mut().events.push(egui::Event::PointerMoved(at));
+                    harness.input_mut().events.push(egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                    harness.step();
+                }
+                harness.run_steps(10);
+            }
+            for n in 0..6 {
+                harness.run_steps(3);
+                let img = harness.render().expect("render");
+                img.save(std::path::Path::new(out).join(format!("{}-click{n}.png", tab.replace(':', "-").replace(' ', "_"))))
+                    .expect("save");
             }
         }
         // a tour: the view it opened settled (bars open, the melt done), the frames placed on it
@@ -757,6 +813,32 @@ fn main() {
                 harness.step();
             }
             println!("cursor at ({}, {}): {:?}", at.x, at.y, harness.output().platform_output.cursor_icon);
+            // UI_SHOT_HOVER_CLICK="x,y": then a click there (in what the hover opened), a picture after it, and one
+            // after the pointer left
+            if let Some(q) = std::env::var("UI_SHOT_HOVER_CLICK").ok().and_then(|v| {
+                let (a, b) = v.split_once(',')?;
+                Some(egui::pos2(a.trim().parse().ok()?, b.trim().parse().ok()?))
+            }) {
+                for pressed in [true, false] {
+                    harness.input_mut().events.push(egui::Event::PointerMoved(q));
+                    harness.input_mut().events.push(egui::Event::PointerButton {
+                        pos: q,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                    harness.step();
+                }
+                harness.run_steps(4);
+                let img = harness.render().expect("render");
+                img.save(std::path::Path::new(out).join(format!("{}-hoverclick.png", tab.replace(':', "-").replace(' ', "_"))))
+                    .expect("save");
+                harness.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(1300.0, 800.0)));
+                harness.run_steps(6);
+                let img = harness.render().expect("render");
+                img.save(std::path::Path::new(out).join(format!("{}-hoverleft.png", tab.replace(':', "-").replace(' ', "_"))))
+                    .expect("save");
+            }
         }
         // UI_SHOT_DRAG="x,y": press there, move 40 px right a step at a time, and tell whether the window was asked to
         // start moving (the title bar's drag)

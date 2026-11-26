@@ -91,7 +91,7 @@ pub struct CaravanMember {
     /// Bag colour -> items found, in the server's order.
     pub by_bag: Vec<(String, i64)>,
     pub total: i64,
-    /// Newest first, at most 120.
+    /// Newest first: from the server at most 120; all of them once the drop log kept on this PC has caught up.
     pub items: Vec<CaravanItem>,
     pub tally: Vec<Tally>,
     pub last_drop: Option<String>,
@@ -816,6 +816,8 @@ pub struct GuildState {
     pub upe: Option<Result<UpeBoard, crate::server::Error>>,
     pub(crate) upe_loading: bool,
     pub(crate) upe_again: bool,
+    /// The guild's drops kept on this PC: the caravan's items once it has caught up.
+    pub log: crate::drop_log::DropLog,
 }
 
 fn add_clear(m: &mut QuestMap, c: QuestMapClear) {

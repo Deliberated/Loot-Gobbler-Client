@@ -12,6 +12,7 @@ pub mod characters;
 pub mod chat;
 pub mod collection;
 pub mod dps_history;
+pub mod drop_log;
 pub mod dungeon_visits;
 pub mod exalt_store;
 pub mod files;
@@ -201,6 +202,10 @@ impl App {
             server: Default::default(),
             sync: Default::default(),
         };
+        // the guild's drops kept from last time
+        if let Some(d) = java_data {
+            app.server.guild.log = drop_log::DropLog::import(d);
+        }
         // TomatoData.bootload: Tomato's dungeon statistics
         if let Some(ds) = java_data.and_then(|d| lg_world::loot::DungeonStats::import(&d.join("dungeon.stats"))) {
             app.world.dungeon_stats = ds;

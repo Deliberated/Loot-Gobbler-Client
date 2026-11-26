@@ -942,6 +942,7 @@ impl Connection {
                         self.guild_loaded();
                     }
                     "caravan" => self.caravan_done(Err(e)),
+                    "droplog" => self.guild.log.failed(now_ms()),
                     "upe" => self.upe_done(Err(e)),
                     t if t.starts_with("gupe:") => self.gupe_done(t[5..].parse().unwrap_or(0), None),
                     "pg-caravan" | "pg-maps" | "pg-facts" => self.profile_guild_done(tag, Err(e)),
@@ -1044,6 +1045,15 @@ impl Connection {
                 self.guild_loaded();
             }
             "caravan" => self.caravan_done(Ok(crate::guild::caravan_of(&j))),
+            "droplog" => {
+                let account = format!("{}|{}", self.url, self.user.as_ref().map_or(0, |u| u.id));
+                if self.guild.log.take(&account, &j, now_ms())
+                    && let Some(Ok(c)) = &mut self.guild.caravan
+                {
+                    self.guild.log.fill(c);
+                    self.guild.version += 1;
+                }
+            }
             "upe" => self.upe_done(Ok(crate::guild::upe_board_of(&j))),
             t if t.starts_with("gupe:") => self.gupe_done(t[5..].parse().unwrap_or(0), Some(crate::guild::guild_upe_of(&j))),
             "pg-caravan" | "pg-maps" | "pg-facts" => self.profile_guild_done(tag, Ok(j)),
@@ -1120,6 +1130,19 @@ impl Connection {
         self.call("GET", "/guild/drops?limit=100", None, "drops");
     }
 
+    /// Once a frame: the guild's drop log brought up to date on this PC, a page at a time (every few seconds while
+    /// more are waiting, else once a minute).
+    pub fn drop_log_tick(&mut self, now: i64) {
+        let log = &mut self.guild.log;
+        if self.user.is_none() || self.state != State::Online || log.loading || now < log.next_at {
+            return;
+        }
+        log.loading = true;
+        log.asked = log.after;
+        let path = log.path();
+        self.call("GET", &path, None, "droplog");
+    }
+
     /// Java `CaravanView.load`: the guild's loot caravan (all time); asked while loading: once more afterwards.
     pub fn caravan_load(&mut self) {
         if self.guild.caravan_loading {
@@ -1160,8 +1183,11 @@ impl Connection {
         }
     }
 
-    fn caravan_done(&mut self, c: Result<crate::guild::Caravan, Error>) {
+    fn caravan_done(&mut self, mut c: Result<crate::guild::Caravan, Error>) {
         self.guild.caravan_loading = false;
+        if let Ok(c) = &mut c {
+            self.guild.log.fill(c);
+        }
         self.guild.caravan = Some(c);
         self.guild.version += 1;
         if std::mem::take(&mut self.guild.caravan_again) {
