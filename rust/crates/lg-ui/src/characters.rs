@@ -46,6 +46,10 @@ pub struct CharactersView {
     pets: crate::pets::PetsView,
     /// The line beside REFRESH (Java's status label).
     pub refresh_status: String,
+    /// The character whose stats window is open (a card clicked), and where.
+    stats_open: Option<(i32, egui::Pos2)>,
+    /// Opened this frame (its own click does not close it).
+    stats_opened: bool,
 }
 
 impl Default for CharactersView {
@@ -63,6 +67,8 @@ impl Default for CharactersView {
             suggestion: None,
             pets: Default::default(),
             refresh_status: String::new(),
+            stats_open: None,
+            stats_opened: false,
         }
     }
 }
@@ -199,7 +205,55 @@ impl CharactersView {
             self.pets.show(ui, c, body);
             return;
         }
+        self.stats_opened = false;
         self.characters_page(ui, c, body);
+        self.stats_window(ui, c, self.stats_opened);
+    }
+
+    /// The stats window of the card clicked, until it is closed (its x, Escape, or a click anywhere else).
+    fn stats_window(&mut self, ui: &Ui, c: &Ctx, opened: bool) {
+        let Some((id, at)) = self.stats_open else { return };
+        let Some(ch) = c.app.characters.get(id) else {
+            self.stats_open = None;
+            return;
+        };
+        let p = *c.p;
+        let mut close = false;
+        let shown = egui::Area::new(egui::Id::unique("lg-char-stats"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(at + vec2(14.0, 14.0))
+            .constrain(true)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(&ch.class_name).font(text(24.0)).color(if ch.seasonal {
+                            SEASONAL_TEXT
+                        } else {
+                            p.gold
+                        }));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .add(egui::Button::new(egui::RichText::new("x").font(text(20.0))).frame(false))
+                                .on_hover_text("Close")
+                                .clicked()
+                            {
+                                close = true;
+                            }
+                        });
+                    });
+                    // the class's exaltations so far
+                    let done = lg_app::exalt_store::total(c.app.exalts.progress(ch.class_type).map(|v| v.as_slice()));
+                    let max = 8 * lg_app::exalt_store::THRESHOLDS.len() as i32;
+                    ui.label(
+                        egui::RichText::new(format!("{} exaltations: {done} of {max}", ch.class_name)).font(text(18.0)).color(EXALT_BLUE),
+                    );
+                    stats_grid(ui, ch, c.app);
+                });
+            });
+        let outside = ui.input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|q| !shown.response.rect.contains(q)));
+        if close || ui.input(|i| i.key_pressed(egui::Key::Escape)) || (outside && !opened) {
+            self.stats_open = None;
+        }
     }
 
     fn characters_page(&mut self, ui: &mut Ui, c: &mut Ctx, body: Rect) {
@@ -302,6 +356,13 @@ impl CharactersView {
                             let y0 = list.cursor().top();
                             if self.card(&mut list, &p, c.icons, app, x, gain(x), now) {
                                 self.selected = x.char_id;
+                                // its stats in a little window by the pointer; the same card again closes it
+                                let at = list.input(|i| i.pointer.interact_pos()).unwrap_or(list.cursor().min);
+                                self.stats_open = match self.stats_open {
+                                    Some((id, _)) if id == x.char_id => None,
+                                    _ => Some((x.char_id, at)),
+                                };
+                                self.stats_opened = true;
                             }
                             if x.char_id == self.selected {
                                 let m = list.max_rect();
@@ -1097,9 +1158,14 @@ const EXALT_BLUE: Color32 = Color32::from_rgb(0x4A, 0xA8, 0xFF);
 /// The gear bonus colour in the stat tooltip.
 const GEAR_GREEN: Color32 = Color32::from_rgb(0x5C, 0xE0, 0x4A);
 
-/// A character's stats while the pointer rests on `r`: per stat its base, the potions it still needs to max (after
-/// a bar), and the bonus of its class's exaltations; maxed stats in yellow.
+/// A character's stats while the pointer rests on `r` (see `stats_grid`).
 fn pot_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, c: &Char, app: &lg_app::App) {
+    widgets::custom_tip(ui, r, id, |ui| stats_grid(ui, c, app));
+}
+
+/// A character's stats: per stat its base, the potions it still needs to max (after a bar), the gear bonus while it
+/// is played and the bonus of its class's exaltations; maxed stats in yellow.
+fn stats_grid(ui: &mut Ui, c: &Char, app: &lg_app::App) {
     // the stats in the game's order, and where each sits among the exaltations (dex, spd, vit, wis, def, att, mp, hp)
     const NAMES: [&str; 8] = ["HP", "MP", "ATT", "DEF", "SPD", "DEX", "VIT", "WIS"];
     const EXALT_AT: [usize; 8] = [7, 6, 5, 4, 1, 0, 2, 3];
@@ -1114,7 +1180,7 @@ fn pot_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, c: &Cha
     });
     let base = me.and_then(|e| e.base_stats).map(|b| b.to_vec()).or_else(|| c.base_stats.clone()).filter(|b| b.len() >= 8);
     let maxed = c.stats_maxed;
-    widgets::custom_tip(ui, r, id, |ui| {
+    {
         ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
         let (Some(base), Some(max)) = (base, max) else {
             ui.label(egui::RichText::new(format!("{maxed} of 8 stats maxed")).font(text(18.0)));
@@ -1189,7 +1255,7 @@ fn pot_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, c: &Cha
             .font(text(15.0))
             .color(fixed::MUTED),
         );
-    });
+    }
 }
 
 /// Java `resetBox`: a framed box with a circular arrow, lit while hovered.

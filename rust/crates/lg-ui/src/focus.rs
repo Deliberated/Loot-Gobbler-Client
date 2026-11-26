@@ -32,7 +32,8 @@ pub fn char_candidates<'a>(app: &'a App, props: &Properties) -> Vec<&'a Char> {
 pub fn focused_char<'a>(app: &'a App, props: &Properties) -> Option<&'a Char> {
     let v = props.get(KEY)?;
     if let Some(id) = v.strip_prefix("char:").and_then(|i| i.parse::<i32>().ok()) {
-        return char_candidates(app, props).into_iter().find(|c| c.char_id == id);
+        // any living character (one with a run too: its eye sets it as a character)
+        return app.characters.get(id).filter(|c| c.alive);
     }
     current(app, props).map(|(_, c)| c)
 }
