@@ -339,62 +339,60 @@ pub fn pour(
     let lead = lead0 + (lead1 - lead0) * e;
     let len = ((lead0 - back0) + ((lead1 - back1) - (lead0 - back0)) * e) * (1.0 - 0.3 * (std::f32::consts::PI * e).sin());
     let back = lead - len;
-    // the front a drop's tip on its side: a point widening to the full height; none at the start and the end
+    // the front a water drop's: a fine point swelling round into the full height, longer while it moves fast; none at
+    // the start and the end
     let dir = if right { 1.0 } else { -1.0 };
-    let tip_len = (h * 0.9).min(len.abs()) * (std::f32::consts::PI * e).sin();
+    let tip_len = (h * 1.7).min(len.abs()) * (std::f32::consts::PI * e).sin();
     let neck = lead - dir * tip_len;
     let (lo, hi) = (lead.min(back), lead.max(back));
     let gold = p.gold;
-    // the body as it stands, cut to `area`: the full-height part up to the neck, then the tip
-    let (b0, b1) = (back.min(neck), back.max(neck));
-    let body = |area: Rect| {
-        let clip = painter.with_clip_rect(area.intersect(painter.clip_rect()));
-        clip.rect_filled(Rect::from_min_max(pos2(b0.max(area.left()), area.top()), pos2(b1.min(area.right()), area.bottom())), 0.0, gold);
-        if tip_len > 0.5 {
-            let half = area.height() / 2.0;
-            let mut mesh = egui::Mesh::default();
-            let n = 16;
-            for i in 0..=n {
-                // u 0 at the tip, 1 at the neck: pointed at the tip, smooth into the full height
-                let u = i as f32 / n as f32;
-                let x = lead - dir * tip_len * u;
-                let y = half * (std::f32::consts::FRAC_PI_2 * u).sin().powf(1.5);
-                mesh.colored_vertex(pos2(x, area.center().y - y), gold);
-                mesh.colored_vertex(pos2(x, area.center().y + y), gold);
-                if i > 0 {
-                    let k = 2 * i as u32;
-                    mesh.add_triangle(k - 2, k - 1, k);
-                    mesh.add_triangle(k - 1, k + 1, k);
-                }
-            }
-            clip.add(Shape::mesh(mesh));
-        }
-    };
-    // the drop in the gaps it crosses, as tall as inside the buttons
-    for k in from.min(to)..from.max(to) {
-        let gap = Rect::from_min_max(pos2(rects[k].right() - 1.5, rects[k].top() + 1.5), pos2(rects[k + 1].left() + 1.5, rects[k].bottom() - 1.5));
-        if gap.right().min(hi) > gap.left().max(lo) {
-            body(gap);
-        }
-    }
-    // each button on the way: the part of the body in it, its front rounded
-    for k in from.min(to)..=from.max(to) {
+    // the buttons on the way, plain
+    let (first, last) = (from.min(to), from.max(to));
+    for k in first..=last {
         let r = rects[k];
-        let label = labels[k].clone();
         painter.rect(r, 0.0, p.paper, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
-        jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, &label, &font, p.ink_soft);
+        jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, &labels[k], &font, p.ink_soft);
+    }
+    // the drop over them in one piece (inside the buttons' height, over their edges and the gaps between)
+    let band = Rect::from_min_max(pos2(rects[first].left() + 1.5, src.top() + 1.5), pos2(rects[last].right() - 1.5, src.bottom() - 1.5));
+    let clip = painter.with_clip_rect(band.intersect(painter.clip_rect()));
+    let (b0, b1) = (back.min(neck), back.max(neck));
+    clip.rect_filled(Rect::from_min_max(pos2(b0, band.top()), pos2(b1, band.bottom())), 0.0, gold);
+    if tip_len > 0.5 {
+        // a teardrop's outline (x = cos θ, y = sin θ · sin(θ/2)^1.3) from its point to where it is widest
+        const M: f32 = 1.3;
+        let shape = |th: f32| (th.cos(), th.sin() * (th / 2.0).sin().powf(M));
+        let widest = (1..400).map(|i| i as f32 / 400.0 * std::f32::consts::PI).max_by(|a, b| shape(*a).1.total_cmp(&shape(*b).1)).unwrap_or(2.0);
+        let (wx, wy) = shape(widest);
+        let half = band.height() / 2.0;
+        let mut mesh = egui::Mesh::default();
+        let n = 24;
+        for i in 0..=n {
+            let (x, y) = shape(widest * i as f32 / n as f32);
+            let u = (1.0 - x) / (1.0 - wx); // 0 at the point, 1 where widest
+            let px = lead - dir * tip_len * u;
+            let py = half * y / wy;
+            mesh.colored_vertex(pos2(px, band.center().y - py), gold);
+            mesh.colored_vertex(pos2(px, band.center().y + py), gold);
+            if i > 0 {
+                let k = 2 * i as u32;
+                mesh.add_triangle(k - 2, k - 1, k);
+                mesh.add_triangle(k - 1, k + 1, k);
+            }
+        }
+        clip.add(Shape::mesh(mesh));
+    }
+    // the labels dark where the gold is full height (the body, half the point)
+    let mid = lead - dir * tip_len * 0.5;
+    for k in first..=last {
+        let r = rects[k];
         let inner = r.shrink(1.5);
-        let (x0, x1) = (inner.left().max(lo), inner.right().min(hi));
+        let (x0, x1) = (inner.left().max(lo).max(back.min(mid)), inner.right().min(hi).min(back.max(mid)));
         if x1 <= x0 {
             continue;
         }
-        let gr = Rect::from_min_max(pos2(x0, inner.top()), pos2(x1, inner.bottom()));
-        body(inner);
-        // the label dark where the gold is full height (the body, half the tip)
-        let mid = lead - dir * tip_len * 0.5;
-        let full = Rect::from_min_max(pos2(back.min(mid), inner.top()), pos2(back.max(mid), inner.bottom()));
-        let dark = painter.with_clip_rect(gr.intersect(full).intersect(painter.clip_rect()));
-        jtext::draw(&dark, r.center(), Align2::CENTER_CENTER, &label, &font, p.on_accent);
+        let dark = painter.with_clip_rect(Rect::from_min_max(pos2(x0, inner.top()), pos2(x1, inner.bottom())).intersect(painter.clip_rect()));
+        jtext::draw(&dark, r.center(), Align2::CENTER_CENTER, &labels[k], &font, p.on_accent);
     }
 }
 
@@ -1183,8 +1181,8 @@ pub fn swoosh(ctx: &egui::Context, p: &Palette, page: egui::Rect, side: f32, t: 
         let head = if side > 0.0 { page.right() + len - span * u } else { page.left() - len + span * u };
         let tail = head + side * len;
         let cy = page.top() + page.height() * y;
-        let alpha = (1.0 - u) * if k == 1 { 0.5 } else { 0.32 };
-        let th = if k == 1 { 3.0 } else { 2.0 };
+        let alpha = (1.0 - u * u) * if k == 1 { 0.9 } else { 0.65 };
+        let th = if k == 1 { 5.0 } else { 3.5 };
         let mut mesh = egui::Mesh::default();
         let col = |a: f32| p.gold.gamma_multiply(a);
         mesh.colored_vertex(egui::pos2(head, cy - th / 2.0), col(alpha));
