@@ -206,7 +206,7 @@ impl Stock {
     }
 
     /// The spare ST items of a kind ("Armor"...): of each ST item held beyond the copies kept, the best of the rest on
-    /// each side (seasonal, regular; one when they are on one side).
+    /// each side (seasonal, regular; one when they are on one side); the rarest first.
     pub fn spares(&self, data: &GameData, st_slot: &str) -> Vec<Copy> {
         let label = format!("ST_{}", st_slot.to_uppercase());
         let mut out: Vec<Copy> = Vec::new();
@@ -228,8 +228,8 @@ impl Stock {
                 }
             }
         }
-        // the least enchanted first: the one to give up
-        out.sort_by(|a, b| a.enchants().cmp(&b.enchants()).then(a.item.cmp(&b.item)));
+        // the rarest first: what the craft is best made with (of the rarities considered)
+        out.sort_by(|a, b| b.enchants().cmp(&a.enchants()).then(a.item.cmp(&b.item)));
         out
     }
 
@@ -349,6 +349,18 @@ mod tests {
         assert_eq!(no_rare.spares(&d, "Armor")[0].enchants(), 0, "the copy with 2 enchantments left out");
         assert_eq!(rarities(Some("0,3")), [true, false, false, true, false]);
         assert_eq!(rarities_value([true, false, false, true, false]), "0,3");
+    }
+
+    #[test]
+    fn the_rarest_spare_comes_first() {
+        let d = data();
+        let mut d = d;
+        d.items.insert(item(0x301, "Second Armor", 14, &["ST", "ST_ARMOR"]));
+        let stock = Stock::from_copies(HashMap::from([
+            (0x300, vec![held(1, 4, false), held(0, 1, false)]),
+            (0x301, vec![held(2, 4, false), held(0, 3, false)]),
+        ]));
+        assert_eq!(stock.spares(&d, "Armor")[0].enchants(), 3, "the rare spare before the uncommon one");
     }
 
     #[test]
