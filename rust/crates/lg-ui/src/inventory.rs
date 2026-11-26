@@ -3894,7 +3894,7 @@ fn st_bar(
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             drag = resp.drag_delta();
         }
-        showcase(ui, p, icons, app, rarity, *item, held, r, st);
+        showcase(ui, p, icons, app, rarity, *item, held, r, st, stock, mode);
         card_r = Some(r);
     }
     BarOut { toggled, plan: plan_click, show: shown, card: card_r, drag }
@@ -3953,9 +3953,10 @@ struct BarOut {
     drag: egui::Vec2,
 }
 
-/// An item shown in a set's bar (`t` how far faded in), as the bar shows its pieces: its icon and name, then under
-/// muted captions this copy (the item and where it is), its enchantments, what it is worth, and every copy of it; on
-/// a card of its own above the bar (it can be dragged).
+/// An item shown in a set's bar (`t` how far faded in), as the bar shows its pieces: its icon and name, then every
+/// copy of it (the item beside where it is, in words too; the copy kept with a gold lock, a backup with a green one, the
+/// copy clicked framed), the clicked copy's enchantments and what the item is worth; on a card of its own above the
+/// bar (it can be dragged; scrolled by the wheel when it does not fit).
 #[allow(clippy::too_many_arguments)]
 fn showcase(
     ui: &Ui,
@@ -3967,43 +3968,23 @@ fn showcase(
     held: &lg_app::loadout::Held,
     r: Rect,
     t: f32,
+    stock: &lg_app::st_forge::Stock,
+    mode: lg_app::st_forge::Mode,
 ) {
+    use lg_app::st_forge::Mode;
     let data = app.world.data();
     // above all of the bar, its own layer
     let layer = egui::LayerId::new(egui::Order::Foreground, ui.scope_id().with("st-showcase-layer"));
-    let shadow = ui.ctx().layer_painter(layer);
-    let mut shadow = shadow.clone();
+    let mut shadow = ui.ctx().layer_painter(layer);
     shadow.set_opacity(t);
     shadow.rect_filled(r.translate(vec2(3.0, 4.0)), 6.0, Color32::from_black_alpha(90));
-    let mut painter = ui.ctx().layer_painter(layer).with_clip_rect(r);
-    painter.set_opacity(t);
-    painter.rect(r, 6.0, p.paper, Stroke::new(2.0, p.gold), StrokeKind::Inside);
+    shadow.rect(r, 6.0, p.paper, Stroke::new(2.0, p.gold), StrokeKind::Inside);
     let (f18, f16, fs) = (text(18.0), text(16.0), text(14.0));
-    let (lh16, lhs) = (jtext::height(&painter, &f16), jtext::height(&painter, &fs));
+    let (lh16, lhs) = (jtext::height(&shadow, &f16), jtext::height(&shadow, &fs));
     let (x, w) = (r.left() + 14.0, r.width() - 28.0);
-    let mut y = r.top() + BAR_TOP - 6.0;
-    // the item, as a piece of the set is shown
-    if let Some(tx) = icons.object(ui.ctx(), data, item, 32) {
-        painter.image(tx.id(), Rect::from_min_size(pos2(x, y), vec2(32.0, 32.0)), uv(), Color32::WHITE);
-    }
-    let it = data.items.item(item);
-    let name = it.map_or(format!("Item {item}"), |i| i.name.clone());
-    jtext::draw(&painter, pos2(x + 40.0, y + 16.0), Align2::LEFT_CENTER, &widgets::fit(&painter, &name, &f18, w - 42.0), &f18, p.ink);
-    y += 32.0 + 14.0;
-    let caption = |y: &mut f32, t: &str| {
-        jtext::draw(&painter, pos2(x, *y), Align2::LEFT_TOP, t, &f16, fixed::MUTED);
-        *y += lh16 + 8.0;
-    };
-    // this copy: the item (its enchantments' rarity) beside where it is
-    caption(&mut y, "THIS COPY");
-    let ir = Rect::from_min_size(pos2(x, y), vec2(ICON_B, ICON_B));
-    item_icon(&painter, icons, ui, app, rarity, item, held, ir);
-    let pr = Rect::from_min_size(pos2(ir.right() + 6.0, y), vec2(ICON_B, ICON_B));
-    place_look(ui, &painter, icons, app, held, item, pr, ("showcase-this", item));
-    let place = widgets::fit(&painter, &place_of(app, held), &fs, w - 2.0 * ICON_B - 18.0);
-    jtext::draw(&painter, pos2(pr.right() + 8.0, pr.center().y), Align2::LEFT_CENTER, &place, &fs, p.ink_soft);
-    y += ICON_B + 14.0;
-    // its enchantments by name
+    // what follows the name scrolls in the card
+    let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
+    let all = app.holdings.every_copy(&living, item);
     let ench: Vec<String> = held
         .enchant_ids
         .iter()
@@ -4011,10 +3992,91 @@ fn showcase(
         .filter(|e| **e >= 0)
         .map(|e| data.enchant_looks.get(e).map_or(format!("Enchantment {e}"), |l| l.name.clone()))
         .collect();
+    let head_h = BAR_TOP - 6.0 + 32.0 + 14.0;
+    let view = Rect::from_min_max(pos2(r.left() + 2.0, r.top() + head_h), pos2(r.right() - 2.0, r.bottom() - 6.0));
+    let content = (lh16 + 8.0)
+        + all.len() as f32 * (ICON_B + BAR_ROW_GAP)
+        + 10.0
+        + (lh16 + 8.0)
+        + ench.len().max(1) as f32 * (lhs + 3.0)
+        + 10.0
+        + (lh16 + 8.0)
+        + lhs;
+    let key = ui.scope_id().with(("st-showcase-scroll", item));
+    let mut off = ui.data(|d| d.get_temp::<f32>(key)).unwrap_or(0.0);
+    if ui.rect_contains_pointer(view) {
+        let d = ui.input(|i| i.smooth_scroll_delta.y);
+        if d != 0.0 {
+            off -= d;
+            ui.ctx().input_mut(|i| i.smooth_scroll_delta.y = 0.0);
+        }
+    }
+    off = off.clamp(0.0, (content - view.height()).max(0.0));
+    ui.data_mut(|d| d.insert_temp(key, off));
+    // the item, as a piece of the set is shown
+    let mut top = ui.ctx().layer_painter(layer).with_clip_rect(r);
+    top.set_opacity(t);
+    let y0 = r.top() + BAR_TOP - 6.0;
+    if let Some(tx) = icons.object(ui.ctx(), data, item, 32) {
+        top.image(tx.id(), Rect::from_min_size(pos2(x, y0), vec2(32.0, 32.0)), uv(), Color32::WHITE);
+    }
+    let it = data.items.item(item);
+    let name = it.map_or(format!("Item {item}"), |i| i.name.clone());
+    jtext::draw(&top, pos2(x + 40.0, y0 + 16.0), Align2::LEFT_CENTER, &widgets::fit(&top, &name, &f18, w - 42.0), &f18, p.ink);
+    let mut painter = ui.ctx().layer_painter(layer).with_clip_rect(view);
+    painter.set_opacity(t);
+    let mut y = view.top() - off;
+    let caption = |y: &mut f32, t: &str| {
+        jtext::draw(&painter, pos2(x, *y), Align2::LEFT_TOP, t, &f16, fixed::MUTED);
+        *y += lh16 + 8.0;
+    };
+    // every copy: the item (its rarity), where it is, a lock on those kept; the copy clicked framed
+    caption(&mut y, &format!("ALL COPIES ({})", all.len()));
+    let ranked = stock.ranked(item);
+    let kept = stock.kept(item);
+    let same = |a: &lg_app::loadout::Held, b: &lg_app::loadout::Held| {
+        a.char_id == b.char_id && a.vault == b.vault && a.slot == b.slot && a.enchant_ids == b.enchant_ids
+    };
+    let mut used = vec![false; ranked.len()];
+    let mut framed = false;
+    for (n, h) in all.iter().enumerate() {
+        let ir = Rect::from_min_size(pos2(x, y), vec2(ICON_B, ICON_B));
+        item_icon(&painter, icons, ui, app, rarity, item, h, ir);
+        let pr = Rect::from_min_size(pos2(ir.right() + 6.0, y), vec2(ICON_B, ICON_B));
+        if view.contains(pr.center()) {
+            place_look(ui, &painter, icons, app, h, item, pr, ("showcase-copy", item, n));
+        }
+        let place = widgets::fit(&painter, &place_of(app, h), &fs, w - 2.0 * ICON_B - 18.0);
+        jtext::draw(&painter, pos2(pr.right() + 8.0, pr.center().y), Align2::LEFT_CENTER, &place, &fs, p.ink_soft);
+        // the copy clicked (the first of equal ones)
+        if !framed && same(h, held) {
+            framed = true;
+            painter.rect_stroke(
+                Rect::from_min_max(ir.min - vec2(4.0, 3.0), pos2(r.right() - 10.0, ir.bottom() + 3.0)),
+                4.0,
+                Stroke::new(1.5, p.gold),
+                StrokeKind::Inside,
+            );
+        }
+        if mode != Mode::Off
+            && let Some(rank) = ranked.iter().enumerate().position(|(i, c)| !used[i] && same(&c.held, h))
+        {
+            used[rank] = true;
+            let at = ir.left_top() + vec2(6.0, 7.0);
+            if rank == 0 {
+                lock(&painter, at, 12.0, p.gold, false);
+            } else if rank < kept {
+                lock(&painter, at, 12.0, fixed::GREEN, false);
+            }
+        }
+        y += ICON_B + BAR_ROW_GAP;
+    }
+    y += 10.0;
+    // the clicked copy's enchantments by name
     caption(&mut y, "ENCHANTMENTS");
     if ench.is_empty() {
-        jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, "none", &f16, fixed::MUTED);
-        y += lh16 + 4.0;
+        jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, "none", &fs, fixed::MUTED);
+        y += lhs + 3.0;
     }
     for e in &ench {
         jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, &widgets::fit(&painter, e, &fs, w), &fs, p.ink_soft);
@@ -4026,24 +4088,6 @@ fn showcase(
     let fp = it.map_or(0, |i| i.feed_power.max(0));
     let worth = format!("{fp} feed power  ·  {} essence", essence(data, item));
     jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, &widgets::fit(&painter, &worth, &fs, w), &fs, p.ink_soft);
-    y += lhs + 14.0;
-    // every copy: the item beside where it is
-    let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
-    let all = app.holdings.every_copy(&living, item);
-    caption(&mut y, &format!("ALL COPIES ({})", all.len()));
-    for (n, h) in all.iter().enumerate() {
-        if y + ICON_B > r.bottom() - 8.0 {
-            if y + lhs < r.bottom() - 4.0 {
-                jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, &format!("+{} more", all.len() - n), &fs, fixed::MUTED);
-            }
-            break;
-        }
-        let ir = Rect::from_min_size(pos2(x, y), vec2(ICON_B, ICON_B));
-        item_icon(&painter, icons, ui, app, rarity, item, h, ir);
-        let pr = Rect::from_min_size(pos2(ir.right() + 6.0, y), vec2(ICON_B, ICON_B));
-        place_look(ui, &painter, icons, app, h, item, pr, ("showcase-copy", item, n));
-        y += ICON_B + BAR_ROW_GAP;
-    }
 }
 
 /// A vault place's look by its chest (`section`) and side: the vault chest (seasonal: its green texture), the gift
