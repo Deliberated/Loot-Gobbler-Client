@@ -124,6 +124,32 @@ fn main() {
             println!("card {id}");
             continue;
         }
+        // "mock:pour:<from>:<to>": the page tabs as gold pours from one into the other, frames from start to end
+        if let Some((from, to)) = tab.strip_prefix("mock:pour:").and_then(|r| r.split_once(':')) {
+            let (from, to): (usize, usize) = (from.parse().expect("from"), to.parse().expect("to"));
+            let pal = lg_ui::theme::palette(None);
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(w, h))
+                .with_pixels_per_point(1.0)
+                .with_accessibility_check(false)
+                .wgpu()
+                .build_ui(|ui| {
+                    lg_ui::theme::apply(ui.ctx(), &pal);
+                    ui.painter().rect_filled(ui.max_rect(), 0.0, pal.sand);
+                    let names = ["Items", "ST Sets", "Keys", "Log"];
+                    for k in 0..=8 {
+                        let t = k as f32 / 8.0;
+                        let at = egui::pos2(20.0, 20.0 + k as f32 * 46.0);
+                        lg_ui::widgets::segmented(ui, &pal, at, 36.0, &names, to, false, &[]);
+                        lg_ui::inventory::pour_tabs(ui, &pal, at, 36.0, &names, from, to, t);
+                    }
+                });
+            harness.run_steps(2);
+            let img = harness.render().expect("render");
+            img.save(std::path::Path::new(out).join(format!("pour-{from}-{to}.png"))).expect("save");
+            println!("pour {from} {to}");
+            continue;
+        }
         // "mock:melt": ways the Items and ST Sets tabs could melt together, each as frames from apart to one
         if tab == "mock:melt" {
             let pal = lg_ui::theme::palette(None);
