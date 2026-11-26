@@ -45,6 +45,8 @@ pub struct InventoryView {
     pub melt: bool,
     /// Where the melt goes when it ends: 0 back to Items, 1 on to ST Sets (the items slide out left).
     melt_exit: usize,
+    /// How the tabs melt this time (to try them: each melt the other): false slide together, true pour.
+    melt_pour: bool,
     /// How far melted (0 apart, 1 one), moving towards `melt`.
     melt_t: f32,
     /// Parting from the melt: the moving edge the page it goes to is shown up to (its layout as it will stand).
@@ -419,9 +421,10 @@ fn heartbeat(elapsed: f64) -> Vec<f32> {
     out
 }
 
-/// Items and ST Sets melting into one tab (`t` 0 apart, 1 one): both gold, the gap between them filling from the
-/// middle out like something molten, then the one box with "ITEMS AND ST SETS".
-fn melt_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, t: f32) {
+/// Items and ST Sets melting into one tab (`t` 0 apart, 1 one; parting plays it backwards), drawn over the tabs:
+/// `pour` gold running from Items over the gap into ST Sets, which fills from its left, then the gap closes; else ST
+/// Sets sliding over to Items, the seam between them fading. Then the one box with "ITEMS AND ST SETS".
+fn melt_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, t: f32, pour: bool) {
     let painter = ui.painter().clone();
     let font = small();
     let w0 = jtext::width(&painter, "ITEMS", &font) + 30.0;
@@ -429,31 +432,82 @@ fn melt_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, t: f32) {
     let r0 = Rect::from_min_size(at, vec2(w0, h));
     let r1 = Rect::from_min_size(pos2(at.x + w0 + 8.0, at.y), vec2(w1, h));
     let gold = p.gold;
-    // the ST Sets box turning gold too
-    painter.rect_filled(
-        r1.shrink(1.5),
-        0.0,
-        Color32::from_rgba_unmultiplied(gold.r(), gold.g(), gold.b(), (255.0 * (t * 2.0).min(1.0)) as u8),
-    );
-    // the gap filling: a neck growing from the middle, rounded
-    let neck_h = h * ((t - 0.15) / 0.55).clamp(0.0, 1.0);
-    if neck_h > 0.0 {
-        let gap =
-            Rect::from_min_max(pos2(r0.right() - 2.0, r0.center().y - neck_h / 2.0), pos2(r1.left() + 2.0, r0.center().y + neck_h / 2.0));
-        painter.rect_filled(gap, neck_h / 2.0 * (1.0 - t), gold);
-    }
-    // the one box, its name fading in over the two
-    let k = ((t - 0.6) / 0.4).clamp(0.0, 1.0);
-    let one = r0.union(r1);
-    if t > 0.6 {
-        painter.rect_filled(one.shrink(1.5), 0.0, gold);
-        painter.rect_stroke(one, 0.0, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
-        let ink = p.on_accent.gamma_multiply(k);
-        jtext::draw(&painter, one.center(), Align2::CENTER_CENTER, "ITEMS AND ST SETS", &font, ink);
-    } else {
-        for (r, label) in [(r0, "ITEMS"), (r1, "ST SETS")] {
-            jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, label, &font, p.on_accent);
+    let ease = |v: f32| {
+        let v = v.clamp(0.0, 1.0);
+        v * v * (3.0 - 2.0 * v)
+    };
+    let lerp = |a: Color32, b: Color32, v: f32| mix(b, a, f64::from(v.clamp(0.0, 1.0)));
+    // the two tabs drawn under it covered
+    painter.rect_filled(r0.union(r1).expand(1.0), 0.0, p.sand);
+    let box_ = |r: Rect, fill: Color32, label: &str, ink: Color32| {
+        painter.rect(r, 0.0, fill, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+        jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, label, &font, ink);
+    };
+    if pour {
+        if t >= 0.9 {
+            let one = r0.union(r1);
+            painter.rect(one, 0.0, gold, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+            jtext::draw(
+                &painter,
+                one.center(),
+                Align2::CENTER_CENTER,
+                "ITEMS AND ST SETS",
+                &font,
+                p.on_accent.gamma_multiply(ease((t - 0.9) / 0.1)),
+            );
+            return;
         }
+        box_(r0, gold, "ITEMS", p.on_accent);
+        box_(r1, p.paper, "ST SETS", p.ink_soft);
+        // the stream over the gap, thickening at the end until it closes it
+        let stream = ease(t / 0.25);
+        let sh = 6.0 + 24.0 * ease((t - 0.55) / 0.35);
+        painter.rect_filled(
+            Rect::from_min_max(
+                pos2(r0.right() - 1.5, r0.center().y - sh / 2.0),
+                pos2(r0.right() + 10.0 * stream, r0.center().y + sh / 2.0),
+            ),
+            3.0,
+            gold,
+        );
+        // ST Sets filling from its left, its front rounded
+        let fill = ease((t - 0.2) / 0.5);
+        if fill > 0.0 {
+            let fr = Rect::from_min_size(r1.min + vec2(1.5, 1.5), vec2((r1.width() - 3.0) * fill, h - 3.0));
+            painter.rect_filled(fr, 0.0, gold);
+            if fill < 1.0 {
+                painter.circle_filled(pos2(fr.right(), fr.center().y), (h - 3.0) / 2.0 * (1.0 - fill).min(0.5), gold);
+            }
+            painter.rect_stroke(r1, 0.0, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+            jtext::draw(&painter, r1.center(), Align2::CENTER_CENTER, "ST SETS", &font, if fill > 0.5 { p.on_accent } else { p.ink_soft });
+        }
+    } else {
+        // ST Sets slides over to Items, turning gold; then the seam fades and the name comes
+        let slide = ease(t / 0.6) * 8.0;
+        let r1 = r1.translate(vec2(-slide, 0.0));
+        if t >= 0.6 {
+            let r = Rect::from_min_max(r0.min, r1.max);
+            painter.rect(r, 0.0, gold, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+            let seam = 1.0 - ease((t - 0.6) / 0.25);
+            painter.line_segment(
+                [pos2(r0.right(), r.top() + 2.0), pos2(r0.right(), r.bottom() - 2.0)],
+                Stroke::new(1.5, Color32::BLACK.gamma_multiply(seam)),
+            );
+            let names = 1.0 - ease((t - 0.6) / 0.2);
+            jtext::draw(&painter, r0.center(), Align2::CENTER_CENTER, "ITEMS", &font, p.on_accent.gamma_multiply(names));
+            jtext::draw(&painter, r1.center(), Align2::CENTER_CENTER, "ST SETS", &font, p.on_accent.gamma_multiply(names));
+            jtext::draw(
+                &painter,
+                r.center(),
+                Align2::CENTER_CENTER,
+                "ITEMS AND ST SETS",
+                &font,
+                p.on_accent.gamma_multiply(ease((t - 0.75) / 0.25)),
+            );
+            return;
+        }
+        box_(r0, gold, "ITEMS", p.on_accent);
+        box_(r1, lerp(p.paper, gold, t / 0.6), "ST SETS", if t > 0.3 { p.on_accent } else { p.ink_soft });
     }
 }
 
@@ -580,6 +634,7 @@ impl InventoryView {
             match (self.melt, i) {
                 (false, 1) if self.page == 0 => {
                     self.melt = true;
+                    self.melt_pour = !self.melt_pour;
                     self.melt_exit = 0;
                 }
                 (true, 1) => {
@@ -596,6 +651,7 @@ impl InventoryView {
                 // then the items alone
                 (false, 0) if self.page == 1 => {
                     self.melt = true;
+                    self.melt_pour = !self.melt_pour;
                     self.melt_exit = 1;
                     self.page = 0;
                 }
@@ -607,7 +663,7 @@ impl InventoryView {
         self.melt_t = if self.melt_t < goal { (self.melt_t + dt / 0.45).min(goal) } else { (self.melt_t - dt / 0.45).max(goal) };
         let mt = self.melt_t * self.melt_t * (3.0 - 2.0 * self.melt_t);
         if mt > 0.0 && self.page <= 1 {
-            melt_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, mt);
+            melt_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, mt, self.melt_pour);
         }
         // the forge resources, right-aligned on the same row: the regular side at the right, the seasonal one before it
         let pages_end = pages_x + widgets::segmented_width(ui.painter(), &PAGES, false) + 10.0;
@@ -3276,22 +3332,24 @@ fn st_bar(
     let gold = p.gold.gamma_multiply(t);
     // the card and the bar as one: the bar, a joint as wide as the card down to it, gold around both
     full.rect_filled(bar, 0.0, p.paper);
-    full.rect_stroke(bar, 0.0, Stroke::new(2.0, gold), StrokeKind::Inside);
-    full.rect_stroke(real_card, 0.0, Stroke::new(2.0, gold), StrokeKind::Inside);
+    // the bar framed as the card is (3 px), so the lines meet without a step
+    full.rect_stroke(bar, 0.0, Stroke::new(3.0, gold), StrokeKind::Inside);
+    // the card's frame as wide as the selected one's (3 px), so the joint's sides run on from it
+    full.rect_stroke(real_card, 0.0, Stroke::new(3.0, gold), StrokeKind::Inside);
     // the card's colour running down through the joint and fading out in the bar
     full.rect_filled(
         // over the card's bottom border too (the selected one's is 3 px)
-        Rect::from_min_max(pos2(card.left() + 2.0, card.bottom() - 4.0), pos2(card.right() - 2.0, bar.top() + 2.0)),
+        Rect::from_min_max(pos2(card.left() + 3.0, card.bottom() - 4.0), pos2(card.right() - 3.0, bar.top() + 3.0)),
         0.0,
         card_fill,
     );
     let fade_end = (bar.top() + 110.0).min(bar.bottom() - 2.0);
-    if fade_end > bar.top() + 2.0 {
+    if fade_end > bar.top() + 3.0 {
         // softly out, rounded: each point of a fine grid a mix of the two colours by its distance from the card
         // (an ellipse: as far down as `fade_end`, `spread` out to either side)
         let spread = 110.0;
-        let (l, r) = (card.left() + 2.0, card.right() - 2.0);
-        let (x0, x1) = ((l - spread).max(bar.left() + 2.0), (r + spread).min(bar.right() - 2.0));
+        let (l, r) = (card.left() + 3.0, card.right() - 3.0);
+        let (x0, x1) = ((l - spread).max(bar.left() + 3.0), (r + spread).min(bar.right() - 3.0));
         let depth = fade_end - bar.top() - 2.0;
         let weight = |x: f32, y: f32| {
             let dx = if x < l {
@@ -3310,7 +3368,7 @@ fn st_bar(
         let (cols_n, rows_n) = (28usize, 14usize);
         let mut mesh = egui::Mesh::default();
         for k in 0..=rows_n {
-            let y = bar.top() + 2.0 + depth * k as f32 / rows_n as f32;
+            let y = bar.top() + 3.0 + depth * k as f32 / rows_n as f32;
             for i in 0..=cols_n {
                 let x = x0 + (x1 - x0) * i as f32 / cols_n as f32;
                 mesh.colored_vertex(pos2(x, y), mix(card_fill, p.paper, f64::from(weight(x, y))));
@@ -3326,8 +3384,8 @@ fn st_bar(
         }
         full.add(egui::Shape::mesh(mesh));
     }
-    for x in [card.left() + 1.0, card.right() - 1.0] {
-        full.line_segment([pos2(x, card.bottom() - 4.0), pos2(x, bar.top() + 2.0)], Stroke::new(2.0, gold));
+    for x in [card.left() + 1.5, card.right() - 1.5] {
+        full.line_segment([pos2(x, card.bottom() - 4.0), pos2(x, bar.top() + 3.0)], Stroke::new(3.0, gold));
     }
     let painter = full.with_clip_rect(bar.shrink(2.0).intersect(full.clip_rect()));
     let data = app.world.data();
