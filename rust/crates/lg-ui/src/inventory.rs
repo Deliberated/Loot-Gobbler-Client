@@ -246,6 +246,7 @@ impl InventoryView {
         let list = spares(app, c.props, self.opt_sort);
         let (mode, _) = forge_mode(c.props);
         let icons = &mut *c.icons;
+        let close = std::cell::Cell::new(false);
         let title = match self.opt_sort {
             1 => "Spare Copies · By Feed Power",
             2 => "Spare Copies · By Forge Essence",
@@ -257,7 +258,22 @@ impl InventoryView {
             r,
             title,
             fixed::GREEN,
-            |_, _| {},
+            |ui, head| {
+                // close: the optimization off
+                let painter = ui.painter().clone();
+                let xr = Rect::from_center_size(pos2(head.right() - 14.0, head.center().y), vec2(22.0, 22.0));
+                let resp = ui
+                    .interact(xr, ui.scope_id().with("opt-close"), Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text("Close the optimization");
+                let ink = if resp.hovered() { p.gold } else { p.ink_muted };
+                for (a, b) in [(vec2(-5.0, -5.0), vec2(5.0, 5.0)), (vec2(-5.0, 5.0), vec2(5.0, -5.0))] {
+                    painter.line_segment([xr.center() + a, xr.center() + b], Stroke::new(2.0, ink));
+                }
+                if resp.clicked() {
+                    close.set(true);
+                }
+            },
             |ui, r| {
                 egui::ScrollArea::vertical().id_salt("opt-list").show(ui, |ui| {
                     let top = ui.cursor().min;
@@ -355,6 +371,9 @@ impl InventoryView {
                 });
             },
         );
+        if close.get() {
+            self.opt = false;
+        }
     }
 }
 
