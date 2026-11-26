@@ -1852,7 +1852,7 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
 name = "lg-app"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "lg-gamedata",
  "lg-protocol",
@@ -1861,21 +1861,21 @@ dependencies = [
 
 [[package]]
 name = "lg-capture"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "libloading",
 ]
 
 [[package]]
 name = "lg-gamedata"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "png 0.17.16",
 ]
 
 [[package]]
 name = "lg-gobbler"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "eframe",
  "egui",
@@ -1895,7 +1895,7 @@ dependencies = [
 
 [[package]]
 name = "lg-net"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "flate2",
  "lg-app",
@@ -1905,11 +1905,11 @@ dependencies = [
 
 [[package]]
 name = "lg-protocol"
-version = "0.0.3"
+version = "0.0.4"
 
 [[package]]
 name = "lg-replay"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "lg-app",
  "lg-capture",
@@ -1921,7 +1921,7 @@ dependencies = [
 
 [[package]]
 name = "lg-ui"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "egui",
  "egui_kittest",
@@ -1934,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "lg-world"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "lg-gamedata",
  "lg-protocol",
