@@ -3415,7 +3415,12 @@ fn forge_switch(
     let aid = ui.scope_id().with("rarity-pick-panel");
     let panel_was: Option<Rect> = ui.data(|d| d.get_temp(aid));
     let pointer = ui.input(|i| i.pointer.hover_pos());
-    let on_panel = pointer.is_some_and(|q| panel_was.is_some_and(|r| r.expand(6.0).union(pick.expand(4.0)).contains(q)));
+    // the button, the panel and the strip between them (not the rest of the box round them: the switch is beside it)
+    let near = |q: egui::Pos2, panel: Rect| {
+        let bridge = Rect::from_min_max(pos2(pick.left(), pick.bottom() - 2.0), pos2(pick.right(), panel.top() + 2.0));
+        pick.expand(2.0).contains(q) || panel.expand(4.0).contains(q) || bridge.contains(q)
+    };
+    let on_panel = pointer.is_some_and(|q| panel_was.is_some_and(|r| near(q, r)));
     let mut open = presp.hovered() || (open && on_panel);
     let mut next_rarities = None;
     if open {
@@ -3471,7 +3476,7 @@ fn forge_switch(
                 });
             });
         ui.data_mut(|d| d.insert_temp(aid, area.response.rect));
-        if !presp.hovered() && !pointer.is_some_and(|q| area.response.rect.expand(6.0).union(pick.expand(4.0)).contains(q)) {
+        if !presp.hovered() && !pointer.is_some_and(|q| near(q, area.response.rect)) {
             open = false;
         }
     }
