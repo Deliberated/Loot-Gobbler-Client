@@ -1104,10 +1104,11 @@ fn pot_tip(ui: &Ui, p: &Palette, r: Rect, id: impl std::hash::Hash + std::fmt::D
     if !resp.contains_pointer() || ui.ctx().dragged_id().is_some() {
         return;
     }
-    let delay = ui.style().interaction.tooltip_delay;
+    // quicker than the other tips
+    const DELAY: f32 = 0.1;
     let rest = ui.input(|i| i.pointer.time_since_last_movement());
-    if rest < delay {
-        ui.ctx().request_repaint_after_secs(delay - rest);
+    if rest < DELAY {
+        ui.ctx().request_repaint_after_secs(DELAY - rest);
         return;
     }
     let Some(at) = ui.input(|i| i.pointer.hover_pos()) else { return };
