@@ -2717,7 +2717,6 @@ fn forge_rows(
         }
         *y += h;
     };
-    let _ = rarity;
     line(&mut y, &format!("{}  ·  {}", set.title, set.class_name), &f18, p.gold, 0.0, lh + 4.0);
     if owned == 4 {
         line(&mut y, "All four pieces are yours.", &f16, fixed::MUTED, 0.0, lh16);
@@ -2769,23 +2768,36 @@ fn forge_rows(
     if first.tokens.is_empty() {
         line(&mut y, "None held", &f16, fixed::MUTED, 10.0, lh16);
     }
+    // per side, each place as "2×" and its look (the character, or the vault's chest); where it is when hovered
+    const CHIP: f32 = 30.0;
     for (label, seasonal) in [("Seasonal", true), ("Regular", false)] {
-        let mut places: Vec<(String, i32)> = Vec::new();
+        let mut places: Vec<(&lg_app::loadout::Held, i32)> = Vec::new();
         for c in first.tokens.iter().filter(|c| (c.held.seasonal == Some(true)) == seasonal) {
-            let place = place_of(app, &c.held);
-            match places.iter_mut().find(|(p, _)| *p == place) {
+            match places.iter_mut().find(|(h, _)| h.char_id == c.held.char_id && h.vault == c.held.vault) {
                 Some(e) => e.1 += 1,
-                None => places.push((place, 1)),
+                None => places.push((&c.held, 1)),
             }
         }
         if places.is_empty() {
             continue;
         }
-        line(&mut y, label, &f16, p.gold, 4.0, lh16 + 2.0);
-        for (place, n) in places {
-            line(&mut y, &format!("{n}×  {place}"), &f16, p.ink, 14.0, lh16);
+        line(&mut y, label, &f16, p.gold, 4.0, lh16 + 4.0);
+        let mut cx = x + 14.0;
+        for (k, (h, n)) in places.iter().enumerate() {
+            let count = format!("{n}×");
+            let tw = jtext::width(&painter, &count, &f16);
+            if cx + tw + 4.0 + CHIP > x + w {
+                cx = x + 14.0;
+                y += CHIP + 4.0;
+            }
+            if paint {
+                jtext::draw(&painter, pos2(cx, y + CHIP / 2.0), Align2::LEFT_CENTER, &count, &f16, p.ink);
+                let cr = Rect::from_min_size(pos2(cx + tw + 4.0, y), vec2(CHIP, CHIP));
+                copy_chip(ui, &painter, p, icons, app, rarity, h, first.token, cr, ("forge-token", seasonal, k));
+            }
+            cx += tw + 4.0 + CHIP + 14.0;
         }
-        y += 4.0;
+        y += CHIP + 8.0;
     }
     y - at.y
 }
