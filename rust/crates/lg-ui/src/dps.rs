@@ -223,6 +223,8 @@ impl DpsView {
                         }
                         Some(run) => {
                             let is_live = shown_live && live.is_some_and(|l| std::ptr::eq(l, run));
+                            // bosses of the same name as one (The Third Dimension's cube blocks)
+                            let run = &run.merged();
                             let visit = if run.guild_hall { None } else { visit_of(app, run, is_live) };
                             // Moonlight Village: the three dancers' subtotal above them (under Umi)
                             let mut interim = visit.filter(|v| v.mv_phases.iter().any(|ph| DANCERS.contains(&ph.boss)));
@@ -344,18 +346,18 @@ impl DpsView {
         self.selected = start;
         match start {
             Some(s) => {
-                if let Some(run) = history.runs.iter().find(|r| r.start == s)
+                if let Some(run) = history.runs.iter().find(|r| r.start == s).map(Run::merged)
                     && let Some(b) = run.bosses.get(boss)
                 {
-                    self.expanded.insert(boss_key(run, false, b, boss));
+                    self.expanded.insert(boss_key(&run, false, b, boss));
                 }
             }
             // the live run's bosses are open unless collapsed
             None => {
-                if let Some(run) = history.live.as_ref()
+                if let Some(run) = history.live.as_ref().map(Run::merged)
                     && let Some(b) = run.bosses.get(boss)
                 {
-                    self.expanded.remove(&boss_key(run, true, b, boss));
+                    self.expanded.remove(&boss_key(&run, true, b, boss));
                 }
             }
         }
@@ -363,6 +365,7 @@ impl DpsView {
 
     /// Opens a saved run's latest boss.
     fn open_latest(&mut self, run: &Run) {
+        let run = &run.merged();
         if let Some(b) = run.bosses.last() {
             self.expanded.insert(boss_key(run, false, b, run.bosses.len() - 1));
         }
@@ -640,8 +643,9 @@ fn table(
                     if pl.died {
                         marks.push(("DIED", Color32::from_rgb(0xD8, 0x46, 0x3F), false));
                     }
-                    // real damage dealt (2 % or more of it) but under 100 taken: a cheat (god mode) maybe. Never you.
-                    if !range && !pl.me && share(b, pl) >= 2.0 && (0..100).contains(&pl.taken) {
+                    // real damage dealt (2 % or more of a fight of 10 s or longer) but under 100 taken: a cheat (god
+                    // mode) maybe. Never you.
+                    if !range && !pl.me && b.fight_ms >= 10_000 && share(b, pl) >= 2.0 && (0..100).contains(&pl.taken) {
                         marks.push(("POTENTIAL CHEATER", Color32::from_rgb(0xE8, 0x8A, 0x2C), true));
                     }
                     let mf = text(16.0);

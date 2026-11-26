@@ -810,6 +810,8 @@ fn detail(ui: &mut Ui, c: &mut Ctx, v: &Visit, current: bool, side: Rect) -> Opt
                 };
                 let mut ty = r.top();
                 let which = if current { None } else { Some(run.start) };
+                // as the DPS page shows it: bosses of the same name as one
+                let run = &run.merged();
                 // the main boss (the one with the most life; a guild hall's last block), else the last you hit
                 let main = if run.guild_hall {
                     run.bosses.len().checked_sub(1)

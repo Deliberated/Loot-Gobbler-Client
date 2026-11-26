@@ -62,6 +62,59 @@ pub struct Run {
 }
 
 impl Run {
+    /// The run as shown: bosses of the same name as one (The Third Dimension's cube blocks count each block as an
+    /// enemy of its own): each player's damage and damage taken added up, died when died in any, the fight as long as
+    /// any of them was fought, at the first one's place. A guild hall's blocks (one per loadout) stay apart.
+    pub fn merged(&self) -> Run {
+        let mut out = Run { bosses: Vec::new(), ..self.clone() };
+        if self.guild_hall {
+            out.bosses = self.bosses.clone();
+            return out;
+        }
+        let mut spans: Vec<Vec<(i64, i64)>> = Vec::new();
+        for b in &self.bosses {
+            let Some(i) = out.bosses.iter().position(|o| o.name.is_some() && o.name == b.name) else {
+                spans.push(vec![(b.fight_start, b.fight_start + b.fight_ms)]);
+                out.bosses.push(b.clone());
+                continue;
+            };
+            spans[i].push((b.fight_start, b.fight_start + b.fight_ms));
+            let o = &mut out.bosses[i];
+            o.max_hp = o.max_hp.saturating_add(b.max_hp);
+            o.end_hp = if o.end_hp < 0 || b.end_hp < 0 { -1 } else { o.end_hp.saturating_add(b.end_hp) };
+            o.fight_start = o.fight_start.min(b.fight_start);
+            for p in &b.players {
+                match o.players.iter_mut().find(|x| x.name == p.name) {
+                    Some(x) => {
+                        x.damage = x.damage.saturating_add(p.damage);
+                        x.taken = if x.taken < 0 || p.taken < 0 { x.taken.max(p.taken) } else { x.taken.saturating_add(p.taken) };
+                        x.died |= p.died;
+                    }
+                    None => o.players.push(p.clone()),
+                }
+            }
+        }
+        // the time any of them was fought (overlaps once)
+        for (o, mut sp) in out.bosses.iter_mut().zip(spans) {
+            if sp.len() < 2 {
+                continue;
+            }
+            sp.sort_unstable();
+            let (mut total, mut cur) = (0, sp[0]);
+            for &(a, b) in &sp[1..] {
+                if a <= cur.1 {
+                    cur.1 = cur.1.max(b);
+                } else {
+                    total += cur.1 - cur.0;
+                    cur = (a, b);
+                }
+            }
+            o.fight_ms = total + cur.1 - cur.0;
+            o.players.sort_by_key(|p| std::cmp::Reverse(p.damage));
+        }
+        out
+    }
+
     /// The boss with the most life, the first of equals (Java `mainBoss`: Stream.max keeps the first).
     pub fn main_boss(&self) -> Option<&Boss> {
         self.bosses.iter().fold(None, |best: Option<&Boss>, b| match best {
