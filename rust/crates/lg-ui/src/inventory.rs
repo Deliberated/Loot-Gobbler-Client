@@ -398,13 +398,23 @@ impl InventoryView {
 }
 
 /// A set's pieces beating in the melted collection, `elapsed` s after the set was clicked: the second and third of an
-/// opened item's glow-ups, then 2 s of rest, over and over. Each box's place as in `pulse_ts`.
+/// opened item's glow-ups, then 1.5 s of rest from when the third has mostly faded, over and over. Each box's place as
+/// in `pulse_ts`.
 fn heartbeat(elapsed: f64) -> Vec<f32> {
     let g = glow_ups(PULSE_S);
-    let (from, to) = (g[1].0, g[2].0 + g[2].1);
-    let cycle = to - from + 1.5;
-    let e = from + elapsed.rem_euclid(cycle);
-    g[1..].iter().filter(|(s, d)| e >= *s && e < s + d).map(|(s, d)| ((e - s) / d).clamp(0.0, 1.0) as f32).collect()
+    let from = g[1].0;
+    // the rest counted from when the third box has mostly faded (its faint tail may run into the next beat)
+    let cycle = g[2].0 + 0.6 * g[2].1 - from + 1.5;
+    let k = (elapsed / cycle).floor();
+    let mut out = Vec::new();
+    for back in [0.0, 1.0] {
+        let e = from + elapsed - (k - back) * cycle;
+        if k - back < 0.0 {
+            continue;
+        }
+        out.extend(g[1..].iter().filter(|(s, d)| e >= *s && e < s + d).map(|(s, d)| ((e - s) / d).clamp(0.0, 1.0) as f32));
+    }
+    out
 }
 
 /// Items and ST Sets melting into one tab (`t` 0 apart, 1 one): both gold, the gap between them filling from the
