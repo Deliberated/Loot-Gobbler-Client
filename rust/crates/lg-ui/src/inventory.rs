@@ -2491,13 +2491,45 @@ fn st_bar(
     );
     let fade_end = (bar.top() + 90.0).min(bar.bottom() - 2.0);
     if fade_end > bar.top() + 2.0 {
-        crate::overlays::gradient_round_rect(
-            &full,
-            Rect::from_min_max(pos2(card.left() + 2.0, bar.top() + 2.0), pos2(card.right() - 2.0, fade_end)),
-            0.0,
-            card_fill,
-            p.paper,
-        );
+        // softly out downwards and sideways past the card's edges (a grid of points, each a mix of the two colours)
+        let spread = 70.0;
+        let smooth = |v: f32| {
+            let v = v.clamp(0.0, 1.0);
+            v * v * (3.0 - 2.0 * v)
+        };
+        let (l, r) = (card.left() + 2.0, card.right() - 2.0);
+        let xs: Vec<f32> = [l - spread, l - spread * 0.66, l - spread * 0.33, l, r, r + spread * 0.33, r + spread * 0.66, r + spread]
+            .iter()
+            .map(|x| x.clamp(bar.left() + 2.0, bar.right() - 2.0))
+            .collect();
+        let rows = 6;
+        let side = |x: f32| {
+            if x < l {
+                smooth(1.0 - (l - x) / spread)
+            } else if x > r {
+                smooth(1.0 - (x - r) / spread)
+            } else {
+                1.0
+            }
+        };
+        let mut mesh = egui::Mesh::default();
+        for k in 0..=rows {
+            let v = k as f32 / rows as f32;
+            let y = bar.top() + 2.0 + (fade_end - bar.top() - 2.0) * v;
+            for &x in &xs {
+                let w = side(x) * smooth(1.0 - v);
+                mesh.colored_vertex(pos2(x, y), mix(card_fill, p.paper, f64::from(w)));
+            }
+        }
+        let n = xs.len() as u32;
+        for k in 0..rows as u32 {
+            for i in 0..n - 1 {
+                let (a, b) = (k * n + i, k * n + i + 1);
+                mesh.add_triangle(a, b, a + n);
+                mesh.add_triangle(b, b + n, a + n);
+            }
+        }
+        full.add(egui::Shape::mesh(mesh));
     }
     for x in [card.left() + 1.0, card.right() - 1.0] {
         full.line_segment([pos2(x, card.bottom() - 4.0), pos2(x, bar.top() + 2.0)], Stroke::new(2.0, gold));
@@ -2769,7 +2801,7 @@ fn forge_rows(
         line(&mut y, "None held", &f16, fixed::MUTED, 10.0, lh16);
     }
     // per side, each place as "2×" and its look (the character, or the vault's chest); where it is when hovered
-    const CHIP: f32 = 30.0;
+    const CHIP: f32 = 40.0;
     for (label, seasonal) in [("Seasonal", true), ("Regular", false)] {
         let mut places: Vec<(&lg_app::loadout::Held, i32)> = Vec::new();
         for c in first.tokens.iter().filter(|c| (c.held.seasonal == Some(true)) == seasonal) {
