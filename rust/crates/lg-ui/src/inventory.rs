@@ -45,6 +45,8 @@ pub struct InventoryView {
     pub melt: bool,
     /// Where the melt goes when it ends: 0 back to Items, 1 on to ST Sets (the items slide out left).
     melt_exit: usize,
+    /// How far melted (0 apart, 1 one), moving towards `melt`.
+    melt_t: f32,
     /// The set whose pieces beat in the collection, and since when.
     beat: Option<(String, f64)>,
     /// The key clicked on the Keys page: the side shows what it gives (a mystery key) or its dungeon.
@@ -263,11 +265,19 @@ impl InventoryView {
                     self.melt_exit = 0;
                     self.page = i;
                 }
+                // from the plain ST Sets to Items: through the melt, parting back to the items
+                (false, 0) if self.page == 1 => {
+                    self.melt_t = 1.0;
+                    self.melt_exit = 0;
+                    self.page = 0;
+                }
                 _ => self.page = i,
             }
         }
-        let mt = ui.ctx().animate_bool_with_time(ui.scope_id().with("inv-melt"), self.melt, 0.45);
-        let mt = mt * mt * (3.0 - 2.0 * mt);
+        let dt = ui.input(|i| i.stable_dt).min(0.1);
+        let goal = if self.melt { 1.0 } else { 0.0 };
+        self.melt_t = if self.melt_t < goal { (self.melt_t + dt / 0.45).min(goal) } else { (self.melt_t - dt / 0.45).max(goal) };
+        let mt = self.melt_t * self.melt_t * (3.0 - 2.0 * self.melt_t);
         if mt > 0.0 && self.page <= 1 {
             melt_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, mt);
         }
