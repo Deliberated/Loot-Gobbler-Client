@@ -208,7 +208,7 @@ impl CharactersView {
     /// The stats windows: a click on the picked character opens its stats by the characters column for a few
     /// seconds (counting down around the pin); the pin keeps it open (and lets it be dragged) until clicked again.
     fn stats_windows(&mut self, ui: &Ui, c: &mut Ctx) {
-        const OPEN_FOR: f64 = 2.0;
+        const OPEN_FOR: f64 = 1.7;
         let p = *c.p;
         let app = c.app;
         let now = ui.input(|i| i.time);
