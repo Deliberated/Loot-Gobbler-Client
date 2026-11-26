@@ -182,6 +182,20 @@ pub fn segment_rects(painter: &egui::Painter, at: egui::Pos2, h: f32, names: &[&
         .collect()
 }
 
+/// Where a row of section buttons keeps the one last selected and its pour (from, to, how far 0..1).
+fn pour_id(ui: &Ui, at: egui::Pos2, names: &[&str]) -> egui::Id {
+    ui.scope_id().with(("seg-pour", names, at.x.round() as i32))
+}
+
+/// The row's selection taken as it is, without a pour (e.g. when the view animates the change itself).
+pub fn segmented_settle(ui: &Ui, at: egui::Pos2, names: &[&str], selected: usize) {
+    let id = pour_id(ui, at, names);
+    ui.data_mut(|d| {
+        d.insert_temp(id, selected);
+        d.remove::<(usize, usize, f32)>(id.with("t"));
+    });
+}
+
 pub fn segmented(
     ui: &Ui,
     p: &Palette,
@@ -194,6 +208,19 @@ pub fn segmented(
 ) -> Option<usize> {
     let font = small();
     let painter = ui.painter().clone();
+    // another one selected: gold pours from the one before into it (not when nothing or something gone was)
+    let id = pour_id(ui, at, names);
+    let before = ui.data(|d| d.get_temp::<usize>(id));
+    if let Some(b) = before
+        && b != selected
+        && b < names.len()
+        && selected < names.len()
+    {
+        ui.data_mut(|d| d.insert_temp(id.with("t"), (b, selected, 0.0f32)));
+    }
+    if before != Some(selected) {
+        ui.data_mut(|d| d.insert_temp(id, selected));
+    }
     let mut x = at.x;
     let mut clicked = None;
     for (i, n) in names.iter().enumerate() {
@@ -220,7 +247,82 @@ pub fn segmented(
         }
         x += w + if joined { 0.0 } else { 8.0 };
     }
+    if let Some((from, to, t)) = ui.data(|d| d.get_temp::<(usize, usize, f32)>(id.with("t"))) {
+        let t = (t + ui.input(|i| i.stable_dt).min(0.1) / 0.45).min(1.0);
+        pour(ui, p, at, h, names, joined, from, to, t);
+        ui.data_mut(|d| {
+            if t < 1.0 {
+                d.insert_temp(id.with("t"), (from, to, t));
+            } else {
+                d.remove::<(usize, usize, f32)>(id.with("t"));
+            }
+        });
+        ui.ctx().request_repaint();
+    }
     clicked
+}
+
+/// Gold pouring from one section button into another (`t` 0..1), drawn over the row: the one left drains towards the
+/// side it pours from, a stream runs behind the buttons between, the one selected fills from the side it comes in;
+/// never both lit.
+#[allow(clippy::too_many_arguments)]
+pub fn pour(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, names: &[&str], joined: bool, from: usize, to: usize, t: f32) {
+    let painter = ui.painter().clone();
+    let font = small();
+    let rects = segment_rects(&painter, at, h, names, joined);
+    let (Some(src), Some(dst)) = (rects.get(from).copied(), rects.get(to).copied()) else { return };
+    let gold = p.gold;
+    let ease = |v: f32| {
+        let v = v.clamp(0.0, 1.0);
+        v * v * (3.0 - 2.0 * v)
+    };
+    let right = to > from;
+    let box_ = |r: Rect, label: &str| {
+        painter.rect(r, 0.0, p.paper, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+        jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, label, &font, p.ink_soft);
+    };
+    // the stream: its front runs from the one left to the one selected, its tail follows once that one fills
+    let (a, b) = if right { (src.right() - 1.5, dst.left() + 1.5) } else { (src.left() + 1.5, dst.right() - 1.5) };
+    let front = a + (b - a) * ease(t / 0.4);
+    let tail = a + (b - a) * ease((t - 0.55) / 0.35);
+    let (sh, cy) = (6.0, src.center().y);
+    if t < 0.92 {
+        painter.rect_filled(Rect::from_min_max(pos2(tail.min(front), cy - sh / 2.0), pos2(tail.max(front), cy + sh / 2.0)), 3.0, gold);
+    }
+    // the buttons between over it
+    for k in from.min(to) + 1..from.max(to) {
+        box_(rects[k], &names[k].to_uppercase());
+    }
+    // a button with gold in `gold_r`: the label dark over the gold, light elsewhere; the gold kept inside it
+    let lit = |r: Rect, label: &str, gold_r: Rect, round: Option<egui::Pos2>| {
+        box_(r, label);
+        let inner = r.shrink(1.5);
+        let clip = painter.with_clip_rect(inner.intersect(painter.clip_rect()));
+        clip.rect_filled(gold_r, 0.0, gold);
+        if let Some(c) = round {
+            clip.circle_filled(c, ((h - 3.0) / 2.0 * 0.5).min(gold_r.width().max(0.0) + 4.0), gold);
+        }
+        let dark = painter.with_clip_rect(gold_r.intersect(inner).intersect(painter.clip_rect()));
+        jtext::draw(&dark, r.center(), Align2::CENTER_CENTER, label, &font, p.on_accent);
+    };
+    // the one left draining towards the stream
+    let w = (src.width() - 3.0) * (1.0 - ease(t / 0.55));
+    let gr = if right {
+        Rect::from_min_max(pos2(src.right() - 1.5 - w, src.top() + 1.5), pos2(src.right() - 1.5, src.bottom() - 1.5))
+    } else {
+        Rect::from_min_size(src.min + vec2(1.5, 1.5), vec2(w, h - 3.0))
+    };
+    lit(src, &names[from].to_uppercase(), gr, None);
+    // the one selected filling from the side the stream comes in, its front rounded
+    let fill = ease((t - 0.3) / 0.6);
+    let fw = (dst.width() - 3.0) * fill;
+    let fr = if right {
+        Rect::from_min_size(dst.min + vec2(1.5, 1.5), vec2(fw, h - 3.0))
+    } else {
+        Rect::from_min_max(pos2(dst.right() - 1.5 - fw, dst.top() + 1.5), pos2(dst.right() - 1.5, dst.bottom() - 1.5))
+    };
+    let front = (fill > 0.0 && fill < 1.0).then(|| pos2(if right { fr.right() } else { fr.left() }, fr.center().y));
+    lit(dst, &names[to].to_uppercase(), fr, front);
 }
 
 /// Java's banner (SEASONAL / CRUCIBLE / UPE): a slab with notched corners, a dark bottom side, white text with a

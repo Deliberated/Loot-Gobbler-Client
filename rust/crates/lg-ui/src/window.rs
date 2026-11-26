@@ -145,6 +145,9 @@ pub struct Window {
     pub shell: shell::Shell,
     pub palette: theme::Palette,
     pub icons: Icons,
+    /// The tab shown last frame, and the tab switched to with when (its icon growing and fading).
+    tab_seen: String,
+    tab_flash: Option<(String, f64)>,
     pub en: lg_app::loadout::Enchantments,
     pub loadout: lg_app::loadout::Settings,
     pub props: Properties,
@@ -243,6 +246,8 @@ impl Window {
             guild: guild::GuildView::default(),
             guide: Default::default(),
             tour: Default::default(),
+            tab_seen: String::new(),
+            tab_flash: None,
             welcome: false,
             java_offer: None,
             release_notes: None,
@@ -275,6 +280,59 @@ impl Window {
             }
             _ => self.open(spec),
         }
+    }
+
+    /// Another tab: its icon in the middle of the window, quickly growing from small to big while it fades out.
+    fn flash_tab(&mut self, ui: &egui::Ui, app: &lg_app::App, now: i64) {
+        let time = ui.input(|i| i.time);
+        if self.tab_seen != self.shell.selected {
+            if !self.tab_seen.is_empty() {
+                self.tab_flash = Some((self.shell.selected.clone(), time));
+            }
+            self.tab_seen = self.shell.selected.clone();
+        }
+        let Some((tab, start)) = self.tab_flash.clone() else { return };
+        const LENGTH: f64 = 0.38;
+        let t = ((time - start) / LENGTH) as f32;
+        if t >= 1.0 {
+            self.tab_flash = None;
+            return;
+        }
+        let ctx = ui.ctx();
+        let data = app.world.data();
+        // the tab's sign: you (the character you play most) on the Profile, else a thing of the game
+        let tex = match tab.as_str() {
+            "Profile" => app.characters.most_played(now).and_then(|c| {
+                let id = if c.skin > 0 { c.skin } else { c.class_type };
+                self.icons.skin(ctx, data, id, c.tex1, c.tex2, 128)
+            }),
+            "Inventory" => self.icons.object(ctx, data, 1284, 128),  // Vault Chest
+            "Characters" => self.icons.object(ctx, data, 782, 128),  // Wizard
+            "Game Modes" => self.icons.object(ctx, data, 1796, 128), // Realm Portal
+            "Battles" => self.icons.object(ctx, data, 2827, 128),    // Sword of Acclaim
+            "Social" => self.icons.object(ctx, data, 1860, 128),     // Gift Chest
+            "Guild" => self.icons.object(ctx, data, 1839, 128),      // Guild Hall Portal
+            "Server" => self.icons.object(ctx, data, 1810, 128),     // Nexus Portal
+            _ => None,
+        };
+        let id = tex
+            .map(|t| t.id())
+            .or_else(|| ctx.data_mut(|d| d.get_temp::<egui::TextureHandle>(egui::Id::unique("lg-title-icon"))).map(|t| t.id()));
+        let Some(id) = id else { return };
+        // fast out of the start, slowing as it grows; gone by the end
+        let grow = 1.0 - (1.0 - t).powi(3);
+        let size = 72.0 + 168.0 * grow;
+        let alpha = (1.0 - t).powf(1.6) * 0.85;
+        let screen = ctx.content_rect();
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("lg-tab-flash")));
+        let r = egui::Rect::from_center_size(screen.center(), egui::vec2(size, size));
+        painter.image(
+            id,
+            r,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE.gamma_multiply(alpha),
+        );
+        ctx.request_repaint();
     }
 
     /// Opens a tab, or a page of it: "Inventory:st", "Inventory:log", "Characters:<charId|classes|pets>",
@@ -712,6 +770,7 @@ impl Window {
         let seen =
             crate::guide::Seen { app, sniffing: self.shell.sniffing, tab: &self.shell.selected, menu_open: self.shell.info_open, now };
         let mut out = self.guide.show(ui.ctx(), &self.palette, &seen, &mut self.asks);
+        self.flash_tab(ui, app, now);
         let tour = self.tour.show(ui.ctx(), &self.palette, &self.props, &mut self.asks);
         out.open.extend(tour.open);
         for spec in &out.open {

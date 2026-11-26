@@ -141,7 +141,8 @@ fn main() {
                         let t = k as f32 / 8.0;
                         let at = egui::pos2(20.0, 20.0 + k as f32 * 46.0);
                         lg_ui::widgets::segmented(ui, &pal, at, 36.0, &names, to, false, &[]);
-                        lg_ui::inventory::pour_tabs(ui, &pal, at, 36.0, &names, from, to, t);
+                        lg_ui::widgets::segmented_settle(ui, at, &names, to);
+                        lg_ui::widgets::pour(ui, &pal, at, 36.0, &names, false, from, to, t);
                     }
                 });
             harness.run_steps(2);
@@ -604,7 +605,7 @@ fn main() {
                     win.take_asks();
                 }
                 None => {
-                    win.open(&shown);
+                    win.open(tab.strip_prefix("switch:").and_then(|r| r.split_once(':')).map_or(shown.as_str(), |(f, _)| f));
                     // "welcome": the first start's greeting, with the offer of the Java app's records
                     if tab == "welcome" {
                         win.open("Profile");
@@ -695,6 +696,7 @@ fn main() {
                 }
             },
         }
+        let switch_to: std::cell::Cell<Option<String>> = std::cell::Cell::new(None);
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::vec2(w, h))
             .with_pixels_per_point(1.0)
@@ -703,9 +705,22 @@ fn main() {
             .build_ui(|ui| {
                 // the whole window, without the margin the harness puts around it
                 let mut all = ui.new_child(egui::UiBuilder::new().max_rect(ui.ctx().content_rect()));
+                if let Some(t) = switch_to.take() {
+                    win.open(&t);
+                }
                 win.show(&mut all, &app, now);
             });
         harness.run_steps(3);
+        // "switch:<from>:<to>": that tab shown, then the other; frames of the switch (the tab's icon flashing)
+        if let Some((_, to)) = tab.strip_prefix("switch:").and_then(|r| r.split_once(':')) {
+            harness.run_steps(20);
+            switch_to.set(Some(to.to_string()));
+            for n in 0..4 {
+                harness.run_steps(if n == 0 { 2 } else { 5 });
+                let img = harness.render().expect("render");
+                img.save(std::path::Path::new(out).join(format!("{}-{n}.png", tab.replace(':', "-").replace(' ', "_")))).expect("save");
+            }
+        }
         // a tour: the view it opened settled (bars open, the melt done), the frames placed on it
         if tab.starts_with("tour:") {
             harness.run_steps(60);

@@ -56,8 +56,6 @@ pub struct InventoryView {
     pub melt_exit: usize,
     /// How far melted (0 apart, 1 one), moving towards `melt`.
     melt_t: f32,
-    /// A page tab clicked: gold pouring from the tab left into it (from, to, how far 0..1).
-    pour: Option<(usize, usize, f32)>,
     /// Parting from the melt: the moving edge the page it goes to is shown up to (its layout as it will stand).
     reveal: Option<f32>,
     /// How many of the collection's icons were made ahead (a few each frame), so the grid comes in whole.
@@ -566,71 +564,6 @@ fn melt_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, t: f32, from_sets: bo
     }
 }
 
-/// Gold pouring from one page tab into another (`t` 0..1), drawn over the tabs: the tab left drains towards the side it
-/// pours from, a stream runs behind the tabs between, the tab clicked fills from the side it comes in; never both lit.
-#[allow(clippy::too_many_arguments)]
-pub fn pour_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, names: &[&str], from: usize, to: usize, t: f32) {
-    let painter = ui.painter().clone();
-    let font = small();
-    let rects = widgets::segment_rects(&painter, at, h, names, false);
-    let (Some(src), Some(dst)) = (rects.get(from).copied(), rects.get(to).copied()) else { return };
-    let gold = p.gold;
-    let ease = |v: f32| {
-        let v = v.clamp(0.0, 1.0);
-        v * v * (3.0 - 2.0 * v)
-    };
-    let right = to > from;
-    let box_ = |r: Rect, label: &str| {
-        painter.rect(r, 0.0, p.paper, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
-        jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, label, &font, p.ink_soft);
-    };
-    // the stream: its front runs from the tab left to the one clicked, its tail follows once that one fills
-    let (a, b) = if right { (src.right() - 1.5, dst.left() + 1.5) } else { (src.left() + 1.5, dst.right() - 1.5) };
-    let front = a + (b - a) * ease(t / 0.4);
-    let tail = a + (b - a) * ease((t - 0.55) / 0.35);
-    let sh = 6.0;
-    let cy = src.center().y;
-    if t < 0.92 {
-        painter.rect_filled(Rect::from_min_max(pos2(tail.min(front), cy - sh / 2.0), pos2(tail.max(front), cy + sh / 2.0)), 3.0, gold);
-    }
-    // the tabs between over it
-    let (lo, hi) = (from.min(to), from.max(to));
-    for k in lo + 1..hi {
-        box_(rects[k], &names[k].to_uppercase());
-    }
-    // a tab with gold in `gold_r`: the label dark over the gold, light elsewhere; the gold kept inside the tab
-    let lit = |r: Rect, label: &str, gold_r: Rect, round: Option<egui::Pos2>| {
-        box_(r, label);
-        let inner = r.shrink(1.5);
-        let clip = painter.with_clip_rect(inner.intersect(painter.clip_rect()));
-        clip.rect_filled(gold_r, 0.0, gold);
-        if let Some(c) = round {
-            clip.circle_filled(c, ((h - 3.0) / 2.0 * 0.5).min(gold_r.width().max(0.0) + 4.0), gold);
-        }
-        let dark = painter.with_clip_rect(gold_r.intersect(inner).intersect(painter.clip_rect()));
-        jtext::draw(&dark, r.center(), Align2::CENTER_CENTER, label, &font, p.on_accent);
-    };
-    // the tab left draining towards the stream
-    let left = 1.0 - ease(t / 0.55);
-    let w = (src.width() - 3.0) * left;
-    let gr = if right {
-        Rect::from_min_max(pos2(src.right() - 1.5 - w, src.top() + 1.5), pos2(src.right() - 1.5, src.bottom() - 1.5))
-    } else {
-        Rect::from_min_size(src.min + vec2(1.5, 1.5), vec2(w, h - 3.0))
-    };
-    lit(src, &names[from].to_uppercase(), gr, None);
-    // the tab clicked filling from the side the stream comes in, its front rounded
-    let fill = ease((t - 0.3) / 0.6);
-    let fw = (dst.width() - 3.0) * fill;
-    let fr = if right {
-        Rect::from_min_size(dst.min + vec2(1.5, 1.5), vec2(fw, h - 3.0))
-    } else {
-        Rect::from_min_max(pos2(dst.right() - 1.5 - fw, dst.top() + 1.5), pos2(dst.right() - 1.5, dst.bottom() - 1.5))
-    };
-    let front = (fill > 0.0 && fill < 1.0).then(|| pos2(if right { fr.right() } else { fr.left() }, fr.center().y));
-    lit(dst, &names[to].to_uppercase(), fr, front);
-}
-
 /// How long a pulse lasts: one opening, or the three glow-ups.
 fn pulse_length(dur: f64, again: bool) -> f64 {
     if again { glow_ups(dur).iter().map(|(s, d)| s + d).fold(0.0, f64::max) } else { dur }
@@ -773,20 +706,13 @@ impl InventoryView {
                     self.melt_exit = 1;
                     self.page = 0;
                 }
-                (false, _) if i != self.page => {
-                    self.pour = Some((self.page, i, 0.0));
-                    self.page = i;
-                }
                 _ => self.page = i,
             }
         }
         let dt = ui.input(|i| i.stable_dt).min(0.1);
-        // the pour from the tab left into the one clicked
-        if let Some((from, to, t)) = self.pour {
-            let t = (t + dt / 0.5).min(1.0);
-            pour_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, &PAGES, from, to, t);
-            self.pour = (t < 1.0).then_some((from, to, t));
-            ui.ctx().request_repaint();
+        // the melt has its own pour: the tabs' one not for it
+        if self.melt || self.melt_t > 0.0 {
+            widgets::segmented_settle(ui, pos2(pages_x, all.top()), &PAGES, self.page);
         }
         let goal = if self.melt { 1.0 } else { 0.0 };
         self.melt_t = if self.melt_t < goal { (self.melt_t + dt / 0.45).min(goal) } else { (self.melt_t - dt / 0.45).max(goal) };
