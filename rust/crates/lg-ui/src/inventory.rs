@@ -3395,7 +3395,7 @@ fn forge_switch(
     let (lw, dw) = (turned(l) * k, turned(d) * k);
     // their pictures have an empty edge: a little closer, so the stones meet
     // legendary's stones sit high in its picture: a little lower, on the same line as divine's
-    mark(3, pos2(meet - lw / 2.0, base - lw / 2.0 + 2.5 * k), true);
+    mark(3, pos2(meet - lw / 2.0, base - lw / 2.0 + 2.5 * k - 1.0), true);
     mark(4, pos2(meet + dw / 2.0, base - dw / 2.0), true);
     let row_top = base - bottom_h * k;
     let rare_c = pos2(meet, row_top - ra.y * k / 2.0);
