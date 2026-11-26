@@ -796,14 +796,14 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
     let mut opening = Vec::new();
     for (s, &x) in stacks.iter().zip(&px) {
         let key = members[s.start].start;
-        let t = ui.ctx().animate_bool_with_time(dock_id.with(key), open == Some(key), 0.16);
+        // opening and closing alike: it fades and folds back towards the stack, which stays on the line
+        let t = ui.ctx().animate_bool_with_time(dock_id.with(key), open == Some(key), 0.2);
         if t > 0.0 && s.len() > 1 {
             opening.push((s.clone(), x, t));
-            continue;
         }
         let y = rest_y(x);
         // the mouse near it, in its row (and no stack open): it grows, the nearer the more
-        let near = hover.filter(|q| open.is_none() && q.y > y - ICON && q.y < y + ICON + 6.0);
+        let near = hover.filter(|q| (open.is_none() || open == Some(key)) && q.y > y - ICON && q.y < y + ICON + 6.0);
         let goal = near.map_or(1.0, |q| 1.0 + 0.3 * (-((q.x - x) / SP).powi(2)).exp());
         let mag = ui.ctx().animate_value_with_time(dock_id.with(("mag", key)), goal, 0.08);
         let size = ICON * mag;
@@ -834,18 +834,16 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
     for (s, x, t) in opening {
         let y = rest_y(x);
         let (panel, cols) = panel_of(&s, x, y);
+        // eased, fading with it
+        let e = 1.0 - (1.0 - t) * (1.0 - t);
+        let mut faded = painter.clone();
+        faded.set_opacity(t);
         let ground = Color32::from_rgb(p.header.r(), p.header.g(), p.header.b());
         let grown = Rect::from_center_size(
-            panel.center() + (pos2(x, y) - panel.center()) * (1.0 - t),
-            vec2(panel.width() * (0.3 + 0.7 * t), panel.height() * (0.3 + 0.7 * t)),
+            panel.center() + (pos2(x, y) - panel.center()) * (1.0 - e) * 0.6,
+            vec2(panel.width() * (0.5 + 0.5 * e), panel.height() * (0.5 + 0.5 * e)),
         );
-        painter.rect(
-            grown,
-            6.0,
-            ground.gamma_multiply(t),
-            egui::Stroke::new(1.0, p.gold.gamma_multiply(0.6 * t)),
-            egui::StrokeKind::Inside,
-        );
+        faded.rect(grown, 6.0, ground, egui::Stroke::new(1.0, p.gold.gamma_multiply(0.6)), egui::StrokeKind::Inside);
         let ch = cell_h_of(&s);
         for (k, i) in s.clone().enumerate() {
             let m = &members[i];
@@ -853,12 +851,12 @@ fn fame_graph(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, points: &[
             let cell = Rect::from_min_max(pos2(c.x - cell_w / 2.0, c.y + ICON + 4.0 - ch), pos2(c.x + cell_w / 2.0, c.y + ICON + 4.0));
             let under = t > 0.99 && hover.is_some_and(|q| cell.contains(q));
             let mag = ui.ctx().animate_value_with_time(dock_id.with(("cell", m.start)), if under { 1.2 } else { 1.0 }, 0.08);
-            let size = ICON * (0.6 + 0.4 * t) * mag;
-            // from the stack out to its cell
-            let at_x = x + (c.x - x) * t;
-            let at_y = y + (c.y - y) * t;
+            let size = ICON * (0.6 + 0.4 * e) * mag;
+            // from near the stack out to its cell
+            let at_x = c.x + (x - c.x) * (1.0 - e) * 0.6;
+            let at_y = c.y + (y - c.y) * (1.0 - e) * 0.6;
             let at = Rect::from_min_size(pos2(at_x - size / 2.0, at_y + ICON - size), vec2(size, size));
-            portal(&painter, m, at, &count_f, gold);
+            portal(&faded, m, at, &count_f, gold);
             if under {
                 tip = Some(m.tip.clone());
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);

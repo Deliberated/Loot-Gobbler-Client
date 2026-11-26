@@ -593,12 +593,6 @@ fn table(
     }
     painter.rect_filled(Rect::from_min_size(pos2(at.x, hr.bottom() - 1.0), vec2(w, 1.0)), 0.0, p.line);
     let f = text(18.0);
-    // what the players typically took in this fight (the middle one; -1: too few to tell)
-    let typical_taken = {
-        let mut t: Vec<i32> = b.players.iter().map(|x| x.taken).filter(|t| *t >= 0).collect();
-        t.sort_unstable();
-        if t.len() < 3 { -1 } else { t[t.len() / 2] }
-    };
     let max_share =
         if range { b.players.iter().map(|x| share(b, x)).fold(0.0, f64::max) } else { b.players.first().map_or(1.0, |x| share(b, x)) };
     let max_share = if max_share <= 0.0 { 1.0 } else { max_share };
@@ -646,16 +640,9 @@ fn table(
                     if pl.died {
                         marks.push(("DIED", Color32::from_rgb(0xD8, 0x46, 0x3F), false));
                     }
-                    // real damage dealt (3 % or more of a fight of 30 s or longer) but hardly any taken where the
-                    // others took plenty (their middle 500 or more; in big fights many take none): a cheat (god mode)
-                    // most likely; none at all: one for sure. Never you.
-                    if !range && !pl.me && b.fight_ms >= 30_000 && share(b, pl) >= 3.0 && pl.taken >= 0 && typical_taken >= 500 {
-                        let red = Color32::from_rgb(0xE0, 0x3C, 0x3C);
-                        if pl.taken == 0 {
-                            marks.push(("CHEATER", red, true));
-                        } else if pl.taken < 100 {
-                            marks.push(("POTENTIAL CHEATER", Color32::from_rgb(0xE8, 0x8A, 0x2C), true));
-                        }
+                    // real damage dealt (2 % or more of it) but under 100 taken: a cheat (god mode) maybe. Never you.
+                    if !range && !pl.me && share(b, pl) >= 2.0 && (0..100).contains(&pl.taken) {
+                        marks.push(("POTENTIAL CHEATER", Color32::from_rgb(0xE8, 0x8A, 0x2C), true));
                     }
                     let mf = text(16.0);
                     let mh = jtext::height(painter, &mf) + 2.0;
