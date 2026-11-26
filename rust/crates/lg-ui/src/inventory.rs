@@ -47,6 +47,8 @@ pub struct InventoryView {
     melt_exit: usize,
     /// How far melted (0 apart, 1 one), moving towards `melt`.
     melt_t: f32,
+    /// Parting from the melt: the moving edge the page it goes to is shown up to (its layout as it will stand).
+    reveal: Option<f32>,
     /// How many of the collection's icons were made ahead (a few each frame), so the grid comes in whole.
     warmed: usize,
     /// The inventory optimization on: your spare copies framed in the collection, listed in the column on the left.
@@ -660,28 +662,27 @@ impl InventoryView {
             if beat.as_ref() != self.beat.as_ref().map(|b| &b.0) {
                 self.beat = beat.map(|b| (b, ui.input(|i| i.time)));
             }
-            // parting: the page it goes to whole (its right column too) under the other fading out over it: back to
-            // the items, the sets fade; on to ST Sets, the items do
+            // parting: the page it goes to drawn as it will stand (its right column too), shown up to the moving edge:
+            // back to Items the collection widens to its place, then its column comes in after it; on to ST Sets the
+            // sets' page slides in from the right, its column last
             let parting = !self.melt;
-            if parting {
-                if self.melt_exit == 0 {
-                    self.items(ui, c, rarity, body, false);
-                } else {
-                    self.st_sets(ui, c, rarity, body, false);
-                }
-            }
             for (r, sets) in [(items_r, false), (sets_r, true)] {
-                if parting && sets == (self.melt_exit == 1) {
-                    continue;
-                }
                 let shown = r.intersect(body);
                 if shown.width() < 1.0 {
                     continue;
                 }
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
+                let whole = parting && sets == (self.melt_exit == 1);
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(if whole { body } else { r }));
                 child.set_clip_rect(shown.intersect(ui.clip_rect()));
-                if parting {
-                    child.multiply_opacity(mt);
+                if whole {
+                    self.reveal = Some(if sets { r.left() } else { r.right() });
+                    if sets {
+                        self.st_sets(&mut child, c, rarity, body, false);
+                    } else {
+                        self.items(&mut child, c, rarity, body, false);
+                    }
+                    self.reveal = None;
+                    continue;
                 }
                 if sets {
                     // crafting from the optimization: its section stays on top, the sets come in below it
@@ -1005,6 +1006,11 @@ impl InventoryView {
             (body, Rect::NOTHING)
         } else {
             widgets::side_split(ui, c.p, c.props, "collectionGrid", body, 380.0, 200.0, 560.0, Some((base, CELL)))
+        };
+        // parting back to here: the grid as wide as up to the moving edge (its column after it, shown as the edge passes)
+        let main = match self.reveal.filter(|_| !grid_only) {
+            Some(edge) => Rect::from_min_max(main.min, pos2(main.right().min(edge).max(main.left() + CELL), main.bottom())),
+            None => main,
         };
         let cols = ((main.width() - base + 0.001) / CELL).floor().max(1.0);
         // melted with a set clicked: its pieces beat (two glow-ups, then 2 s of rest), the rest dimmed
@@ -1943,6 +1949,14 @@ impl InventoryView {
             (body, Rect::NOTHING)
         } else {
             widgets::side_split(ui, c.p, c.props, "stSets", body, 280.0, 220.0, 200.0, Some((base, CARD_MIN_WIDTH + GAP)))
+        };
+        // parting on to here: the page as it will stand, slid along with the moving edge (its column comes in last)
+        let (main, side) = match self.reveal.filter(|_| !grid_only) {
+            Some(edge) => {
+                let by = vec2(edge - body.left(), 0.0);
+                (main.translate(by), side.translate(by))
+            }
+            None => (main, side),
         };
         let cols = (((main.width() - base + 0.001) / (CARD_MIN_WIDTH + GAP)).floor()).max(1.0);
         let filters = ["All", "Tokens"];
