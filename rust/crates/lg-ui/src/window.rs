@@ -644,7 +644,7 @@ impl Window {
                 }
                 *slide_seen = tab.to_string();
             }
-            const SLIDE: f64 = 0.3;
+            const SLIDE: f64 = crate::widgets::SLIDE_S;
             let page = ui.max_rect();
             let moving = slide.map(|(side, start)| (side, ((time - start) / SLIDE) as f32)).filter(|(_, t)| *t < 1.0);
             if moving.is_none() {
@@ -681,7 +681,7 @@ impl Window {
                 _ => {}
             }
             if let Some((side, t)) = moving {
-                swoosh(ui.ctx(), &palette, page, side, t);
+                crate::widgets::swoosh(ui.ctx(), &palette, page, side, t);
                 ui.ctx().request_repaint();
             }
         });
@@ -851,38 +851,5 @@ impl Window {
         }
         // anything clickable under the pointer shows the hand, wherever a view did not choose a cursor itself
         crate::widgets::pointing_hand(ui.ctx());
-    }
-}
-
-/// The swoosh of a tab's page sliding in (`side` -1 from the left, 1 from the right; `t` 0..1): the page's last look
-/// sweeping off it, then a few gold streaks across it the way it moves, long and thin, fading at their ends.
-fn swoosh(ctx: &egui::Context, p: &theme::Palette, page: egui::Rect, side: f32, t: f32) {
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("lg-tab-swoosh"))).with_clip_rect(page);
-    // the page coming in out of a veil
-    let veil = (1.0 - t).powi(2) * 0.55;
-    painter.rect_filled(page, 0.0, p.sand.gamma_multiply(veil));
-    // streaks: (height in the page, length, delay)
-    let e = |v: f32| 1.0 - (1.0 - v.clamp(0.0, 1.0)).powi(3);
-    for (k, (y, len, delay)) in [(0.28f32, 420.0f32, 0.0f32), (0.52, 560.0, 0.08), (0.74, 360.0, 0.16)].iter().enumerate() {
-        let u = e((t - delay) / (1.0 - delay));
-        if u <= 0.0 || u >= 1.0 {
-            continue;
-        }
-        let span = page.width() + len;
-        // its head moving across in the slide's direction, from beyond one side to beyond the other
-        let head = if side > 0.0 { page.right() + len - span * u } else { page.left() - len + span * u };
-        let tail = head + side * len;
-        let cy = page.top() + page.height() * y;
-        let alpha = (1.0 - u) * if k == 1 { 0.5 } else { 0.32 };
-        let th = if k == 1 { 3.0 } else { 2.0 };
-        let mut mesh = egui::Mesh::default();
-        let col = |a: f32| p.gold.gamma_multiply(a);
-        mesh.colored_vertex(egui::pos2(head, cy - th / 2.0), col(alpha));
-        mesh.colored_vertex(egui::pos2(head, cy + th / 2.0), col(alpha));
-        mesh.colored_vertex(egui::pos2(tail, cy - th / 2.0), col(0.0));
-        mesh.colored_vertex(egui::pos2(tail, cy + th / 2.0), col(0.0));
-        mesh.add_triangle(0, 1, 2);
-        mesh.add_triangle(1, 3, 2);
-        painter.add(egui::Shape::mesh(mesh));
     }
 }

@@ -745,7 +745,11 @@ impl InventoryView {
             crate::guide::mark(ui, "inventory.st.tab", *r);
         }
         resource_row(ui, &p, c.icons, app, pos2(all.right(), all.top()), 36.0, pages_end, focus.map(|ch| ch.seasonal));
-        let mut body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
+        let body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
+        // another page: it slides in, except into and out of Items and ST Sets as one (that has its own motion)
+        let shown = if self.melt { 0 } else { self.page };
+        let (mut slid, mut body) = widgets::section_slide(ui, &p, shown, !self.melt && self.melt_t <= 0.0, body);
+        let ui = &mut slid;
         // the optimization: its list in a column of its own, sliding out from the left
         let ot = ui.ctx().animate_bool_with_time(ui.scope_id().with("opt-column"), self.opt && self.page == 0 && !self.melt, 0.22);
         let ot = ot * ot * (3.0 - 2.0 * ot);

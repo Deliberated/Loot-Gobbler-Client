@@ -196,6 +196,8 @@ impl Profile {
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
         pages(&mut ui, &p, &["Overview", "Quests", "Dungeon Stats"], &mut self.page, &[2]);
         ui.add_space(8.0);
+        let rest = ui.available_rect_before_wrap();
+        let (mut ui, _) = widgets::section_slide(&mut ui, &p, self.page, true, rest);
         match self.page {
             0 => {
                 egui::ScrollArea::vertical().id_salt("profile-overview").show(&mut ui, |ui| {

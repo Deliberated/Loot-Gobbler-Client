@@ -60,6 +60,8 @@ impl SocialView {
             self.page = i;
         }
         let body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
+        let (mut slid, body) = widgets::section_slide(ui, &p, self.page, true, body);
+        let ui = &mut slid;
         match self.page {
             0 => chat(ui, c, body.shrink(8.0)),
             1 => under_construction(

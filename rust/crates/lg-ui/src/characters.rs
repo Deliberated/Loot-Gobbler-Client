@@ -186,6 +186,8 @@ impl CharactersView {
             p.ink,
         );
         let body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
+        let (mut slid, body) = widgets::section_slide(ui, &p, self.page, true, body);
+        let ui = &mut slid;
         if self.page == 1 {
             if let Some(id) = self.open_class.take() {
                 crate::classes::open(ui.ctx(), id);

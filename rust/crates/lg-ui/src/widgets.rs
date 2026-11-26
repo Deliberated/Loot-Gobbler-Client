@@ -184,8 +184,8 @@ pub fn segment_rects(painter: &egui::Painter, at: egui::Pos2, h: f32, names: &[&
 
 /// Where a row of section buttons keeps the one last selected and its pour (from, to, how far 0..1): by its names,
 /// not where it stands (a page sliding in moves it).
-/// How long gold takes to pour into the next section button (each button skipped adds a tenth of a second).
-pub const POUR_S: f32 = 0.3;
+/// How long gold takes to pour into the next section button (each button skipped adds 0.07 s).
+pub const POUR_S: f32 = 0.22;
 
 fn pour_id(ui: &Ui, _at: egui::Pos2, names: &[&str]) -> egui::Id {
     ui.scope_id().with(("seg-pour", names))
@@ -267,7 +267,7 @@ pub fn segmented(
         x += w + if joined { 0.0 } else { 8.0 };
     }
     if let Some((from, to, t)) = ui.data(|d| d.get_temp::<(usize, usize, f32)>(id.with("t"))) {
-        let length = POUR_S + 0.1 * (from.abs_diff(to) as f32 - 1.0);
+        let length = POUR_S + 0.07 * (from.abs_diff(to) as f32 - 1.0);
         let t = (t + ui.input(|i| i.stable_dt).min(0.1) / length).min(1.0);
         let span = ui.data(|d| d.get_temp::<(usize, String)>(id.with("span")));
         pour(ui, p, at, h, names, joined, from, to, t, span.as_ref().map(|(e, l)| (*e, l.as_str())));
@@ -1133,5 +1133,66 @@ pub fn optimize_icon_variant(painter: &egui::Painter, c: egui::Pos2, size: f32, 
             spark(c + vec2(s * 0.34, -s * 0.34), s * 0.13);
         }
         _ => optimize_icon(painter, c, size, ink),
+    }
+}
+
+/// How long a page takes to slide in (a tab's, a section's).
+pub const SLIDE_S: f64 = 0.3;
+
+/// A section's page sliding in from the side its button lies on (a swoosh with it) when another section was picked:
+/// the Ui to draw the page in and its body moved along. One slide however far the sections are apart. `animate` false:
+/// the change taken as it is (the view animates it itself).
+pub fn section_slide(ui: &mut Ui, p: &Palette, page: usize, animate: bool, body: Rect) -> (Ui, Rect) {
+    let id = ui.scope_id().with("section-slide");
+    let time = ui.input(|i| i.time);
+    let (seen, mut slide) = ui.data(|d| d.get_temp::<(Option<usize>, Option<(f32, f64)>)>(id)).unwrap_or((None, None));
+    if let Some(s) = seen
+        && s != page
+    {
+        slide = animate.then_some((if page > s { 1.0 } else { -1.0 }, time));
+    }
+    let moving = slide.map(|(side, start)| (side, ((time - start) / SLIDE_S) as f32)).filter(|(_, t)| *t < 1.0);
+    ui.data_mut(|d| d.insert_temp(id, (Some(page), moving.and(slide))));
+    let shift = moving.map_or(0.0, |(side, t)| side * 90.0 * (1.0 - t).powi(3));
+    let moved = body.translate(vec2(shift, 0.0));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(moved).layout(*ui.layout()));
+    child.set_clip_rect(body.expand(8.0).intersect(ui.clip_rect()));
+    if let Some((side, t)) = moving {
+        swoosh(ui.ctx(), p, body, side, t);
+        ui.ctx().request_repaint();
+    }
+    (child, moved)
+}
+
+/// The swoosh of a page sliding in (a tab's, a section's) (`side` -1 from the left, 1 from the right; `t` 0..1): the page's last look
+/// sweeping off it, then a few gold streaks across it the way it moves, long and thin, fading at their ends.
+pub fn swoosh(ctx: &egui::Context, p: &Palette, page: egui::Rect, side: f32, t: f32) {
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("lg-tab-swoosh"))).with_clip_rect(page);
+    // the page coming in out of a veil
+    let veil = (1.0 - t).powi(2) * 0.55;
+    painter.rect_filled(page, 0.0, p.sand.gamma_multiply(veil));
+    // streaks: (height in the page, length, delay)
+    let e = |v: f32| 1.0 - (1.0 - v.clamp(0.0, 1.0)).powi(3);
+    for (k, (y, len, delay)) in [(0.28f32, 420.0f32, 0.0f32), (0.52, 560.0, 0.08), (0.74, 360.0, 0.16)].iter().enumerate() {
+        let u = e((t - delay) / (1.0 - delay));
+        if u <= 0.0 || u >= 1.0 {
+            continue;
+        }
+        let span = page.width() + len;
+        // its head moving across in the slide's direction, from beyond one side to beyond the other
+        let head = if side > 0.0 { page.right() + len - span * u } else { page.left() - len + span * u };
+        let tail = head + side * len;
+        let cy = page.top() + page.height() * y;
+        let alpha = (1.0 - u) * if k == 1 { 0.5 } else { 0.32 };
+        let th = if k == 1 { 3.0 } else { 2.0 };
+        let mut mesh = egui::Mesh::default();
+        let col = |a: f32| p.gold.gamma_multiply(a);
+        mesh.colored_vertex(egui::pos2(head, cy - th / 2.0), col(alpha));
+        mesh.colored_vertex(egui::pos2(head, cy + th / 2.0), col(alpha));
+        mesh.colored_vertex(egui::pos2(tail, cy - th / 2.0), col(0.0));
+        mesh.colored_vertex(egui::pos2(tail, cy + th / 2.0), col(0.0));
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(1, 3, 2);
+        painter.add(egui::Shape::mesh(mesh));
     }
 }
