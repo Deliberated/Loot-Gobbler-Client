@@ -3262,7 +3262,7 @@ fn forge_switch(
     let font = small();
     let label = "COLLECTOR MODE";
     let tw = jtext::width(&painter, label, &font);
-    let (track_w, pad, pick_w) = (56.0, 16.0, 30.0);
+    let (track_w, pad, pick_w) = (56.0, 16.0, 34.0);
     let w = pad + tw + 14.0 + track_w + 12.0 + pick_w + pad - 6.0;
     let r = Rect::from_min_size(pos2(right_top.x - w, right_top.y), vec2(w, h));
     // the pill, sunk into the page
@@ -3278,7 +3278,7 @@ fn forge_switch(
     let lit = hover.contains_pointer();
     jtext::draw(&painter, pos2(r.left() + pad, r.center().y), Align2::LEFT_CENTER, label, &font, if lit { p.ink } else { p.ink_soft });
     // the switch: a dark track (tinted by the mode) and its silver knob sliding to its place; it alone is clicked
-    let pick = Rect::from_min_size(pos2(r.right() - pad + 6.0 - pick_w, r.center().y - 12.0), vec2(pick_w, 24.0));
+    let pick = Rect::from_min_size(pos2(r.right() - pad + 6.0 - pick_w, r.center().y - 14.0), vec2(pick_w, 28.0));
     let track = Rect::from_min_size(pos2(pick.left() - 12.0 - track_w, r.center().y - 9.0), vec2(track_w, 18.0));
     let (place, tint) = match mode {
         Mode::Off => (0.0, None),
@@ -3343,10 +3343,28 @@ fn forge_switch(
         Stroke::new(1.0, if some_off { p.gold } else { Color32::from_black_alpha(160) }),
         StrokeKind::Inside,
     );
-    // the marks of three rarities, overlapping
-    for (i, k) in [2usize, 3, 4].iter().enumerate() {
-        enchant_badge(&painter, rarity, pos2(pick.left() + 12.0 + i as f32 * 6.0, pick.bottom() - 5.0 - i as f32 * 3.0), *k, 5.0);
-    }
+    // the rarities as a little stack, bright when considered: uncommon on top with a box for common beside it, rare
+    // below, legendary and divine at the bottom
+    let c = pick.center();
+    let mark = |k: usize, at: egui::Pos2| {
+        let Some(t) = &rarity[k] else { return };
+        let [tw, th] = t.size();
+        let r = Rect::from_center_size(at, vec2(tw as f32, th as f32) * 0.8);
+        let tint = if allowed[k] { Color32::WHITE } else { Color32::from_white_alpha(55) };
+        painter.image(t.id(), r, uv(), tint);
+    };
+    let row = 8.0;
+    mark(1, pos2(c.x - 2.0, c.y - row));
+    let common = Rect::from_center_size(pos2(c.x + 6.0, c.y - row), vec2(5.0, 5.0));
+    painter.rect_stroke(
+        common,
+        0.0,
+        Stroke::new(1.0, if allowed[0] { p.ink } else { p.ink_muted.gamma_multiply(0.5) }),
+        StrokeKind::Inside,
+    );
+    mark(2, pos2(c.x, c.y));
+    mark(3, pos2(c.x - 5.0, c.y + row));
+    mark(4, pos2(c.x + 5.0, c.y + row));
     let mut open = if presp.clicked() { !open } else { open };
     let mut next_rarities = None;
     if open {
