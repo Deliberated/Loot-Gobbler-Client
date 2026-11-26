@@ -784,3 +784,128 @@ pub fn pack_divider(painter: &egui::Painter, x: f32, y0: f32, y1: f32, gold: Col
     painter.line_segment([egui::pos2(x - 3.0, y0), egui::pos2(x + 3.0, y0)], line);
     painter.line_segment([egui::pos2(x - 3.0, y1), egui::pos2(x + 3.0, y1)], line);
 }
+
+/// Candidates for the optimization icon (`k`), drawn like [`optimize_icon`]; 0 is that one. For picking one.
+pub fn optimize_icon_variant(painter: &egui::Painter, c: egui::Pos2, size: f32, ink: Color32, k: usize) {
+    use egui::{Shape, Stroke, pos2, vec2};
+    let s = size;
+    let w = (s * 0.09).max(1.2);
+    let line = Stroke::new(w, ink);
+    let spark = |at: egui::Pos2, r: f32| {
+        let t = r * 0.3;
+        painter.add(Shape::convex_polygon(
+            vec![at + vec2(0.0, -r), at + vec2(t, 0.0), at + vec2(0.0, r), at + vec2(-t, 0.0)],
+            ink,
+            Stroke::NONE,
+        ));
+        painter.add(Shape::convex_polygon(
+            vec![at + vec2(-r, 0.0), at + vec2(0.0, -t), at + vec2(r, 0.0), at + vec2(0.0, t)],
+            ink,
+            Stroke::NONE,
+        ));
+    };
+    match k {
+        // a wand with a star at its tip and sparkles
+        1 => {
+            painter.line_segment([c + vec2(-s * 0.38, s * 0.38), c + vec2(s * 0.12, -s * 0.12)], Stroke::new(w * 1.4, ink));
+            spark(c + vec2(s * 0.18, -s * 0.18), s * 0.2);
+            spark(c + vec2(-s * 0.2, -s * 0.3), s * 0.09);
+            spark(c + vec2(s * 0.32, s * 0.18), s * 0.09);
+        }
+        // two arrows chasing each other round a gem
+        2 => {
+            let r = s * 0.36;
+            for half in [0.0f32, std::f32::consts::PI] {
+                let pts: Vec<egui::Pos2> =
+                    (0..=12).map(|i| half + 0.35 + i as f32 / 12.0 * 2.3).map(|a| c + vec2(a.cos(), a.sin()) * r).collect();
+                let end = *pts.last().expect("points");
+                let a = half + 0.35 + 2.3;
+                let tang = vec2(-a.sin(), a.cos());
+                let out = vec2(a.cos(), a.sin());
+                painter.add(Shape::line(pts, line));
+                painter.add(Shape::convex_polygon(
+                    vec![end + tang * s * 0.14, end + out * s * 0.1, end - out * s * 0.1],
+                    ink,
+                    Stroke::NONE,
+                ));
+            }
+            let g = s * 0.14;
+            painter.add(Shape::convex_polygon(
+                vec![c + vec2(0.0, -g), c + vec2(g, 0.0), c + vec2(0.0, g), c + vec2(-g, 0.0)],
+                ink,
+                Stroke::NONE,
+            ));
+        }
+        // a chest with an arrow up out of it
+        3 => {
+            let body = Rect::from_center_size(c + vec2(0.0, s * 0.2), vec2(s * 0.72, s * 0.4));
+            painter.rect_stroke(body, 1.0, line, egui::StrokeKind::Middle);
+            painter.line_segment([pos2(body.left(), body.top() + s * 0.12), pos2(body.right(), body.top() + s * 0.12)], line);
+            painter.rect_filled(Rect::from_center_size(pos2(c.x, body.top() + s * 0.12), vec2(s * 0.1, s * 0.12)), 0.0, ink);
+            painter.line_segment([c + vec2(0.0, -s * 0.08), c + vec2(0.0, -s * 0.44)], Stroke::new(w * 1.2, ink));
+            painter.add(Shape::convex_polygon(
+                vec![c + vec2(0.0, -s * 0.5), c + vec2(s * 0.14, -s * 0.32), c + vec2(-s * 0.14, -s * 0.32)],
+                ink,
+                Stroke::NONE,
+            ));
+        }
+        // an anvil with a spark
+        4 => {
+            let y = c.y + s * 0.05;
+            painter.add(Shape::convex_polygon(
+                vec![
+                    pos2(c.x - s * 0.42, y - s * 0.12),
+                    pos2(c.x + s * 0.3, y - s * 0.12),
+                    pos2(c.x + s * 0.3, y + s * 0.02),
+                    pos2(c.x + s * 0.1, y + s * 0.08),
+                    pos2(c.x - s * 0.2, y + s * 0.08),
+                    pos2(c.x - s * 0.3, y),
+                ],
+                ink,
+                Stroke::NONE,
+            ));
+            painter.rect_filled(Rect::from_min_max(pos2(c.x - s * 0.12, y + s * 0.08), pos2(c.x + s * 0.06, y + s * 0.26)), 0.0, ink);
+            painter.rect_filled(Rect::from_min_max(pos2(c.x - s * 0.24, y + s * 0.26), pos2(c.x + s * 0.18, y + s * 0.34)), 0.0, ink);
+            spark(c + vec2(s * 0.28, -s * 0.32), s * 0.16);
+        }
+        // a balance: keep or give
+        5 => {
+            painter.line_segment([c + vec2(0.0, -s * 0.36), c + vec2(0.0, s * 0.34)], line);
+            painter.line_segment([c + vec2(-s * 0.18, s * 0.36), c + vec2(s * 0.18, s * 0.36)], line);
+            painter.line_segment([c + vec2(-s * 0.38, -s * 0.22), c + vec2(s * 0.38, -s * 0.22)], line);
+            for dx in [-s * 0.38, s * 0.38] {
+                let top = c + vec2(dx, -s * 0.22);
+                painter.line_segment([top, top + vec2(-s * 0.1, s * 0.26)], line);
+                painter.line_segment([top, top + vec2(s * 0.1, s * 0.26)], line);
+                painter.line_segment([top + vec2(-s * 0.13, s * 0.26), top + vec2(s * 0.13, s * 0.26)], Stroke::new(w * 1.3, ink));
+            }
+            painter.circle_filled(c + vec2(0.0, -s * 0.38), s * 0.05, ink);
+        }
+        // a sorted list: bars from long to short, a spark beside the first
+        6 => {
+            for (i, f) in [0.62f32, 0.46, 0.3].iter().enumerate() {
+                let y = c.y - s * 0.22 + i as f32 * s * 0.22;
+                painter.rect_filled(Rect::from_min_size(pos2(c.x - s * 0.4, y - s * 0.06), vec2(s * f, s * 0.12)), 1.0, ink);
+            }
+            spark(c + vec2(s * 0.34, -s * 0.24), s * 0.16);
+        }
+        // a cut gem rising (two chevrons above it)
+        7 => {
+            let g = c + vec2(0.0, s * 0.14);
+            let pts = vec![
+                g + vec2(-s * 0.3, -s * 0.08),
+                g + vec2(-s * 0.16, -s * 0.22),
+                g + vec2(s * 0.16, -s * 0.22),
+                g + vec2(s * 0.3, -s * 0.08),
+                g + vec2(0.0, s * 0.26),
+            ];
+            painter.add(Shape::convex_polygon(pts, Color32::TRANSPARENT, line));
+            painter.line_segment([g + vec2(-s * 0.3, -s * 0.08), g + vec2(s * 0.3, -s * 0.08)], line);
+            for dy in [-s * 0.38, -s * 0.5] {
+                painter
+                    .add(Shape::line(vec![c + vec2(-s * 0.14, dy + s * 0.12), c + vec2(0.0, dy), c + vec2(s * 0.14, dy + s * 0.12)], line));
+            }
+        }
+        _ => optimize_icon(painter, c, size, ink),
+    }
+}

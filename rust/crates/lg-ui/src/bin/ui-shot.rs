@@ -124,6 +124,44 @@ fn main() {
             println!("card {id}");
             continue;
         }
+        // "icons:optimize": the optimization icon's candidates, numbered: on a gold button, an idle one, and large
+        if tab == "icons:optimize" {
+            let pal = lg_ui::theme::palette(None);
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(w, h))
+                .with_pixels_per_point(1.0)
+                .with_accessibility_check(false)
+                .wgpu()
+                .build_ui(|ui| {
+                    lg_ui::theme::apply(ui.ctx(), &pal);
+                    let painter = ui.painter();
+                    painter.rect_filled(ui.max_rect(), 0.0, pal.sand);
+                    for k in 0..8usize {
+                        let x = 20.0 + k as f32 * 110.0;
+                        let f = lg_ui::widgets::text(18.0);
+                        lg_ui::jtext::draw(
+                            painter,
+                            egui::pos2(x + 45.0, 18.0),
+                            egui::Align2::CENTER_CENTER,
+                            &format!("{}", k + 1),
+                            &f,
+                            pal.gold,
+                        );
+                        let b = egui::Rect::from_min_size(egui::pos2(x + 8.0, 40.0), egui::vec2(28.0, 28.0));
+                        painter.rect(b, 0.0, pal.gold, egui::Stroke::new(1.0, pal.line), egui::StrokeKind::Inside);
+                        lg_ui::widgets::optimize_icon_variant(painter, b.center(), 20.0, egui::Color32::from_rgb(0x2A, 0x20, 0x10), k);
+                        let b2 = egui::Rect::from_min_size(egui::pos2(x + 50.0, 40.0), egui::vec2(28.0, 28.0));
+                        painter.rect(b2, 0.0, pal.paper, egui::Stroke::new(1.0, pal.line), egui::StrokeKind::Inside);
+                        lg_ui::widgets::optimize_icon_variant(painter, b2.center(), 20.0, pal.ink_muted, k);
+                        lg_ui::widgets::optimize_icon_variant(painter, egui::pos2(x + 45.0, 120.0), 60.0, pal.gold, k);
+                    }
+                });
+            harness.run_steps(2);
+            let img = harness.render().expect("render");
+            img.save(std::path::Path::new(out).join("icons-optimize.png")).expect("save");
+            println!("icons optimize");
+            continue;
+        }
         // a fresh window per picture, the Java default theme as the oracle shows it
         let mut win = lg_ui::window::Window::new(&assets, props.clone());
         win.palette = lg_ui::theme::palette(None);
