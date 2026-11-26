@@ -31,6 +31,12 @@ const MAX_ZOOM: f64 = 3.0;
 const MAX_FIT: f32 = 1.7;
 const FIT_MARGIN: f32 = 120.0;
 const POLL_MS: i64 = 60_000;
+/// Room around the caravan on the page: street before and after it, sky above the tallest load, ground under the
+/// road.
+const STREET: f32 = 140.0;
+const SKY_ROOM: f32 = 60.0;
+const GROUND_ROOM: f32 = 40.0;
+const GROUND: Color32 = rgb(0x4A3522);
 /// How many rows of items a wagon is piled up to: then they go up onto a hot air balloon tied to it (its driver
 /// riding up there with them), and the wagon fills up again below, wider now that its seat is free; and so on.
 pub static PILE_ROWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(15);
@@ -921,13 +927,21 @@ impl CaravanView {
                     let view_w = w - 4.0;
                     let has = !scene.riders.is_empty() || !scene.walkers.is_empty();
                     let f_scale = if has { scene.fit(&painter, view_w) * zoom as f32 } else { 1.0 };
-                    let scene_h = if has { HEIGHT.max((scene.content_height() * f_scale).ceil() + 34.0 + 20.0) } else { HEIGHT };
-                    let content_w = if has { 400f32.max(PAD + (scene.content_width(&painter) * f_scale).ceil() + PAD) } else { 400.0 };
+                    let scene_h = if has { HEIGHT.max((scene.content_height() * f_scale).ceil() + 34.0 + 20.0 + SKY_ROOM) } else { HEIGHT };
+                    let content_w =
+                        if has { 400f32.max(STREET + (scene.content_width(&painter) * f_scale).ceil() + STREET) } else { 400.0 };
                     // a window onto the scene as high as the road: dragged with the mouse (or scrolled) up to its edges,
                     // the road at the bottom first
-                    let frame = Rect::from_min_size(pos2(x, y), vec2(w, HEIGHT + 18.0 + 4.0));
+                    // as high as the page leaves room for, above the status line and the member's card (never lower
+                    // than the road needs); the scene's sky grows with it
+                    let fh = jtext::height(&painter, &f);
+                    let finds_h = 14.0 + jtext::height(&painter, &crate::theme::head(30.0)) + 4.0 + 4.0 * (36.0 + fh + 6.0) - 6.0 + 14.0;
+                    let below = fh + 12.0 + self_card_height(&painter).max(finds_h) + 8.0 + 12.0;
+                    let vp_h = (r.bottom() - y - 4.0 - 8.0 - below).max(HEIGHT + 18.0);
+                    let scene_h = scene_h.max(vp_h - 18.0 - GROUND_ROOM);
+                    let frame = Rect::from_min_size(pos2(x, y), vec2(w, vp_h + 4.0));
                     painter.rect_stroke(frame, 0.0, Stroke::new(2.0, p.line), StrokeKind::Inside);
-                    let vp = Rect::from_min_size(frame.min + vec2(2.0, 2.0), vec2(view_w, HEIGHT + 18.0));
+                    let vp = Rect::from_min_size(frame.min + vec2(2.0, 2.0), vec2(view_w, vp_h));
                     let mut road = ui.new_child(egui::UiBuilder::new().max_rect(vp));
                     let mut hits = Hits::default();
                     egui::ScrollArea::both()
@@ -936,7 +950,14 @@ impl CaravanView {
                         .stick_to_bottom(true)
                         .show(&mut road, |ui| {
                             let sw = content_w.max(view_w);
-                            let (sr, _) = ui.allocate_exact_size(vec2(sw, scene_h), Sense::hover());
+                            let (all, _) = ui.allocate_exact_size(vec2(sw, scene_h + GROUND_ROOM), Sense::hover());
+                            // ground under the road
+                            ui.painter().rect_filled(
+                                Rect::from_min_max(pos2(all.left(), all.bottom() - GROUND_ROOM), all.max),
+                                0.0,
+                                GROUND,
+                            );
+                            let sr = Rect::from_min_size(all.min, vec2(sw, scene_h));
                             let p2 = ui.painter().with_clip_rect(sr.intersect(ui.clip_rect()));
                             let extra = scene_h - HEIGHT;
                             if extra > 0.0 {
@@ -948,7 +969,7 @@ impl CaravanView {
                             }
                             let ground = HEIGHT - 34.0;
                             let drawn = scene.content_width(&p2) * f_scale;
-                            let start = if drawn + 2.0 * PAD > sw { PAD } else { (sw - drawn) / 2.0 };
+                            let start = if drawn + 2.0 * STREET > sw { STREET } else { (sw - drawn) / 2.0 };
                             let t = T { o: sr.min + vec2(0.0, extra), start, ground, f: f_scale, gy: sr.min.y + extra + ground };
                             let mut xx = PAD;
                             scene.paint_ox(&p2, &t, xx, ground);
