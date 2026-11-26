@@ -3394,20 +3394,23 @@ fn forge_switch(
     };
     let (lw, dw) = (turned(l) * k, turned(d) * k);
     // their pictures have an empty edge: a little closer, so the stones meet
-    mark(3, pos2(meet - lw / 2.0, base - lw / 2.0), true);
+    // legendary's stones sit high in its picture: a little lower, on the same line as divine's
+    mark(3, pos2(meet - lw / 2.0, base - lw / 2.0 + 2.5 * k), true);
     mark(4, pos2(meet + dw / 2.0, base - dw / 2.0), true);
     let row_top = base - bottom_h * k;
     let rare_c = pos2(meet, row_top - ra.y * k / 2.0);
     mark(2, rare_c, false);
     let top_y = row_top - ra.y * k - un.y * k / 2.0;
     mark(1, pos2(rare_c.x - ra.x * k / 4.0, top_y), false);
-    let common = Rect::from_center_size(pos2(rare_c.x + ra.x * k / 4.0, top_y), vec2(un.x * k * 0.7, un.y * k * 0.7));
-    painter.rect_stroke(
-        common,
-        0.0,
-        Stroke::new(1.0, if allowed[0] { p.ink } else { p.ink_muted.gamma_multiply(0.5) }),
-        StrokeKind::Inside,
-    );
+    // common: a stone turned as uncommon's, a faint white
+    let cc = pos2(rare_c.x + ra.x * k / 4.0, top_y);
+    let (rx, ry) = (un.x * k * 0.36, un.y * k * 0.36);
+    let a = if allowed[0] { 1.0 } else { 0.35 };
+    painter.add(egui::Shape::convex_polygon(
+        vec![cc + vec2(0.0, -ry), cc + vec2(rx, 0.0), cc + vec2(0.0, ry), cc + vec2(-rx, 0.0)],
+        Color32::from_white_alpha((70.0 * a) as u8),
+        Stroke::new(1.0, Color32::from_white_alpha((150.0 * a) as u8)),
+    ));
     // open while the mouse is on the button or on the panel (and the way between them)
     let aid = ui.scope_id().with("rarity-pick-panel");
     let panel_was: Option<Rect> = ui.data(|d| d.get_temp(aid));
