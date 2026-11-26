@@ -3103,7 +3103,7 @@ fn side_h(forge: bool, n: usize, max: usize, lh16: f32) -> f32 {
     } else {
         n.min(max) as f32 * (ICON_B + BAR_ROW_GAP) + if n > max { lh16 } else { 0.0 }
     };
-    lh16 + 12.0 + body
+    lh16 + if forge { 4.0 } else { 12.0 } + body
 }
 
 /// An item's icon in `r` with its copy's enchantments (the rarity badge at its corner).
@@ -3436,7 +3436,8 @@ fn st_bar(
             let sx = x0;
             let top_s = if seasonal { cy } else { cy + seasonal_h + SIDE_GAP };
             jtext::draw(&painter, pos2(sx, top_s), Align2::LEFT_TOP, if seasonal { "SEASONAL" } else { "REGULAR" }, &f16, fixed::MUTED);
-            let mut y = top_s + lh16 + 12.0;
+            // the token count close under its caption; copies a little further down
+            let mut y = top_s + lh16 + if forge.is_some() { 4.0 } else { 12.0 };
             let on_side = |h: &lg_app::loadout::Held| h.seasonal.is_none() || h.seasonal == Some(seasonal);
             if let Some(f) = forge {
                 // missing, the forge makes it: the tokens on this side, and the spare ST item it takes (gold box) with
@@ -3458,9 +3459,19 @@ fn st_bar(
                         Some(spare) => {
                             let ir = Rect::from_min_size(pos2(sx, y), vec2(ICON_B, ICON_B));
                             item_icon(&painter, icons, ui, app, rarity, spare.item, &spare.held, ir);
-                            painter.rect_stroke(ir.expand(1.0), 0.0, Stroke::new(2.0, p.gold), StrokeKind::Outside);
                             let pr = Rect::from_min_size(pos2(ir.right() + 6.0, y), vec2(ICON_B, ICON_B));
                             place_look(ui, &painter, icons, app, &spare.held, spare.item, pr, ("st-spare", *id, seasonal));
+                            // enough tokens on this side too: it can be made here
+                            if enough {
+                                jtext::draw(
+                                    &painter,
+                                    pos2(pr.right() + 8.0, pr.center().y),
+                                    Align2::LEFT_CENTER,
+                                    "CRAFTABLE",
+                                    &f16,
+                                    p.gold,
+                                );
+                            }
                         }
                     },
                 }
