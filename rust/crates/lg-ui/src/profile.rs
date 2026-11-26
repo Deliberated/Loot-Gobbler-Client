@@ -1303,8 +1303,7 @@ fn exaltation(ui: &mut Ui, p: &Palette, app: &App, focus: Option<i32>) {
         soft(ui, p, &line);
         ui.add_space(6.0);
         // each stat's exaltations (0..5), in the game's order of the stats
-        const STATS: [(&str, usize); 8] =
-            [("HP", 7), ("MP", 6), ("ATT", 5), ("DEF", 4), ("SPD", 1), ("DEX", 0), ("VIT", 2), ("WIS", 3)];
+        const STATS: [(&str, usize); 8] = [("HP", 7), ("MP", 6), ("ATT", 5), ("DEF", 4), ("SPD", 1), ("DEX", 0), ("VIT", 2), ("WIS", 3)];
         let progress = app.exalts.progress(k.id);
         let w = ui.available_width();
         let (row, _) = ui.allocate_exact_size(vec2(w, 44.0), Sense::hover());
@@ -1313,10 +1312,23 @@ fn exaltation(ui: &mut Ui, p: &Palette, app: &App, focus: Option<i32>) {
         for (j, (name, at)) in STATS.iter().enumerate() {
             let lv = progress.and_then(|v| v.get(*at)).map_or(0, |v| lg_app::exalt_store::level(*v));
             let cr = egui::Rect::from_min_size(pos2(row.left() + j as f32 * (cw + 4.0), row.top()), vec2(cw, 44.0));
-            painter.rect(cr, 0.0, if lv == 5 { p.gold } else { p.header }, egui::Stroke::new(1.0, egui::Color32::BLACK), egui::StrokeKind::Inside);
+            painter.rect(
+                cr,
+                0.0,
+                if lv == 5 { p.gold } else { p.header },
+                egui::Stroke::new(1.0, egui::Color32::BLACK),
+                egui::StrokeKind::Inside,
+            );
             let ink = if lv == 5 { p.on_accent } else { p.ink };
             crate::jtext::draw(painter, pos2(cr.center().x, cr.top() + 3.0), egui::Align2::CENTER_TOP, name, &text(16.0), ink);
-            crate::jtext::draw(painter, pos2(cr.center().x, cr.bottom() - 3.0), egui::Align2::CENTER_BOTTOM, &format!("{lv}/5"), &text(20.0), ink);
+            crate::jtext::draw(
+                painter,
+                pos2(cr.center().x, cr.bottom() - 3.0),
+                egui::Align2::CENTER_BOTTOM,
+                &format!("{lv}/5"),
+                &text(20.0),
+                ink,
+            );
         }
         return;
     }

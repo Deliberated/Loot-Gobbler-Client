@@ -1119,7 +1119,9 @@ fn pot_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, c: &Cha
         let (Some(base), Some(max)) = (base, max) else {
             ui.label(egui::RichText::new(format!("{maxed} of 8 stats maxed")).font(text(18.0)));
             ui.label(
-                egui::RichText::new("Play this character or refresh the list to see its potions left.").font(text(16.0)).color(fixed::MUTED),
+                egui::RichText::new("Play this character or refresh the list to see its potions left.")
+                    .font(text(16.0))
+                    .color(fixed::MUTED),
             );
             return;
         };
@@ -1131,7 +1133,11 @@ fn pot_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, c: &Cha
             })
             .collect();
         let total: i32 = pots.iter().sum();
-        let head = if total == 0 { "Maxed: 8/8".to_string() } else { format!("{maxed}/8 · {total} potion{} to 8/8", if total == 1 { "" } else { "s" }) };
+        let head = if total == 0 {
+            "Maxed: 8/8".to_string()
+        } else {
+            format!("{maxed}/8 · {total} potion{} to 8/8", if total == 1 { "" } else { "s" })
+        };
         ui.label(egui::RichText::new(head).font(text(20.0)).color(STATS_MAXED));
         let (cw, ch, gap) = (170.0, 58.0, 6.0);
         let (area, _) = ui.allocate_exact_size(vec2(2.0 * cw + gap, 4.0 * ch + 3.0 * gap), Sense::hover());
@@ -1140,12 +1146,16 @@ fn pot_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, c: &Cha
             let cell = Rect::from_min_size(area.min + vec2((i % 2) as f32 * (cw + gap), (i / 2) as f32 * (ch + gap)), vec2(cw, ch));
             painter.rect(cell, 0.0, Color32::from_black_alpha(90), Stroke::new(1.5, Color32::from_gray(70)), StrokeKind::Inside);
             let ls = widgets::outlined_size(painter, NAMES[i], 18.0);
-            widgets::outlined_text(painter, Rect::from_min_size(pos2(cell.center().x - ls.x / 2.0, cell.top() + 3.0), ls), NAMES[i], 18.0, Color32::from_gray(170));
+            widgets::outlined_text(
+                painter,
+                Rect::from_min_size(pos2(cell.center().x - ls.x / 2.0, cell.top() + 3.0), ls),
+                NAMES[i],
+                18.0,
+                Color32::from_gray(170),
+            );
             let value = if pots[i] == 0 { base[i].to_string() } else { format!("{}|{}", base[i], pots[i]) };
-            let bonus = exalts
-                .as_ref()
-                .and_then(|e| e.get(EXALT_AT[i]))
-                .map_or(0, |&v| lg_app::exalt_store::level(v) * if i < 2 { 5 } else { 1 });
+            let bonus =
+                exalts.as_ref().and_then(|e| e.get(EXALT_AT[i])).map_or(0, |&v| lg_app::exalt_store::level(v) * if i < 2 { 5 } else { 1 });
             // the game's boost holds the exaltations too
             let gear = boosts.map_or(0, |b| if b[i] >= bonus { b[i] - bonus } else { b[i] });
             let gear = (gear != 0).then(|| format!(" ({gear:+})"));
@@ -1156,7 +1166,13 @@ fn pot_tip(ui: &Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, c: &Cha
             let bs = bonus.as_ref().map_or(egui::Vec2::ZERO, |b| widgets::outlined_size(painter, b, px));
             let y = cell.bottom() - 4.0 - vs.y;
             let x = cell.center().x - (vs.x + gs.x + bs.x) / 2.0;
-            widgets::outlined_text(painter, Rect::from_min_size(pos2(x, y), vs), &value, px, if pots[i] == 0 { STATS_MAXED } else { STATS_OPEN });
+            widgets::outlined_text(
+                painter,
+                Rect::from_min_size(pos2(x, y), vs),
+                &value,
+                px,
+                if pots[i] == 0 { STATS_MAXED } else { STATS_OPEN },
+            );
             if let Some(g) = &gear {
                 widgets::outlined_text(painter, Rect::from_min_size(pos2(x + vs.x, y), gs), g, px, GEAR_GREEN);
             }

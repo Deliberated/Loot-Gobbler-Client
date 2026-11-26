@@ -362,7 +362,8 @@ pub fn pour(
         // a teardrop's outline (x = cos θ, y = sin θ · sin(θ/2)^1.3) from its point to where it is widest
         const M: f32 = 1.3;
         let shape = |th: f32| (th.cos(), th.sin() * (th / 2.0).sin().powf(M));
-        let widest = (1..400).map(|i| i as f32 / 400.0 * std::f32::consts::PI).max_by(|a, b| shape(*a).1.total_cmp(&shape(*b).1)).unwrap_or(2.0);
+        let widest =
+            (1..400).map(|i| i as f32 / 400.0 * std::f32::consts::PI).max_by(|a, b| shape(*a).1.total_cmp(&shape(*b).1)).unwrap_or(2.0);
         let (wx, wy) = shape(widest);
         let half = band.height() / 2.0;
         let mut mesh = egui::Mesh::default();
@@ -391,7 +392,8 @@ pub fn pour(
         if x1 <= x0 {
             continue;
         }
-        let dark = painter.with_clip_rect(Rect::from_min_max(pos2(x0, inner.top()), pos2(x1, inner.bottom())).intersect(painter.clip_rect()));
+        let dark =
+            painter.with_clip_rect(Rect::from_min_max(pos2(x0, inner.top()), pos2(x1, inner.bottom())).intersect(painter.clip_rect()));
         jtext::draw(&dark, r.center(), Align2::CENTER_CENTER, &labels[k], &font, p.on_accent);
     }
 }
