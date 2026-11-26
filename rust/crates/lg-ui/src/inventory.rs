@@ -724,11 +724,19 @@ impl InventoryView {
             widgets::segmented_settle(ui, pos2(pages_x, all.top()), &PAGES, self.page);
         }
         let goal = if self.melt { 1.0 } else { 0.0 };
-        self.melt_t = if self.melt_t < goal { (self.melt_t + dt / 0.45).min(goal) } else { (self.melt_t - dt / 0.45).max(goal) };
+        let speed = widgets::POUR_S;
+        self.melt_t = if self.melt_t < goal { (self.melt_t + dt / speed).min(goal) } else { (self.melt_t - dt / speed).max(goal) };
         let mt = self.melt_t * self.melt_t * (3.0 - 2.0 * self.melt_t);
         if mt > 0.0 && self.page <= 1 {
-            // the pour runs from (or, parting, back into) the side the sets are on when they come or go
-            melt_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, mt, self.melt_exit == 1);
+            if self.melt && self.melt_t < 1.0 {
+                // melting in: gold pours from the tab left into the other, as between any two sections; the two
+                // show as one once it is there
+                let (from, to) = if self.melt_exit == 0 { (0, 1) } else { (1, 0) };
+                widgets::pour(ui, &p, pos2(pages_x, all.top()), 36.0, &PAGES, false, from, to, self.melt_t, None);
+            } else {
+                // parting: the two run apart again from the side the sets are on
+                melt_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, mt, self.melt_exit == 1);
+            }
         }
         // the forge resources, right-aligned on the same row: the regular side at the right, the seasonal one before it
         let pages_end = pages_x + widgets::segmented_width(ui.painter(), &PAGES, false) + 10.0;

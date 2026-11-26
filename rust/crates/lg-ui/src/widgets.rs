@@ -184,6 +184,9 @@ pub fn segment_rects(painter: &egui::Painter, at: egui::Pos2, h: f32, names: &[&
 
 /// Where a row of section buttons keeps the one last selected and its pour (from, to, how far 0..1): by its names,
 /// not where it stands (a page sliding in moves it).
+/// How long gold takes to pour into the next section button (each button skipped adds a tenth of a second).
+pub const POUR_S: f32 = 0.3;
+
 fn pour_id(ui: &Ui, _at: egui::Pos2, names: &[&str]) -> egui::Id {
     ui.scope_id().with(("seg-pour", names))
 }
@@ -264,7 +267,7 @@ pub fn segmented(
         x += w + if joined { 0.0 } else { 8.0 };
     }
     if let Some((from, to, t)) = ui.data(|d| d.get_temp::<(usize, usize, f32)>(id.with("t"))) {
-        let length = 0.45 + 0.15 * (from.abs_diff(to) as f32 - 1.0);
+        let length = POUR_S + 0.1 * (from.abs_diff(to) as f32 - 1.0);
         let t = (t + ui.input(|i| i.stable_dt).min(0.1) / length).min(1.0);
         let span = ui.data(|d| d.get_temp::<(usize, String)>(id.with("span")));
         pour(ui, p, at, h, names, joined, from, to, t, span.as_ref().map(|(e, l)| (*e, l.as_str())));
