@@ -3454,10 +3454,20 @@ fn forge_switch(
                                 Stroke::new(2.0, p.gold),
                             );
                         }
-                        if k > 0 {
-                            enchant_badge(painter, rarity, pos2(row.left() + 46.0, row.center().y + 6.0), k, 5.0);
-                        } else {
-                            painter.circle_stroke(pos2(row.left() + 38.0, row.center().y), 4.0, Stroke::new(1.0, p.ink_muted));
+                        // the rarity's mark, all centred in one column; common a faint white stone
+                        let mc = pos2(row.left() + 38.0, row.center().y);
+                        match &rarity[k] {
+                            Some(t) if k > 0 => {
+                                let sz = vec2(t.size()[0] as f32, t.size()[1] as f32);
+                                painter.image(t.id(), Rect::from_center_size(mc, sz), uv(), Color32::WHITE);
+                            }
+                            _ => {
+                                painter.add(egui::Shape::convex_polygon(
+                                    vec![mc + vec2(0.0, -3.5), mc + vec2(3.5, 0.0), mc + vec2(0.0, 3.5), mc + vec2(-3.5, 0.0)],
+                                    Color32::from_white_alpha(70),
+                                    Stroke::new(1.0, Color32::from_white_alpha(150)),
+                                ));
+                            }
                         }
                         jtext::draw(
                             painter,
