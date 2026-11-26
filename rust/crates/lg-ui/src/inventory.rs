@@ -3300,11 +3300,15 @@ fn st_bar(
     // the card's frame as wide as the selected one's (3 px), so the joint's sides run on from it
     full.rect_stroke(real_card, 0.0, Stroke::new(3.0, gold), StrokeKind::Inside);
     // the card's colour running down through the joint and fading out in the bar
-    full.rect_filled(
+    // a set not complete: its dark card glows gold where it opens into the bar, so the fade shows on it too
+    let glow = if card_fill == p.header { mix(p.gold, p.paper, 0.3) } else { card_fill };
+    crate::overlays::gradient_round_rect(
+        &full,
         // over the card's bottom border too (the selected one's is 3 px)
         Rect::from_min_max(pos2(card.left() + 3.0, card.bottom() - 4.0), pos2(card.right() - 3.0, bar.top() + 3.0)),
         0.0,
         card_fill,
+        glow,
     );
     let fade_end = (bar.top() + 110.0).min(bar.bottom() - 2.0);
     if fade_end > bar.top() + 3.0 {
@@ -3334,7 +3338,7 @@ fn st_bar(
             let y = bar.top() + 3.0 + depth * k as f32 / rows_n as f32;
             for i in 0..=cols_n {
                 let x = x0 + (x1 - x0) * i as f32 / cols_n as f32;
-                mesh.colored_vertex(pos2(x, y), mix(card_fill, p.paper, f64::from(weight(x, y))));
+                mesh.colored_vertex(pos2(x, y), mix(glow, p.paper, f64::from(weight(x, y))));
             }
         }
         let n = cols_n as u32 + 1;
