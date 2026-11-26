@@ -3022,12 +3022,11 @@ fn key_details(ui: &Ui, p: &Palette, icons: &mut crate::icons::Icons, app: &lg_a
 }
 
 /// The bar's piece columns: room above the piece, below it to the side's caption, the icons' size, the copies shown
-/// per side (all four pieces, one piece alone), the room between them.
+/// per side (a piece clicked: all, scrolled), the room between them.
 const BAR_TOP: f32 = 22.0;
 const BAR_GAP: f32 = 24.0;
 const ICON_B: f32 = 36.0;
 const BAR_ROWS: usize = 3;
-const BAR_ROWS_ONE: usize = 8;
 const BAR_ROW_GAP: f32 = 10.0;
 
 /// How tall the bar's piece columns are for a set: the most rows a side of a piece shows (a missing piece the forge
@@ -3042,10 +3041,11 @@ fn bar_body_h(
     let lh16 = jtext::height(painter, &text(16.0));
     let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
     let copies = app.holdings.copies_of(&living, |id| set.pieces.contains(&id));
-    let one = one.filter(|id| set.pieces.contains(id));
-    let max = if one.is_some() { BAR_ROWS_ONE } else { BAR_ROWS };
+    // a piece clicked scrolls in its column: the bar keeps its height
+    let _ = one;
+    let max = BAR_ROWS;
     let mut sides_h: f32 = 0.0;
-    for id in set.pieces.iter().filter(|id| one.is_none_or(|o| o == **id)) {
+    for id in set.pieces.iter() {
         let forge = plan.iter().any(|f| f.piece == *id);
         let n = |seasonal: bool| copies.get(id).map_or(0, |c| c.iter().filter(|h| (h.seasonal == Some(true)) == seasonal).count());
         sides_h = sides_h.max(side_h(forge, n(true), max, lh16) + SIDE_GAP + side_h(forge, n(false), max, lh16));
@@ -3355,11 +3355,10 @@ fn st_bar(
     let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
     let copies = app.holdings.copies_of(&living, |id| set.pieces.contains(&id));
     let plan = if mode == Mode::Off { Vec::new() } else { stock.plan(data, set, &|i| has(i)) };
+    // a piece clicked: its column shows every copy with where it is in words (scrolled when they do not fit), the
+    // others darkened
     let one = piece.filter(|id| set.pieces.contains(id));
-    let pieces: Vec<i32> = match one {
-        Some(id) => vec![id],
-        None => set.pieces.to_vec(),
-    };
+    let pieces: Vec<i32> = set.pieces.to_vec();
     let (f18, f16, fs) = (text(18.0), text(16.0), text(14.0));
     let lh16 = jtext::height(&painter, &f16);
     let colw = (bar.width() - 16.0) / pieces.len() as f32;
@@ -3372,7 +3371,7 @@ fn st_bar(
         if k > 0 {
             // down to the token flow's line, when there is one
             let flow_top = if plan.is_empty() { bar.top() + full_h - 8.0 } else { bar.top() + full_h - FLOW_H - 6.0 };
-            widgets::pack_divider(&painter, x0 - 4.0, bar.top() + 8.0, flow_top, p.gold);
+            widgets::pack_divider(&painter, x0 - 4.0, bar.top() + 22.0, flow_top - 14.0, p.gold);
         }
         // the piece, a little away from the divider
         let x0 = x0 + if k > 0 { 12.0 } else { 4.0 };
@@ -3392,9 +3391,33 @@ fn st_bar(
         let kept = stock.kept(*id);
         let mut used = vec![false; ranked.len()];
         // the seasonal side, then the regular one below it, each the column's width
-        let max_rows = if one.is_some() { BAR_ROWS_ONE } else { BAR_ROWS };
-        let n_seasonal = copies.get(id).map_or(0, |c| c.iter().filter(|h| h.seasonal == Some(true)).count());
+        let focus = one == Some(*id);
+        let max_rows = if focus { usize::MAX } else { BAR_ROWS };
+        let n_side = |seasonal: bool| copies.get(id).map_or(0, |c| c.iter().filter(|h| (h.seasonal == Some(true)) == seasonal).count());
+        let n_seasonal = n_side(true);
         let seasonal_h = side_h(forge.is_some(), n_seasonal, max_rows, lh16);
+        // the column clicked: as tall as it needs, scrolled within the bar by the wheel (no scrollbar)
+        let bottom = if plan.is_empty() { bar.top() + full_h - 8.0 } else { bar.top() + full_h - FLOW_H - 6.0 };
+        let view = Rect::from_min_max(pos2(x0 - 6.0, cy - 4.0), pos2(x0 + colw + 6.0, bottom));
+        let mut off = 0.0f32;
+        if focus {
+            let content = seasonal_h + SIDE_GAP + side_h(forge.is_some(), n_side(false), max_rows, lh16);
+            let most = (content - view.height() + 8.0).max(0.0);
+            let key = ui.scope_id().with(("st-col-scroll", &set.name, *id));
+            off = ui.data(|d| d.get_temp::<f32>(key)).unwrap_or(0.0);
+            if ui.rect_contains_pointer(view) {
+                let d = ui.input(|i| i.smooth_scroll_delta.y);
+                if d != 0.0 {
+                    off -= d;
+                    // the wheel is this column's: the page does not scroll with it
+                    ui.ctx().input_mut(|i| i.smooth_scroll_delta.y = 0.0);
+                }
+            }
+            off = off.clamp(0.0, most);
+            ui.data_mut(|d| d.insert_temp(key, off));
+        }
+        let painter = if focus { painter.with_clip_rect(view.intersect(painter.clip_rect())) } else { painter.clone() };
+        let cy = cy - off;
         for seasonal in [true, false] {
             let sx = x0;
             let top_s = if seasonal { cy } else { cy + seasonal_h + SIDE_GAP };
@@ -3448,7 +3471,7 @@ fn st_bar(
                 continue;
             }
             // a row per copy: the item with its enchantments, beside it where it is (one piece: also in words)
-            let max = if one.is_some() { BAR_ROWS_ONE } else { BAR_ROWS };
+            let max = max_rows;
             for (n, h) in list.iter().enumerate() {
                 if n == max {
                     let more = format!("+{} more", list.len() - max);
@@ -3459,7 +3482,7 @@ fn st_bar(
                 item_icon(&painter, icons, ui, app, rarity, *id, h, ir);
                 let pr = Rect::from_min_size(pos2(ir.right() + 6.0, y), vec2(ICON_B, ICON_B));
                 place_look(ui, &painter, icons, app, h, *id, pr, ("st-copy", *id, h.char_id, &h.slot, n));
-                if one.is_some() {
+                if focus {
                     let tt = widgets::fit(&painter, &place_of(app, h), &fs, half - 2.0 * ICON_B - 18.0);
                     jtext::draw(&painter, pos2(pr.right() + 6.0, pr.center().y), Align2::LEFT_CENTER, &tt, &fs, p.ink_soft);
                 }
@@ -3490,10 +3513,15 @@ fn st_bar(
                         toggled = Some(*id);
                     }
                 }
-                if rank == kept {
-                    painter.rect_stroke(ir.expand(1.0), 0.0, Stroke::new(2.0, p.gold), StrokeKind::Outside);
-                }
             }
+        }
+        // a piece clicked: the other columns a little darker
+        if one.is_some() && !focus {
+            full.rect_filled(
+                Rect::from_min_max(pos2(x0 - 8.0, bar.top() + 3.0), pos2(x0 + colw + 8.0, bottom)),
+                0.0,
+                Color32::from_black_alpha(90),
+            );
         }
     }
     // the token flow: each place holding the set's tokens, its side, how many and how many pieces they make

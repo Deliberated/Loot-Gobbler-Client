@@ -622,13 +622,17 @@ fn main() {
                     // "Inventory:st:set:<title>[:<piece id>]": ST Sets with that set's bar open (that piece alone)
                     if let Some(rest) = tab.strip_prefix("Inventory:st:set:") {
                         win.open("Inventory:st");
+                        // the piece by its id, or "#<n>" its place in the set
                         let (title, piece) = match rest.rsplit_once(':') {
-                            Some((t, p)) if p.parse::<i32>().is_ok() => (t, p.parse::<i32>().ok()),
+                            Some((t, p)) if p.parse::<i32>().is_ok() || p.starts_with('#') => (t, Some(p)),
                             _ => (rest, None),
                         };
                         if let Some(s) = app.world.data().st_sets.iter().find(|s| s.title == title) {
                             win.inventory.st_selected = Some(s.name.clone());
-                            win.inventory.st_piece = piece;
+                            win.inventory.st_piece = piece.and_then(|p| match p.strip_prefix('#') {
+                                Some(n) => n.parse::<usize>().ok().and_then(|n| s.pieces.get(n).copied()),
+                                None => p.parse::<i32>().ok(),
+                            });
                         }
                     }
                     // "Inventory:keys:<item id>": the Keys page with that key clicked
