@@ -345,13 +345,36 @@ pub fn pour(
     let neck = lead - dir * tip_len;
     let (lo, hi) = (lead.min(back), lead.max(back));
     let gold = p.gold;
-    let cy = src.center().y;
-    // the stream over the gaps the body spans
+    // the body as it stands, cut to `area`: the full-height part up to the neck, then the tip
+    let (b0, b1) = (back.min(neck), back.max(neck));
+    let body = |area: Rect| {
+        let clip = painter.with_clip_rect(area.intersect(painter.clip_rect()));
+        clip.rect_filled(Rect::from_min_max(pos2(b0.max(area.left()), area.top()), pos2(b1.min(area.right()), area.bottom())), 0.0, gold);
+        if tip_len > 0.5 {
+            let half = area.height() / 2.0;
+            let mut mesh = egui::Mesh::default();
+            let n = 16;
+            for i in 0..=n {
+                // u 0 at the tip, 1 at the neck: pointed at the tip, smooth into the full height
+                let u = i as f32 / n as f32;
+                let x = lead - dir * tip_len * u;
+                let y = half * (std::f32::consts::FRAC_PI_2 * u).sin().powf(1.5);
+                mesh.colored_vertex(pos2(x, area.center().y - y), gold);
+                mesh.colored_vertex(pos2(x, area.center().y + y), gold);
+                if i > 0 {
+                    let k = 2 * i as u32;
+                    mesh.add_triangle(k - 2, k - 1, k);
+                    mesh.add_triangle(k - 1, k + 1, k);
+                }
+            }
+            clip.add(Shape::mesh(mesh));
+        }
+    };
+    // the drop in the gaps it crosses, as tall as inside the buttons
     for k in from.min(to)..from.max(to) {
-        let (g0, g1) = (rects[k].right() - 1.5, rects[k + 1].left() + 1.5);
-        let (x0, x1) = (g0.max(lo), g1.min(hi));
-        if x1 > x0 {
-            painter.rect_filled(Rect::from_min_max(pos2(x0, cy - 3.0), pos2(x1, cy + 3.0)), 2.0, gold);
+        let gap = Rect::from_min_max(pos2(rects[k].right() - 1.5, rects[k].top() + 1.5), pos2(rects[k + 1].left() + 1.5, rects[k].bottom() - 1.5));
+        if gap.right().min(hi) > gap.left().max(lo) {
+            body(gap);
         }
     }
     // each button on the way: the part of the body in it, its front rounded
@@ -366,33 +389,7 @@ pub fn pour(
             continue;
         }
         let gr = Rect::from_min_max(pos2(x0, inner.top()), pos2(x1, inner.bottom()));
-        let clip = painter.with_clip_rect(inner.intersect(painter.clip_rect()));
-        // the full-height part up to the neck, then the tip
-        let (b0, b1) = (back.min(neck), back.max(neck));
-        clip.rect_filled(
-            Rect::from_min_max(pos2(b0.max(inner.left()), inner.top()), pos2(b1.min(inner.right()), inner.bottom())),
-            0.0,
-            gold,
-        );
-        if tip_len > 0.5 {
-            let half = inner.height() / 2.0;
-            let mut mesh = egui::Mesh::default();
-            let n = 16;
-            for i in 0..=n {
-                // u 0 at the tip, 1 at the neck: pointed at the tip, smooth into the full height
-                let u = i as f32 / n as f32;
-                let x = lead - dir * tip_len * u;
-                let y = half * (std::f32::consts::FRAC_PI_2 * u).sin().powf(1.5);
-                mesh.colored_vertex(pos2(x, inner.center().y - y), gold);
-                mesh.colored_vertex(pos2(x, inner.center().y + y), gold);
-                if i > 0 {
-                    let k = 2 * i as u32;
-                    mesh.add_triangle(k - 2, k - 1, k);
-                    mesh.add_triangle(k - 1, k + 1, k);
-                }
-            }
-            clip.add(Shape::mesh(mesh));
-        }
+        body(inner);
         // the label dark where the gold is full height (the body, half the tip)
         let mid = lead - dir * tip_len * 0.5;
         let full = Rect::from_min_max(pos2(back.min(mid), inner.top()), pos2(back.max(mid), inner.bottom()));
