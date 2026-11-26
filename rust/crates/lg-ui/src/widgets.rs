@@ -187,12 +187,24 @@ fn pour_id(ui: &Ui, at: egui::Pos2, names: &[&str]) -> egui::Id {
     ui.scope_id().with(("seg-pour", names, at.x.round() as i32))
 }
 
+/// A pour starting now from buttons `from..=end` shown as one (`label`, e.g. two tabs melted) into `to`, which is then
+/// taken as the row's selection.
+pub fn segmented_pour_merged(ui: &Ui, at: egui::Pos2, names: &[&str], from: usize, end: usize, label: &str, to: usize) {
+    let id = pour_id(ui, at, names);
+    ui.data_mut(|d| {
+        d.insert_temp(id, to);
+        d.insert_temp(id.with("t"), (from, to, 0.0f32));
+        d.insert_temp(id.with("span"), (end, label.to_string()));
+    });
+}
+
 /// The row's selection taken as it is, without a pour (e.g. when the view animates the change itself).
 pub fn segmented_settle(ui: &Ui, at: egui::Pos2, names: &[&str], selected: usize) {
     let id = pour_id(ui, at, names);
     ui.data_mut(|d| {
         d.insert_temp(id, selected);
         d.remove::<(usize, usize, f32)>(id.with("t"));
+        d.remove::<(usize, String)>(id.with("span"));
     });
 }
 
@@ -216,7 +228,10 @@ pub fn segmented(
         && b < names.len()
         && selected < names.len()
     {
-        ui.data_mut(|d| d.insert_temp(id.with("t"), (b, selected, 0.0f32)));
+        ui.data_mut(|d| {
+            d.insert_temp(id.with("t"), (b, selected, 0.0f32));
+            d.remove::<(usize, String)>(id.with("span"));
+        });
     }
     if before != Some(selected) {
         ui.data_mut(|d| d.insert_temp(id, selected));
@@ -250,12 +265,14 @@ pub fn segmented(
     if let Some((from, to, t)) = ui.data(|d| d.get_temp::<(usize, usize, f32)>(id.with("t"))) {
         let length = 0.45 + 0.15 * (from.abs_diff(to) as f32 - 1.0);
         let t = (t + ui.input(|i| i.stable_dt).min(0.1) / length).min(1.0);
-        pour(ui, p, at, h, names, joined, from, to, t);
+        let span = ui.data(|d| d.get_temp::<(usize, String)>(id.with("span")));
+        pour(ui, p, at, h, names, joined, from, to, t, span.as_ref().map(|(e, l)| (*e, l.as_str())));
         ui.data_mut(|d| {
             if t < 1.0 {
                 d.insert_temp(id.with("t"), (from, to, t));
             } else {
                 d.remove::<(usize, usize, f32)>(id.with("t"));
+                d.remove::<(usize, String)>(id.with("span"));
             }
         });
         ui.ctx().request_repaint();
@@ -265,12 +282,44 @@ pub fn segmented(
 
 /// Gold pouring from one section button into another (`t` 0..1), drawn over the row: the gold moves as one body about a
 /// button long, so every button on the way fills and drains in turn (a stream over the gaps); the label dark where the
-/// gold is.
+/// gold is. `merged`: the buttons `from..=end` shown as one box with that label (where it pours from).
 #[allow(clippy::too_many_arguments)]
-pub fn pour(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, names: &[&str], joined: bool, from: usize, to: usize, t: f32) {
+pub fn pour(
+    ui: &Ui,
+    p: &Palette,
+    at: egui::Pos2,
+    h: f32,
+    names: &[&str],
+    joined: bool,
+    from: usize,
+    to: usize,
+    t: f32,
+    merged: Option<(usize, &str)>,
+) {
     let painter = ui.painter().clone();
     let font = small();
-    let rects = segment_rects(&painter, at, h, names, joined);
+    // the boxes as shown: the merged ones as one
+    let mut rects = Vec::new();
+    let mut labels = Vec::new();
+    let (mut from_c, mut to_c) = (usize::MAX, usize::MAX);
+    let all = segment_rects(&painter, at, h, names, joined);
+    let mut k = 0;
+    while k < all.len() {
+        let end = merged.filter(|_| k == from).map_or(k, |(e, _)| e.min(all.len() - 1));
+        if k == from {
+            from_c = rects.len();
+        }
+        if (k..=end).contains(&to) {
+            to_c = rects.len();
+        }
+        rects.push(all[k].union(all[end]));
+        labels.push(if end > k { merged.map_or(String::new(), |(_, l)| l.to_uppercase()) } else { names[k].to_uppercase() });
+        k = end + 1;
+    }
+    let (from, to) = (from_c, to_c);
+    if from == to {
+        return;
+    }
     let (Some(src), Some(dst)) = (rects.get(from).copied(), rects.get(to).copied()) else { return };
     let ease = |v: f32| {
         let v = v.clamp(0.0, 1.0);
@@ -304,7 +353,7 @@ pub fn pour(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, names: &[&str], joined
     // each button on the way: the part of the body in it, its front rounded
     for k in from.min(to)..=from.max(to) {
         let r = rects[k];
-        let label = names[k].to_uppercase();
+        let label = labels[k].clone();
         painter.rect(r, 0.0, p.paper, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
         jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, &label, &font, p.ink_soft);
         let inner = r.shrink(1.5);

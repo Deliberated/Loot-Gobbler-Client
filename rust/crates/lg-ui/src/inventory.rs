@@ -694,6 +694,15 @@ impl InventoryView {
                     self.melt_exit = 1;
                     self.page = 1;
                 }
+                // on from the two melted to Keys or Log: the melted box pours into it, the melt simply gone
+                (true, _) if i >= 2 => {
+                    self.melt = false;
+                    self.melt_exit = 0;
+                    self.melt_t = 0.0;
+                    self.reveal = None;
+                    self.page = i;
+                    widgets::segmented_pour_merged(ui, pos2(pages_x, all.top()), &PAGES, 0, 1, "Items and ST Sets", i);
+                }
                 (true, _) => {
                     self.melt = false;
                     self.melt_exit = 0;

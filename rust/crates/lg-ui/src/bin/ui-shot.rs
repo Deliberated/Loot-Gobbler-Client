@@ -142,7 +142,18 @@ fn main() {
                         let at = egui::pos2(20.0, 20.0 + k as f32 * 46.0);
                         lg_ui::widgets::segmented(ui, &pal, at, 36.0, &names, to, false, &[]);
                         lg_ui::widgets::segmented_settle(ui, at, &names, to);
-                        lg_ui::widgets::pour(ui, &pal, at, 36.0, &names, false, from, to, t);
+                        lg_ui::widgets::pour(
+                            ui,
+                            &pal,
+                            at,
+                            36.0,
+                            &names,
+                            false,
+                            from,
+                            to,
+                            t,
+                            (from == 0 && to > 1).then_some((1, "Items and ST Sets")),
+                        );
                     }
                 });
             harness.run_steps(2);
