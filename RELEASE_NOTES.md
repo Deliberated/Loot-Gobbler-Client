@@ -2,21 +2,26 @@ v0.0.3: Forge, focus and optimization
 
 **ST Sets:** 
 - Click a set to open a bar below it: every copy of its pieces, seasonal and regular, as the item beside the character or chest it sits in
+- Click one of the set's pieces to list all its copies with where they are; the other pieces dim
 - Missing pieces the forge can make show the tokens needed / held per side and the spare ST item to dismantle; "CRAFTABLE" when everything is there
-- Click CRAFTABLE to plan the craft: its tokens and spare are set aside, so other sets no longer count them (until the app closes)
-- Click any other item in the bar to see it on a card of its own (enchantments, where it is, feed power, essence, all copies); drag it anywhere
-- Collector Mode switch: off, collector (best copy kept, gold lock) or collector + backup (second best kept too, green lock you can let go)
+- Click CRAFTABLE to plan the craft: its tokens and spare are set aside and the piece turns green, so other sets no longer count them (until the app closes)
+- Click any other item in the bar to see it on a card of its own: all its copies (rarest first, seasonal or regular, which are kept), its enchantments, feed power and essence; drag it anywhere
 - The Forge column shows what each missing piece still needs and where your tokens are
 - Filters reduced to All and Tokens; a focused character shows its class's sets only
 
+**Collector Mode:** 
+- A switch for forge suggestions: off, collector (the best copy of each ST item kept, gold lock) or collector + backup (the second best kept too, green lock you can let go)
+- Hover the rarity button beside it to choose which rarities may be used for forging and crafting
+- The rarest spare is always offered first
+
 **Items and ST Sets:** 
-- Click ST Sets while on Items and the two melt into one page: your collection on the left, the sets on the right
+- Click ST Sets while on Items (or Items while on ST Sets) and the two melt into one page: your collection on the left, the sets on the right
 - Click a set there and its pieces beat in the collection, everything else dimmed
 - Gold pours between the tabs as they melt and part
 
-**Inventory optimization:** 
-- "Suggest Inventory Optimization" on the Overview, or the new button beside the collection's search
-- Your spare copies are framed in the collection and listed on the left, with where each copy is and its feed power
+**Inventory Optimization:** 
+- The Optimization box on the Items page (or Inventory Optimization on the Overview) shows your spare copies
+- Spare copies are framed in the collection and listed on the left, with where each copy is and its feed power
 - Feed sorts by feed power, Forge by what dismantling gives, Craft brings in the ST sets
 
 **Inventory:** 
