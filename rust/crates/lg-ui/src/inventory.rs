@@ -3404,7 +3404,7 @@ fn forge_switch(
     mark(1, pos2(rare_c.x - ra.x * k / 4.0, top_y), false);
     // common: a stone turned as uncommon's, a faint white
     let cc = pos2(rare_c.x + ra.x * k / 4.0, top_y);
-    let (rx, ry) = (un.x * k * 0.36, un.y * k * 0.36);
+    let (rx, ry) = (un.x * k * 0.27, un.y * k * 0.27);
     let a = if allowed[0] { 1.0 } else { 0.35 };
     painter.add(egui::Shape::convex_polygon(
         vec![cc + vec2(0.0, -ry), cc + vec2(rx, 0.0), cc + vec2(0.0, ry), cc + vec2(-rx, 0.0)],
