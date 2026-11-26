@@ -327,29 +327,18 @@ fn pour_body(
 ) {
     let painter = ui.painter().clone();
     let font = small();
-    // the boxes as shown: the merged ones as one
-    let mut rects = Vec::new();
-    let mut labels = Vec::new();
-    let (mut from_c, mut to_c) = (usize::MAX, usize::MAX);
-    let all = segment_rects(&painter, at, h, names, joined);
-    let mut k = 0;
-    while k < all.len() {
-        let end = merged.filter(|_| k == from).map_or(k, |(e, _)| e.min(all.len() - 1));
-        if k == from {
-            from_c = rects.len();
-        }
-        if (k..=end).contains(&to) {
-            to_c = rects.len();
-        }
-        rects.push(all[k].union(all[end]));
-        labels.push(if end > k { merged.map_or(String::new(), |(_, l)| l.to_uppercase()) } else { names[k].to_uppercase() });
-        k = end + 1;
-    }
-    let (from, to) = (from_c, to_c);
-    if from == to {
+    // the boxes each on its own; from merged ones (`from..=end`) the gold starts as one body over them all, so they
+    // come apart as it flows on
+    let rects = segment_rects(&painter, at, h, names, joined);
+    let labels: Vec<String> = names.iter().map(|n| n.to_uppercase()).collect();
+    if rects.is_empty() || from >= rects.len() || to >= rects.len() {
         return;
     }
-    let (Some(src), Some(dst)) = (rects.get(from).copied(), rects.get(to).copied()) else { return };
+    let end = merged.map_or(from, |(e, _)| e.min(rects.len() - 1)).max(from);
+    if (from..=end).contains(&to) {
+        return;
+    }
+    let (src, dst) = (rects[from].union(rects[end]), rects[to]);
     let ease = |v: f32| {
         let v = v.clamp(0.0, 1.0);
         v * v * (3.0 - 2.0 * v)
@@ -373,7 +362,7 @@ fn pour_body(
     let (lo, hi) = (lead.min(back), lead.max(back));
     let gold = p.gold;
     // the buttons on the way, plain
-    let (first, last) = (from.min(to), from.max(to));
+    let (first, last) = (from.min(to), end.max(to));
     for k in first..=last {
         let r = rects[k];
         painter.rect(r, 0.0, p.paper, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
@@ -1209,40 +1198,10 @@ pub fn section_slide(ui: &mut Ui, p: &Palette, page: usize, animate: bool, body:
     (child, moved)
 }
 
-/// The swoosh of a page sliding in (a tab's, a section's) (`side` -1 from the left, 1 from the right; `t` 0..1): the page's last look
-/// sweeping off it, then a few gold streaks across it the way it moves, long and thin, fading at their ends.
-pub fn swoosh(ctx: &egui::Context, p: &Palette, page: egui::Rect, side: f32, t: f32) {
+/// The veil a page slides in out of (a tab's, a section's; `t` 0..1), lifting as it settles.
+pub fn swoosh(ctx: &egui::Context, p: &Palette, page: egui::Rect, _side: f32, t: f32) {
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("lg-tab-swoosh"))).with_clip_rect(page);
     // the page coming in out of a veil
     let veil = (1.0 - t).powi(2) * 0.55;
     painter.rect_filled(page, 0.0, p.sand.gamma_multiply(veil));
-    // streaks: (height in the page, length, delay)
-    let e = |v: f32| 1.0 - (1.0 - v.clamp(0.0, 1.0)).powi(3);
-    for (k, (y, len, delay)) in [(0.28f32, 420.0f32, 0.0f32), (0.52, 560.0, 0.08), (0.74, 360.0, 0.16)].iter().enumerate() {
-        let u = e((t - delay) / (1.0 - delay));
-        if u <= 0.0 || u >= 1.0 {
-            continue;
-        }
-        let span = page.width() + len;
-        // its head moving across in the slide's direction, from beyond one side to beyond the other
-        let head = if side > 0.0 { page.right() + len - span * u } else { page.left() - len + span * u };
-        let tail = head + side * len;
-        let cy = page.top() + page.height() * y;
-        let alpha = (1.0 - u * u) * if k == 1 { 0.75 } else { 0.55 };
-        // a soft band, not a hairline: a solid core fading out above and below it, and towards its tail
-        let (core, soft) = if k == 1 { (4.0, 7.0) } else { (3.0, 5.0) };
-        let col = |a: f32| p.gold.gamma_multiply(a);
-        let rows = [(-core / 2.0 - soft, 0.0), (-core / 2.0, 1.0), (core / 2.0, 1.0), (core / 2.0 + soft, 0.0)];
-        let mut mesh = egui::Mesh::default();
-        for (x, a) in [(head, alpha), (tail, 0.0)] {
-            for (dy, f) in rows {
-                mesh.colored_vertex(egui::pos2(x, cy + dy), col(a * f));
-            }
-        }
-        for r in 0..3u32 {
-            mesh.add_triangle(r, r + 1, r + 4);
-            mesh.add_triangle(r + 1, r + 5, r + 4);
-        }
-        painter.add(egui::Shape::mesh(mesh));
-    }
 }
