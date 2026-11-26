@@ -300,6 +300,31 @@ pub fn pour(
     t: f32,
     merged: Option<(usize, &str)>,
 ) {
+    pour_body(ui, p, at, h, names, joined, from, to, t, merged, false);
+}
+
+/// Gold spreading from one section button into another (`t` 0..1), the one it comes from staying filled: two
+/// buttons becoming one (Items and ST Sets).
+#[allow(clippy::too_many_arguments)]
+pub fn pour_spread(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, names: &[&str], joined: bool, from: usize, to: usize, t: f32) {
+    pour_body(ui, p, at, h, names, joined, from, to, t, None, true);
+}
+
+/// `keep`: the button it comes from stays filled, the gold only grows into the other.
+#[allow(clippy::too_many_arguments)]
+fn pour_body(
+    ui: &Ui,
+    p: &Palette,
+    at: egui::Pos2,
+    h: f32,
+    names: &[&str],
+    joined: bool,
+    from: usize,
+    to: usize,
+    t: f32,
+    merged: Option<(usize, &str)>,
+    keep: bool,
+) {
     let painter = ui.painter().clone();
     let font = small();
     // the boxes as shown: the merged ones as one
@@ -338,7 +363,8 @@ pub fn pour(
     let e = ease(t);
     let lead = lead0 + (lead1 - lead0) * e;
     let len = ((lead0 - back0) + ((lead1 - back1) - (lead0 - back0)) * e) * (1.0 - 0.3 * (std::f32::consts::PI * e).sin());
-    let back = lead - len;
+    let back = if keep { back0 } else { lead - len };
+    let len = if keep { lead - back } else { len };
     // the front a water drop's: a fine point swelling round into the full height, longer while it moves fast; none at
     // the start and the end
     let dir = if right { 1.0 } else { -1.0 };

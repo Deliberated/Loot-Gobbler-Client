@@ -729,10 +729,10 @@ impl InventoryView {
         let mt = self.melt_t * self.melt_t * (3.0 - 2.0 * self.melt_t);
         if mt > 0.0 && self.page <= 1 {
             if self.melt && self.melt_t < 1.0 {
-                // melting in: gold pours from the tab left into the other, as between any two sections; the two
+                // melting in: gold flows on from the tab left into the other, the first staying filled; the two
                 // show as one once it is there
                 let (from, to) = if self.melt_exit == 0 { (0, 1) } else { (1, 0) };
-                widgets::pour(ui, &p, pos2(pages_x, all.top()), 36.0, &PAGES, false, from, to, self.melt_t, None);
+                widgets::pour_spread(ui, &p, pos2(pages_x, all.top()), 36.0, &PAGES, false, from, to, self.melt_t);
             } else {
                 // parting: the two run apart again from the side the sets are on
                 melt_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, mt, self.melt_exit == 1);
