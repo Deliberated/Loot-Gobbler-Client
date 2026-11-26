@@ -124,6 +124,8 @@ pub struct Kind {
 const UPLOAD_DELAY_MS: i64 = 60_000; // changes come in bursts while playing
 const SOON_MS: i64 = 2_000; // a few bags drop at once
 const RETRY_MS: i64 = 60_000;
+/// Longer than any call can take (its timeouts), so a run still waiting then lost its answer.
+const STUCK_MS: i64 = 90_000;
 const MAX_CONFLICT_RETRIES: u32 = 3;
 /// "<server url>|<user id>|<ign>" the files belong to.
 pub const KEY_OWNER: &str = "serverSyncOwner";
@@ -278,8 +280,21 @@ impl ServerSync {
 
     /// Starts the run that is due, if none waits for the server: its first call.
     pub fn tick(&mut self, app: &mut App, link: &Link, now: i64) -> Option<Job> {
-        if self.waiting.is_some() {
-            return None;
+        if let Some(w) = &self.waiting {
+            // an answer that never came (its call lost): without this the sync would wait for it forever
+            let start = match w {
+                Waiting::Data { start, .. } | Waiting::Put { start, .. } => *start,
+            };
+            if now - start < STUCK_MS {
+                return None;
+            }
+            if let Some(Waiting::Put { index, .. }) = self.waiting.take()
+                && let Some(k) = self.kinds.get_mut(index)
+            {
+                k.dirty = true;
+            }
+            crate::applog::line("sync", "no answer from the server, syncing again");
+            self.now_full = true;
         }
         let task = if std::mem::take(&mut self.now_full) {
             Task::Full
