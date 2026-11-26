@@ -650,13 +650,18 @@ impl InventoryView {
             if beat.as_ref() != self.beat.as_ref().map(|b| &b.0) {
                 self.beat = beat.map(|b| (b, ui.input(|i| i.time)));
             }
-            // parting back to the items: the Items page whole (its right column too) under the sets fading out over it
-            let parting = !self.melt && self.melt_exit == 0;
+            // parting: the page it goes to whole (its right column too) under the other fading out over it: back to
+            // the items, the sets fade; on to ST Sets, the items do
+            let parting = !self.melt;
             if parting {
-                self.items(ui, c, rarity, body, false);
+                if self.melt_exit == 0 {
+                    self.items(ui, c, rarity, body, false);
+                } else {
+                    self.st_sets(ui, c, rarity, body, false);
+                }
             }
             for (r, sets) in [(items_r, false), (sets_r, true)] {
-                if parting && !sets {
+                if parting && sets == (self.melt_exit == 1) {
                     continue;
                 }
                 let shown = r.intersect(body);
@@ -1911,9 +1916,9 @@ impl InventoryView {
             })
             .collect();
         shown.sort_by(|a, b| n_of(b).cmp(&n_of(a)).then(a.title.cmp(&b.title)));
-        // low-high-low, once every 1.4 s
+        // low-high-low, once every 2.8 s
         let time = ui.input(|i| i.time);
-        let blink = (0.5 - 0.5 * (std::f64::consts::TAU * time / 1.4).cos()) as f32;
+        let blink = (0.5 - 0.5 * (std::f64::consts::TAU * time / 2.8).cos()) as f32;
         // the suggestions off: nothing blinks
         let craftable = if mode == Mode::Off { std::collections::HashSet::new() } else { craftable };
         if !craftable.is_empty() {
@@ -3060,7 +3065,7 @@ fn place_look(
             .get(h.char_id)
             .and_then(|c| icons.skin(ui.ctx(), data, if c.skin > 0 { c.skin } else { c.class_type }, c.tex1, c.tex2, r.width() as u32))
     } else {
-        vault_chest_id(data).and_then(|v| icons.object(ui.ctx(), data, v, r.width() as u32))
+        chest_look(icons, ui.ctx(), data, &h.slot, h.vault.as_deref() == Some(lg_app::holdings::SEASONAL_VAULT), r.width() as u32)
     };
     if let Some(tx) = look {
         painter.image(tx.id(), r, uv(), Color32::WHITE);
@@ -3192,7 +3197,7 @@ fn copy_chip(
             icons.skin(ui.ctx(), data, if c.skin > 0 { c.skin } else { c.class_type }, c.tex1, c.tex2, (cr.width() - 2.0) as u32)
         })
     } else {
-        vault_chest_id(data).and_then(|v| icons.object(ui.ctx(), data, v, (cr.width() - 2.0) as u32))
+        chest_look(icons, ui.ctx(), data, &h.slot, h.vault.as_deref() == Some(lg_app::holdings::SEASONAL_VAULT), (cr.width() - 2.0) as u32)
     };
     if let Some(tx) = look {
         painter.image(tx.id(), cr.shrink(1.0), uv(), Color32::WHITE);
@@ -3469,10 +3474,25 @@ fn st_bar(
     toggled
 }
 
-/// The vault chest's look (the game's "Vault Chest" object), looked up once.
-fn vault_chest_id(data: &lg_gamedata::GameData) -> Option<i32> {
-    static ID: std::sync::OnceLock<Option<i32>> = std::sync::OnceLock::new();
-    *ID.get_or_init(|| data.objects.values().find(|o| o.id_name == "Vault Chest").map(|o| o.id))
+/// A vault place's look by its chest (`section`) and side: the vault chest (seasonal: its green texture), the gift
+/// chest, the seasonal spoils, the material (forge) chest, the potion storage (the game's `containers.xml`).
+fn chest_look(
+    icons: &mut crate::icons::Icons,
+    ctx: &egui::Context,
+    data: &lg_gamedata::GameData,
+    section: &str,
+    seasonal: bool,
+    size: u32,
+) -> Option<egui::TextureHandle> {
+    use lg_app::holdings::{GIFT_CHEST, MATERIALS, POTIONS, SPOILS};
+    match section {
+        GIFT_CHEST => icons.object(ctx, data, 0x0744, size),
+        SPOILS => icons.object(ctx, data, 0x2944, size),
+        MATERIALS => icons.object(ctx, data, 0x046F, size),
+        POTIONS => icons.object(ctx, data, 0x0743, size),
+        _ if seasonal => icons.sprite(ctx, "lofiObj", 0x21F, size),
+        _ => icons.object(ctx, data, 0x0504, size),
+    }
 }
 
 /// Where a copy is, in words: "Druid · Slot 3" (seasonal marked), "Vault · Vault chest", "Seasonal vault · Gift chest".

@@ -436,6 +436,24 @@ impl Icons {
         self.cache.insert((id, size), Some(tex.clone()));
         Some(tex)
     }
+
+    /// A sprite sheet's picture (`sheet`, `index`) as an outlined icon of `size`, as [`Self::object`] makes one (for
+    /// an object's other texture, e.g. the seasonal vault chest).
+    pub fn sprite(&mut self, ctx: &egui::Context, sheet: &str, index: i32, size: u32) -> Option<TextureHandle> {
+        let key = format!("sprite-{sheet}-{index}-{size}");
+        if let Some(t) = self.skins.get(&key) {
+            return Some(t.clone());
+        }
+        let im = self.sprites.sprite(sheet, index)?;
+        let out = outlined(&im, size);
+        let tex = ctx.load_texture(
+            key.clone(),
+            ColorImage::from_rgba_unmultiplied([out.w as usize, out.h as usize], &out.rgba),
+            TextureOptions::NEAREST,
+        );
+        self.skins.insert(key, tex.clone());
+        Some(tex)
+    }
 }
 
 /// Java `ProfileView.SMALL_PORTALS`: dungeons whose portal sprite is small, drawn this much bigger than their room
