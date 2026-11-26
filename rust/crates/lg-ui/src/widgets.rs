@@ -182,9 +182,10 @@ pub fn segment_rects(painter: &egui::Painter, at: egui::Pos2, h: f32, names: &[&
         .collect()
 }
 
-/// Where a row of section buttons keeps the one last selected and its pour (from, to, how far 0..1).
-fn pour_id(ui: &Ui, at: egui::Pos2, names: &[&str]) -> egui::Id {
-    ui.scope_id().with(("seg-pour", names, at.x.round() as i32))
+/// Where a row of section buttons keeps the one last selected and its pour (from, to, how far 0..1): by its names,
+/// not where it stands (a page sliding in moves it).
+fn pour_id(ui: &Ui, _at: egui::Pos2, names: &[&str]) -> egui::Id {
+    ui.scope_id().with(("seg-pour", names))
 }
 
 /// A pour starting now from buttons `from..=end` shown as one (`label`, e.g. two tabs melted) into `to`, which is then

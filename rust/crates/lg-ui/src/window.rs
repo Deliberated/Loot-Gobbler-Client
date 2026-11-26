@@ -148,6 +148,10 @@ pub struct Window {
     /// The tab shown last frame, and the tab switched to with when (its icon growing and fading).
     tab_seen: String,
     tab_flash: Option<(String, f64)>,
+    /// The tab whose page was drawn last, and the slide of a new one in (its side: -1 from the left, 1 from the right,
+    /// and since when).
+    slide_seen: String,
+    slide: Option<(f32, f64)>,
     pub en: lg_app::loadout::Enchantments,
     pub loadout: lg_app::loadout::Settings,
     pub props: Properties,
@@ -248,6 +252,8 @@ impl Window {
             tour: Default::default(),
             tab_seen: String::new(),
             tab_flash: None,
+            slide_seen: String::new(),
+            slide: None,
             welcome: false,
             java_offer: None,
             release_notes: None,
@@ -609,9 +615,45 @@ impl Window {
         let placed: Vec<i32> = self.props.get("focusOrder").unwrap_or("").split(',').filter_map(|s| s.trim().parse().ok()).collect();
         self.shell.focus_boxes.sort_by_key(|b| placed.iter().position(|id| *id == b.id).unwrap_or(usize::MAX));
         self.shell.focus_on = crate::focus::focused_char(app, &self.props).map(|c| c.char_id);
-        let Window { shell, icons, en, loadout, props, profile, characters, inventory, game_modes, battles, social, guild, asks, .. } =
-            self;
+        let order = self.shell.order.clone();
+        let Window {
+            shell,
+            icons,
+            en,
+            loadout,
+            props,
+            profile,
+            characters,
+            inventory,
+            game_modes,
+            battles,
+            social,
+            guild,
+            asks,
+            slide_seen,
+            slide,
+            ..
+        } = self;
         shell.show(ui, &palette, |ui, tab| {
+            // another tab: its page slides in from the side it lies on, a gold swoosh crossing the same way
+            let time = ui.input(|i| i.time);
+            if slide_seen.as_str() != tab {
+                if !slide_seen.is_empty() {
+                    let at = |t: &str| order.iter().position(|o| o == t).unwrap_or(0);
+                    *slide = Some((if at(tab) >= at(slide_seen) { 1.0 } else { -1.0 }, time));
+                }
+                *slide_seen = tab.to_string();
+            }
+            const SLIDE: f64 = 0.3;
+            let page = ui.max_rect();
+            let moving = slide.map(|(side, start)| (side, ((time - start) / SLIDE) as f32)).filter(|(_, t)| *t < 1.0);
+            if moving.is_none() {
+                *slide = None;
+            }
+            let shift = moving.map_or(0.0, |(side, t)| side * 90.0 * (1.0 - t).powi(3));
+            let mut slid = ui.new_child(egui::UiBuilder::new().max_rect(page.translate(egui::vec2(shift, 0.0))));
+            slid.set_clip_rect(ui.clip_rect());
+            let ui = &mut slid;
             let mut c = profile::Ctx { app, p: &palette, icons, now, en, loadout, props, asks };
             match tab {
                 "Profile" => {
@@ -637,6 +679,10 @@ impl Window {
                 "Server" => crate::server::show(ui, &mut c),
                 "Settings" => crate::settings::show(ui, &mut c),
                 _ => {}
+            }
+            if let Some((side, t)) = moving {
+                swoosh(ui.ctx(), &palette, page, side, t);
+                ui.ctx().request_repaint();
             }
         });
         // the dungeon you are in, in the menu bar after the menus: as high as Java's menu bar (30 px less its
@@ -805,5 +851,38 @@ impl Window {
         }
         // anything clickable under the pointer shows the hand, wherever a view did not choose a cursor itself
         crate::widgets::pointing_hand(ui.ctx());
+    }
+}
+
+/// The swoosh of a tab's page sliding in (`side` -1 from the left, 1 from the right; `t` 0..1): the page's last look
+/// sweeping off it, then a few gold streaks across it the way it moves, long and thin, fading at their ends.
+fn swoosh(ctx: &egui::Context, p: &theme::Palette, page: egui::Rect, side: f32, t: f32) {
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("lg-tab-swoosh"))).with_clip_rect(page);
+    // the page coming in out of a veil
+    let veil = (1.0 - t).powi(2) * 0.55;
+    painter.rect_filled(page, 0.0, p.sand.gamma_multiply(veil));
+    // streaks: (height in the page, length, delay)
+    let e = |v: f32| 1.0 - (1.0 - v.clamp(0.0, 1.0)).powi(3);
+    for (k, (y, len, delay)) in [(0.28f32, 420.0f32, 0.0f32), (0.52, 560.0, 0.08), (0.74, 360.0, 0.16)].iter().enumerate() {
+        let u = e((t - delay) / (1.0 - delay));
+        if u <= 0.0 || u >= 1.0 {
+            continue;
+        }
+        let span = page.width() + len;
+        // its head moving across in the slide's direction, from beyond one side to beyond the other
+        let head = if side > 0.0 { page.right() + len - span * u } else { page.left() - len + span * u };
+        let tail = head + side * len;
+        let cy = page.top() + page.height() * y;
+        let alpha = (1.0 - u) * if k == 1 { 0.5 } else { 0.32 };
+        let th = if k == 1 { 3.0 } else { 2.0 };
+        let mut mesh = egui::Mesh::default();
+        let col = |a: f32| p.gold.gamma_multiply(a);
+        mesh.colored_vertex(egui::pos2(head, cy - th / 2.0), col(alpha));
+        mesh.colored_vertex(egui::pos2(head, cy + th / 2.0), col(alpha));
+        mesh.colored_vertex(egui::pos2(tail, cy - th / 2.0), col(0.0));
+        mesh.colored_vertex(egui::pos2(tail, cy + th / 2.0), col(0.0));
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(1, 3, 2);
+        painter.add(egui::Shape::mesh(mesh));
     }
 }

@@ -709,6 +709,7 @@ fn main() {
         }
         let switch_to: std::cell::Cell<Option<String>> = std::cell::Cell::new(None);
         let mut harness = egui_kittest::Harness::builder()
+            .with_step_dt(if tab.starts_with("switch:") { 1.0 / 60.0 } else { 0.25 })
             .with_size(egui::vec2(w, h))
             .with_pixels_per_point(1.0)
             .with_accessibility_check(false)
@@ -727,7 +728,7 @@ fn main() {
             harness.run_steps(20);
             switch_to.set(Some(to.to_string()));
             for n in 0..4 {
-                harness.run_steps(if n == 0 { 2 } else { 5 });
+                harness.run_steps(if n == 0 { 2 } else { 4 });
                 let img = harness.render().expect("render");
                 img.save(std::path::Path::new(out).join(format!("{}-{n}.png", tab.replace(':', "-").replace(' ', "_")))).expect("save");
             }
