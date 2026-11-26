@@ -527,6 +527,18 @@ fn main() {
                             win.inventory.st_class = Some(s.class_name.clone());
                         }
                     }
+                    // "Inventory:st:set:<title>[:<piece id>]": ST Sets with that set's bar open (that piece alone)
+                    if let Some(rest) = tab.strip_prefix("Inventory:st:set:") {
+                        win.open("Inventory:st");
+                        let (title, piece) = match rest.rsplit_once(':') {
+                            Some((t, p)) if p.parse::<i32>().is_ok() => (t, p.parse::<i32>().ok()),
+                            _ => (rest, None),
+                        };
+                        if let Some(s) = app.world.data().st_sets.iter().find(|s| s.title == title) {
+                            win.inventory.st_selected = Some(s.name.clone());
+                            win.inventory.st_piece = piece;
+                        }
+                    }
                     // "Inventory:keys:<item id>": the Keys page with that key clicked
                     if let Some(k) = tab.strip_prefix("Inventory:keys:").and_then(|k| k.parse::<i32>().ok()) {
                         win.open("Inventory:keys");

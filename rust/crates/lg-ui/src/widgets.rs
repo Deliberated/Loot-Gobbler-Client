@@ -739,3 +739,40 @@ pub fn pointing_hand(ctx: &egui::Context) {
         ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 }
+
+/// The optimization icon (Suggest Inventory Optimization, the forge suggestions): a token, a ring with a notched edge
+/// and a dot in its middle, with a four-pointed spark at its top right. `size` its height, centred on `c`.
+pub fn optimize_icon(painter: &egui::Painter, c: egui::Pos2, size: f32, ink: Color32) {
+    let r = size * 0.36;
+    let tc = c + egui::vec2(-size * 0.08, size * 0.08);
+    painter.circle_stroke(tc, r, egui::Stroke::new((size * 0.09).max(1.2), ink));
+    painter.circle_stroke(tc, r * 0.58, egui::Stroke::new((size * 0.06).max(1.0), ink));
+    // the notches round its edge
+    for k in 0..8 {
+        let a = std::f32::consts::TAU * k as f32 / 8.0;
+        let d = egui::vec2(a.cos(), a.sin());
+        painter.line_segment([tc + d * (r * 0.78), tc + d * (r * 0.95)], egui::Stroke::new((size * 0.05).max(1.0), ink));
+    }
+    // the spark
+    let sc = c + egui::vec2(size * 0.3, -size * 0.3);
+    let (long, short) = (size * 0.22, size * 0.07);
+    let pts = vec![
+        sc + egui::vec2(0.0, -long),
+        sc + egui::vec2(short, -short),
+        sc + egui::vec2(long, 0.0),
+        sc + egui::vec2(short, short),
+        sc + egui::vec2(0.0, long),
+        sc + egui::vec2(-short, short),
+        sc + egui::vec2(-long, 0.0),
+        sc + egui::vec2(-short, -short),
+    ];
+    painter.add(egui::Shape::convex_polygon(pts.clone(), ink, egui::Stroke::NONE));
+    // a convex outline does not fill the star's dents: the four arms drawn again as thin diamonds
+    for (a, b) in [(0, 4), (2, 6)] {
+        painter.add(egui::Shape::convex_polygon(
+            vec![pts[a], sc + (pts[(a + 2) % 8] - sc) * 0.3, pts[b], sc + (pts[(a + 6) % 8] - sc) * 0.3],
+            ink,
+            egui::Stroke::NONE,
+        ));
+    }
+}

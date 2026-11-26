@@ -37,6 +37,12 @@ pub struct InventoryView {
     pub st_class: Option<String>,
     /// The ST set clicked on its card: the side shows what forging its missing pieces takes (its name).
     pub st_selected: Option<String>,
+    /// The piece of the set clicked whose copies its bar shows alone (None: all four).
+    pub st_piece: Option<i32>,
+    /// The forge suggestions off: no blinking of the pieces you could forge.
+    pub st_quiet: bool,
+    /// The set whose bar is open or still closing.
+    st_bar_last: Option<String>,
     /// The key clicked on the Keys page: the side shows what it gives (a mystery key) or its dungeon.
     pub key_selected: Option<i32>,
     /// The item whose history replaces the Recent list (Java `historyItem`).
@@ -1323,13 +1329,8 @@ impl InventoryView {
         let mut shown: Vec<&lg_gamedata::st_sets::StSet> = sets
             .iter()
             .filter(|s| {
-                let n = n_of(s);
-                let ok = match self.st_filter {
-                    1 => n == 4,
-                    2 => n < 4,
-                    3 => token_of(s) != 0,
-                    _ => true,
-                };
+                // Tokens: only the sets the forge crafts from a token
+                let ok = self.st_filter != 1 || token_of(s) != 0;
                 // with a focus: its class's sets, and any other with a piece it can forge
                 let focus_ok = focus.is_none_or(|ch| s.class_name == ch.class_name || s.pieces.iter().any(|p| craftable.contains(p)));
                 ok && focus_ok && self.st_class.as_ref().is_none_or(|k| *k == s.class_name)
@@ -1339,6 +1340,8 @@ impl InventoryView {
         // low-high-low, once every 1.4 s
         let time = ui.input(|i| i.time);
         let blink = (0.5 - 0.5 * (std::f64::consts::TAU * time / 1.4).cos()) as f32;
+        // the suggestions off: nothing blinks
+        let craftable = if self.st_quiet { std::collections::HashSet::new() } else { craftable };
         if !craftable.is_empty() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
         }
@@ -1349,8 +1352,12 @@ impl InventoryView {
         let base = overhead + 20.0 - GAP;
         let (main, side) = widgets::side_split(ui, c.p, c.props, "stSets", body, 280.0, 220.0, 200.0, Some((base, CARD_MIN_WIDTH + GAP)));
         let cols = (((main.width() - base + 0.001) / (CARD_MIN_WIDTH + GAP)).floor()).max(1.0);
-        let filters = ["All", "Complete", "In progress", "Tokens"];
-        let mut filter = self.st_filter;
+        let filters = ["All", "Tokens"];
+        let mut filter = self.st_filter.min(1);
+        let mut quiet = self.st_quiet;
+        let mut piece_pick: Option<Option<i32>> = None;
+        let st_piece = self.st_piece;
+        let bar_last = self.st_bar_last.clone();
         let icons = &mut *c.icons;
         widgets::section(
             ui,
@@ -1369,8 +1376,30 @@ impl InventoryView {
                 if let Some(i) = widgets::segmented(ui, &p, pos2(fx, head.top()), h, &filters, filter, true, &[]) {
                     filter = i;
                 }
+                // the forge suggestions on or off (what you could forge blinks)
+                let sr = Rect::from_min_size(pos2(fx - 4.0 - (h - 6.0), head.top() + 3.0), vec2(h - 6.0, h - 6.0));
+                let sresp = ui
+                    .interact(sr, ui.scope_id().with("st-suggest"), Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(if quiet {
+                        "Forge suggestions are off: click to show the pieces you could forge"
+                    } else {
+                        "Forge suggestions: the pieces you could forge now blink. Click to turn them off"
+                    });
+                painter.rect(sr, 0.0, if quiet { p.paper } else { p.gold }, Stroke::new(1.0, p.line), StrokeKind::Inside);
+                let ink = if !quiet {
+                    Color32::from_rgb(0x2A, 0x20, 0x10)
+                } else if sresp.hovered() {
+                    p.gold
+                } else {
+                    p.ink_muted
+                };
+                widgets::optimize_icon(&painter, sr.center(), sr.height() - 8.0, ink);
+                if sresp.clicked() {
+                    quiet = !quiet;
+                }
                 // the class box (a drop-down in the window)
-                let cr = Rect::from_min_size(pos2(fx - 4.0 - 140.0, head.top() + 3.0), vec2(140.0, h - 6.0));
+                let cr = Rect::from_min_size(pos2(sr.left() - 4.0 - 140.0, head.top() + 3.0), vec2(140.0, h - 6.0));
                 painter.rect(cr, 0.0, p.paper, Stroke::new(1.0, p.line), StrokeKind::Inside);
                 jtext::draw(&painter, pos2(cr.left() + 8.0, cr.center().y), Align2::LEFT_CENTER, "All classes", &text(18.0), p.ink);
                 let (ax, ay) = (cr.right() - 14.0, cr.center().y);
@@ -1394,9 +1423,29 @@ impl InventoryView {
                             fixed::MUTED,
                         );
                     }
+                    // the bar under the set clicked, as tall as a card: its row, how far open (it closes the same way)
+                    let open_i = selected_name.as_deref().and_then(|n| shown.iter().position(|s| s.name == n));
+                    let bar_i = open_i.or_else(|| bar_last.as_deref().and_then(|n| shown.iter().position(|s| s.name == n)));
+                    let t = ui.ctx().animate_value_with_time(ui.scope_id().with("st-bar"), if open_i.is_some() { 1.0 } else { 0.0 }, 0.22);
+                    let bar_row = bar_i.map(|i| (i as f32 / cols).floor());
+                    let bar_h = (ch * t).round();
+                    let shift = |row: f32| if bar_row.is_some_and(|br| row > br) { bar_h + GAP * t } else { 0.0 };
+                    // a click on the grid's blank space closes it
+                    let rows_n = (shown.len() as f32 / cols).ceil();
+                    let blank = Rect::from_min_size(top, vec2(r.width() - 12.0, 20.0 + rows_n * (ch + GAP) + bar_h + GAP));
+                    if ui.interact(blank, ui.scope_id().with("st-blank"), Sense::click()).clicked() {
+                        pick = Some(None);
+                    }
+                    let mut bar_card: Option<Rect> = None;
                     for (i, s) in shown.iter().enumerate() {
                         let (col, row) = (i as f32 % cols, (i as f32 / cols).floor());
-                        let cr = Rect::from_min_size(pos2(top.x + 10.0 + col * (cw + GAP), top.y + 10.0 + row * (ch + GAP)), vec2(cw, ch));
+                        let cr = Rect::from_min_size(
+                            pos2(top.x + 10.0 + col * (cw + GAP), top.y + 10.0 + row * (ch + GAP) + shift(row)),
+                            vec2(cw, ch),
+                        );
+                        if bar_i == Some(i) {
+                            bar_card = Some(cr);
+                        }
                         let n = n_of(s);
                         let done = n == 4;
                         painter.rect_filled(cr, 0.0, if done { mix(p.gold, p.paper, 0.45) } else { p.header });
@@ -1414,6 +1463,7 @@ impl InventoryView {
                             .clicked()
                         {
                             pick = Some(if selected { None } else { Some(s.name.clone()) });
+                            piece_pick = Some(None);
                         }
                         if s.skin != 0
                             && let Some(t) = icons.object(ui.ctx(), data, s.skin, 64)
@@ -1483,7 +1533,7 @@ impl InventoryView {
                                 if have {
                                     ""
                                 } else if forge {
-                                    " - missing, you can forge it now: click to see what it takes"
+                                    " - missing, you can forge it now"
                                 } else {
                                     " - missing"
                                 }
@@ -1495,10 +1545,10 @@ impl InventoryView {
                             if resp.hovered() {
                                 painter.rect_stroke(tr, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
                             }
-                            if resp.clicked() && forge {
+                            // click: the set's bar with this piece alone (again: all four)
+                            if resp.clicked() {
                                 pick = Some(Some(s.name.clone()));
-                            } else if resp.clicked() && item.is_some() {
-                                crate::window::open_later(ui.ctx(), format!("Inventory:item:{id}"));
+                                piece_pick = Some(if selected && st_piece == Some(*id) { None } else { Some(*id) });
                             }
                         }
                         let token = token_of(s);
@@ -1541,13 +1591,30 @@ impl InventoryView {
                             painter.rect_stroke(cr, 0.0, Stroke::new(3.0, p.gold_hover), StrokeKind::Inside);
                         }
                     }
+                    if let (Some(i), Some(card)) = (bar_i, bar_card)
+                        && t > 0.0
+                    {
+                        let row_bottom = top.y + 10.0 + bar_row.unwrap_or(0.0) * (ch + GAP) + ch;
+                        let bar = Rect::from_min_size(pos2(top.x + 10.0, row_bottom + GAP * t), vec2(cols * (cw + GAP) - GAP, bar_h));
+                        st_bar(ui, &p, icons, app, rarity, shown[i], st_piece, card, bar, t);
+                    }
                     let rows = (shown.len() as f32 / cols).ceil();
-                    ui.allocate_exact_size(vec2(r.width() - 12.0, 20.0 + rows * (ch + GAP)), Sense::hover());
+                    ui.allocate_exact_size(vec2(r.width() - 12.0, 20.0 + rows * (ch + GAP) + bar_h + GAP * t), Sense::hover());
                 });
             },
         );
         self.st_filter = filter;
+        self.st_quiet = quiet;
+        if let Some(pp) = piece_pick {
+            self.st_piece = pp;
+        }
         if let Some(sel) = pick {
+            if sel.is_none() {
+                self.st_piece = None;
+            }
+            if sel.is_some() {
+                self.st_bar_last = sel.clone();
+            }
             self.st_selected = sel;
         }
 
@@ -2288,6 +2355,128 @@ fn key_details(ui: &Ui, p: &Palette, icons: &mut crate::icons::Icons, app: &lg_a
     }
     y += drops.len().div_ceil(per) as f32 * CELL;
     y - at.y
+}
+
+/// The bar under a set clicked (ST Sets): per piece where its copies are, the seasonal side left and the regular right,
+/// each copy as its place (the character's look, or the vault's chest) with its enchantments; with one piece clicked
+/// that piece alone, each copy with where it is in words. `card` is the set's card, joined to the bar by gold lines;
+/// `t` how far it is open.
+#[allow(clippy::too_many_arguments)]
+fn st_bar(
+    ui: &Ui,
+    p: &Palette,
+    icons: &mut crate::icons::Icons,
+    app: &lg_app::App,
+    rarity: &Rarity,
+    set: &lg_gamedata::st_sets::StSet,
+    piece: Option<i32>,
+    card: Rect,
+    bar: Rect,
+    t: f32,
+) {
+    let full = ui.painter().clone();
+    let gold = p.gold.gamma_multiply(t);
+    // the card and the bar as one: the bar, a joint as wide as the card down to it, gold around both
+    full.rect_filled(bar, 0.0, p.paper);
+    let joint = Rect::from_min_max(pos2(card.left(), card.bottom() - 1.0), pos2(card.right(), bar.top() + 2.0));
+    full.rect_filled(joint, 0.0, p.paper);
+    full.rect_stroke(bar, 0.0, Stroke::new(2.0, gold), StrokeKind::Inside);
+    full.rect_stroke(card, 0.0, Stroke::new(2.0, gold), StrokeKind::Inside);
+    full.rect_filled(
+        Rect::from_min_max(pos2(card.left() + 2.0, card.bottom() - 2.0), pos2(card.right() - 2.0, bar.top() + 2.0)),
+        0.0,
+        p.paper,
+    );
+    for x in [card.left() + 1.0, card.right() - 1.0] {
+        full.line_segment([pos2(x, card.bottom() - 2.0), pos2(x, bar.top() + 2.0)], Stroke::new(2.0, gold));
+    }
+    let painter = full.with_clip_rect(bar.shrink(2.0).intersect(full.clip_rect()));
+    let data = app.world.data();
+    let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
+    let copies = app.holdings.copies_of(&living, |id| set.pieces.contains(&id));
+    let one = piece.filter(|id| set.pieces.contains(id));
+    let pieces: Vec<i32> = match one {
+        Some(id) => vec![id],
+        None => set.pieces.to_vec(),
+    };
+    let vault_chest = vault_chest_id(data);
+    let (f16, fs) = (text(16.0), text(13.0));
+    let (lh16, lhs) = (jtext::height(&painter, &f16), jtext::height(&painter, &fs));
+    let colw = (bar.width() - 16.0) / pieces.len() as f32;
+    const CHIP: f32 = 24.0;
+    for (k, id) in pieces.iter().enumerate() {
+        let x0 = bar.left() + 8.0 + k as f32 * colw;
+        if k > 0 {
+            painter.line_segment([pos2(x0 - 4.0, bar.top() + 8.0), pos2(x0 - 4.0, bar.bottom() - 8.0)], Stroke::new(1.0, p.line));
+        }
+        // the piece
+        let y0 = bar.top() + 6.0;
+        if let Some(tx) = icons.object(ui.ctx(), data, *id, 24) {
+            painter.image(tx.id(), Rect::from_min_size(pos2(x0, y0), vec2(24.0, 24.0)), uv(), Color32::WHITE);
+        }
+        let name = data.items.item(*id).map_or(format!("Item {id}"), |i| i.name.clone());
+        let nt = widgets::fit(&painter, &name, &f16, colw - 40.0);
+        jtext::draw(&painter, pos2(x0 + 30.0, y0 + 12.0), Align2::LEFT_CENTER, &nt, &f16, p.ink);
+        // its copies: seasonal left, regular right
+        let cy = y0 + 24.0 + 4.0;
+        let half = (colw - 8.0) / 2.0;
+        for (side, seasonal) in [(0.0, true), (1.0, false)] {
+            let sx = x0 + side * half;
+            jtext::draw(&painter, pos2(sx, cy), Align2::LEFT_TOP, if seasonal { "SEASONAL" } else { "REGULAR" }, &fs, fixed::MUTED);
+            let list: Vec<&lg_app::loadout::Held> =
+                copies.get(id).into_iter().flatten().filter(|h| (h.seasonal == Some(true)) == seasonal).collect();
+            let mut y = cy + lhs + 3.0;
+            if list.is_empty() {
+                jtext::draw(&painter, pos2(sx, y), Align2::LEFT_TOP, "none", &fs, fixed::MUTED);
+                continue;
+            }
+            let per = (((half - 6.0) / (CHIP + 3.0)).floor() as usize).max(1);
+            for (n, h) in list.iter().enumerate() {
+                // one piece: a row each, with where it is in words; all four: chips side by side
+                let at = if one.is_some() {
+                    let a = pos2(sx, y);
+                    y += CHIP + 3.0;
+                    a
+                } else {
+                    pos2(sx + (n % per) as f32 * (CHIP + 3.0), y + (n / per) as f32 * (CHIP + 3.0))
+                };
+                let cr = Rect::from_min_size(at, vec2(CHIP, CHIP));
+                if cr.top() > bar.bottom() {
+                    break;
+                }
+                painter.rect_filled(cr, 0.0, p.header);
+                let look = if h.char_id > 0 {
+                    app.characters.get(h.char_id).and_then(|c| {
+                        icons.skin(ui.ctx(), data, if c.skin > 0 { c.skin } else { c.class_type }, c.tex1, c.tex2, (CHIP - 2.0) as u32)
+                    })
+                } else {
+                    vault_chest.and_then(|v| icons.object(ui.ctx(), data, v, (CHIP - 2.0) as u32))
+                };
+                if let Some(tx) = look {
+                    painter.image(tx.id(), cr.shrink(1.0), uv(), Color32::WHITE);
+                }
+                let ench = h.enchant_ids.as_ref().map_or(0, |e| e.iter().filter(|x| **x >= 0).count());
+                enchant_badge(&painter, rarity, pos2(cr.right() - 1.0, cr.bottom() - 1.0), ench, 4.0);
+                let place = place_of(app, h);
+                if one.is_some() {
+                    let tt = widgets::fit(&painter, &place, &fs, half - CHIP - 12.0);
+                    jtext::draw(&painter, pos2(cr.right() + 6.0, cr.center().y), Align2::LEFT_CENTER, &tt, &fs, p.ink_soft);
+                }
+                let tip = format!(
+                    "{place}{}",
+                    if ench > 0 { format!("  ·  {ench} enchantment{}", if ench == 1 { "" } else { "s" }) } else { String::new() }
+                );
+                widgets::tip(ui, cr, ("st-copy", *id, h.char_id, &h.slot, n), &tip);
+            }
+            let _ = lh16;
+        }
+    }
+}
+
+/// The vault chest's look (the game's "Vault Chest" object), looked up once.
+fn vault_chest_id(data: &lg_gamedata::GameData) -> Option<i32> {
+    static ID: std::sync::OnceLock<Option<i32>> = std::sync::OnceLock::new();
+    *ID.get_or_init(|| data.objects.values().find(|o| o.id_name == "Vault Chest").map(|o| o.id))
 }
 
 /// Where a copy is, in words: "Druid · Slot 3" (seasonal marked), "Vault · Vault chest", "Seasonal vault · Gift chest".
