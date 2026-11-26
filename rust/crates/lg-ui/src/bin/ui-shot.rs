@@ -601,9 +601,17 @@ fn main() {
                             .find(|(_, p)| p.iter().any(|c| c.craftable))
                             .or_else(|| plans.iter().find(|(_, p)| p.iter().any(|c| !c.tokens.is_empty())))
                             .or_else(|| plans.iter().find(|(_, p)| !p.is_empty()));
-                        if let Some((s, _)) = pick {
+                        if let Some((s, plan)) = pick {
                             win.inventory.st_selected = Some(s.name.clone());
                             win.inventory.st_class = Some(s.class_name.clone());
+                            // "Inventory:st:show": also the first spare shown beside its column
+                            if std::env::var("UI_SHOT_SHOW").is_ok()
+                                && let Some((k, sp)) = s.pieces.iter().enumerate().find_map(|(k, id)| {
+                                    plan.iter().find(|f| f.piece == *id).and_then(|f| f.spares.first()).map(|sp| (k, sp))
+                                })
+                            {
+                                win.inventory.st_show = Some((sp.item, k, sp.held.clone()));
+                            }
                         }
                     }
                     // "Inventory:craft": the optimization on, crafting (Items and ST Sets melted under it)
