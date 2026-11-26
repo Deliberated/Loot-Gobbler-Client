@@ -3682,6 +3682,8 @@ fn st_bar(
             let flow_top = if plan.is_empty() { bar.top() + full_h - 8.0 } else { bar.top() + full_h - FLOW_H - 6.0 };
             widgets::pack_divider(&painter, x0 - 4.0, bar.top() + 22.0, flow_top - 14.0, p.gold);
         }
+        // where the next divider stands (the bar's edge after the last column): labels stop short of it
+        let col_right = x0 + colw - 6.0;
         // the piece, a little away from the divider
         let x0 = x0 + if k > 0 { 12.0 } else { 4.0 };
         let colw = colw - 16.0;
@@ -3748,7 +3750,7 @@ fn st_bar(
                         place_look(ui, &painter, icons, app, held, *item, pr, ("st-planned", *id, seasonal));
                         x = pr.right() + 8.0;
                     }
-                    if plan_label(ui, &painter, p, pos2(x, y + ICON_B / 2.0), true, &f16, ("st-plan", *id, seasonal)) {
+                    if plan_label(ui, &painter, p, pos2(x, y + ICON_B / 2.0), true, col_right, ("st-plan", *id, seasonal)) {
                         plan_click = Some(Err((*id, seasonal)));
                     }
                     continue;
@@ -3766,7 +3768,7 @@ fn st_bar(
                 match &f.st_slot {
                     None => {
                         jtext::draw(&painter, pos2(sx, y), Align2::LEFT_TOP, "no ST item needed", &fs, fixed::MUTED);
-                        if enough && plan_label(ui, &painter, p, pos2(sx, y + lh16 + 14.0), false, &f16, ("st-plan", *id, seasonal)) {
+                        if enough && plan_label(ui, &painter, p, pos2(sx, y + lh16 + 14.0), false, col_right, ("st-plan", *id, seasonal)) {
                             plan_click = Some(Ok(Planned { piece: *id, seasonal, taken: tokens }));
                         }
                     }
@@ -3802,7 +3804,7 @@ fn st_bar(
                                     p,
                                     pos2(pr.right() + 8.0, pr.center().y),
                                     false,
-                                    &f16,
+                                    col_right,
                                     ("st-plan", *id, seasonal),
                                 )
                             {
@@ -3955,13 +3957,20 @@ fn plan_label(
     p: &Palette,
     at: egui::Pos2,
     planned: bool,
-    font: &egui::FontId,
+    right: f32,
     id: impl std::hash::Hash + std::fmt::Debug,
 ) -> bool {
-    let text = if planned { "PLANNED" } else { "CRAFTABLE" };
-    let w = jtext::width(painter, text, font);
+    let label = if planned { "PLANNED" } else { "CRAFTABLE" };
+    // as large as fits before `right` (the column's divider): the box's margin first, then the text smaller
+    let (font, pad) = [(16.0, 14.0), (16.0, 8.0), (14.0, 8.0), (14.0, 4.0), (12.0, 4.0)]
+        .into_iter()
+        .map(|(s, pad)| (text(s), pad))
+        .find(|(f, pad)| at.x + jtext::width(painter, label, f) + pad <= right)
+        .unwrap_or_else(|| (text(12.0), 6.0));
+    let font = &font;
+    let w = jtext::width(painter, label, font);
     let h = jtext::height(painter, font);
-    let r = Rect::from_min_size(pos2(at.x, at.y - h / 2.0 - 4.0), vec2(w + 14.0, h + 8.0));
+    let r = Rect::from_min_size(pos2(at.x, at.y - h / 2.0 - 4.0), vec2(w + pad, h + 8.0));
     if !planned {
         crate::guide::mark_first(ui, "inventory.craftable", r);
     }
@@ -3973,12 +3982,12 @@ fn plan_label(
         });
     if planned {
         painter.rect(r, 3.0, mix(p.paper, p.line, 0.4), Stroke::new(1.0, p.ink_muted), StrokeKind::Inside);
-        jtext::draw(painter, r.center(), Align2::CENTER_CENTER, text, font, fixed::GREEN);
+        jtext::draw(painter, r.center(), Align2::CENTER_CENTER, label, font, fixed::GREEN);
     } else {
         if resp.hovered() {
             painter.rect_stroke(r, 3.0, Stroke::new(1.0, p.gold.gamma_multiply(0.6)), StrokeKind::Inside);
         }
-        jtext::draw(painter, r.center(), Align2::CENTER_CENTER, text, font, p.gold);
+        jtext::draw(painter, r.center(), Align2::CENTER_CENTER, label, font, p.gold);
     }
     resp.clicked()
 }
