@@ -204,7 +204,7 @@ impl InventoryView {
             "Optimization",
             fixed::GREEN,
             |ui, head| {
-                next_mode = forge_switch(ui, p, pos2(head.right() - 6.0, head.top() + 3.0), head.height() - 6.0, mode);
+                next_mode = forge_switch(ui, p, pos2(head.right() - 6.0, head.top() + 1.0), head.height() - 2.0, mode);
             },
             |ui, r| {
                 let painter = ui.painter().clone();
@@ -400,13 +400,13 @@ impl InventoryView {
 }
 
 /// A set's pieces beating in the melted collection, `elapsed` s after the set was clicked: the second and third of an
-/// opened item's glow-ups, then 1.5 s of rest from when the third has mostly faded, over and over. Each box's place as
+/// opened item's glow-ups, then 1 s of rest from when the third has mostly faded, over and over. Each box's place as
 /// in `pulse_ts`.
 fn heartbeat(elapsed: f64) -> Vec<f32> {
     let g = glow_ups(PULSE_S);
     let from = g[1].0;
     // the rest counted from when the third box has mostly faded (its faint tail may run into the next beat)
-    let cycle = g[2].0 + 0.6 * g[2].1 - from + 1.5;
+    let cycle = g[2].0 + 0.6 * g[2].1 - from + 1.0;
     let k = (elapsed / cycle).floor();
     let mut out = Vec::new();
     for back in [0.0, 1.0] {
@@ -1013,7 +1013,7 @@ impl InventoryView {
             None => main,
         };
         let cols = ((main.width() - base + 0.001) / CELL).floor().max(1.0);
-        // melted with a set clicked: its pieces beat (two glow-ups, then 2 s of rest), the rest dimmed
+        // melted with a set clicked: its pieces beat (two glow-ups, then 1 s of rest), the rest dimmed
         let beat_pieces: Vec<i32> = self
             .beat
             .as_ref()
@@ -1998,7 +1998,7 @@ impl InventoryView {
                     filter = i;
                 }
                 // the forge suggestions: a pill with a switch of three places (a click: the next)
-                if let Some(m) = forge_switch(ui, &p, pos2(fx - 8.0, head.top() + 3.0), h - 6.0, mode) {
+                if let Some(m) = forge_switch(ui, &p, pos2(fx - 8.0, head.top() + 1.0), h - 2.0, mode) {
                     next_mode = Some(m);
                 }
             },
@@ -3116,25 +3116,33 @@ struct BarLook {
     card_fill: Color32,
 }
 
-/// The ST Sets' forge suggestions switch, its right end at `right_top`, `h` tall: a grey pill saying "FORGE
-/// SUGGESTIONS" with a track whose knob stands left (off, grey), in the middle (collector, gold) or right (with a
-/// backup, green); hovered, the three explained. Gives the next mode when clicked.
+/// Collector Mode (the ST Sets' forge suggestions; the optimization's too), its right end at `right_top`, `h` tall: a
+/// pill set into the page (darker, a shadow along its top, a light edge along its bottom) saying "COLLECTOR MODE",
+/// with a switch whose knob stands left (off), in the middle (collector, gold) or right (with a backup, green). Only the
+/// switch is clicked; the whole pill, hovered, explains the three at once. Gives the next mode when clicked.
 fn forge_switch(ui: &Ui, p: &Palette, right_top: egui::Pos2, h: f32, mode: lg_app::st_forge::Mode) -> Option<lg_app::st_forge::Mode> {
     use lg_app::st_forge::Mode;
     let painter = ui.painter().clone();
     let font = small();
-    let label = "FORGE SUGGESTIONS";
+    let label = "COLLECTOR MODE";
     let tw = jtext::width(&painter, label, &font);
-    let (track_w, pad) = (54.0, 10.0);
-    let w = pad + tw + 10.0 + track_w + pad;
+    let (track_w, pad) = (56.0, 16.0);
+    let w = pad + tw + 14.0 + track_w + pad - 4.0;
     let r = Rect::from_min_size(pos2(right_top.x - w, right_top.y), vec2(w, h));
-    let resp = ui.interact(r, ui.scope_id().with("forge-switch"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-    let hover = resp.hovered();
-    // the pill: greyed in
-    painter.rect(r, h / 2.0, mix(p.paper, p.line, 0.5), Stroke::new(1.0, if hover { p.gold } else { p.line }), StrokeKind::Inside);
-    jtext::draw(&painter, pos2(r.left() + pad, r.center().y), Align2::LEFT_CENTER, label, &font, if hover { p.ink } else { p.ink_soft });
-    // the track (dark, a soft rim, tinted by the mode) and its silver knob sliding to its place
-    let track = Rect::from_min_size(pos2(r.right() - pad - track_w, r.center().y - 9.0), vec2(track_w, 18.0));
+    // the pill, sunk into the page
+    let well = mix(p.header, Color32::BLACK, 0.45);
+    painter.rect_filled(r, h / 2.0, well);
+    painter.rect_filled(Rect::from_min_size(r.min + vec2(h / 2.0, 1.0), vec2(w - h, 2.0)), 1.0, Color32::from_black_alpha(120));
+    painter.rect_stroke(r, h / 2.0, Stroke::new(1.0, Color32::from_black_alpha(160)), StrokeKind::Inside);
+    painter.line_segment(
+        [pos2(r.left() + h / 2.0, r.bottom() - 0.5), pos2(r.right() - h / 2.0, r.bottom() - 0.5)],
+        Stroke::new(1.0, Color32::from_rgba_unmultiplied(0xE8, 0xD8, 0xB0, 40)),
+    );
+    let hover = ui.interact(r, ui.scope_id().with("collector-mode"), Sense::hover());
+    let lit = hover.contains_pointer();
+    jtext::draw(&painter, pos2(r.left() + pad, r.center().y), Align2::LEFT_CENTER, label, &font, if lit { p.ink } else { p.ink_soft });
+    // the switch: a dark track (tinted by the mode) and its silver knob sliding to its place; it alone is clicked
+    let track = Rect::from_min_size(pos2(r.right() - pad + 4.0 - track_w, r.center().y - 9.0), vec2(track_w, 18.0));
     let (place, tint) = match mode {
         Mode::Off => (0.0, None),
         Mode::Collector => (0.5, Some(p.gold)),
@@ -3145,11 +3153,9 @@ fn forge_switch(ui: &Ui, p: &Palette, right_top: egui::Pos2, h: f32, mode: lg_ap
     let fill = tint.map_or(dark, |c| mix(c, dark, 0.35));
     painter.rect_filled(track, 9.0, Color32::from_rgb(0x14, 0x11, 0x0A));
     painter.rect_filled(track.shrink(1.5), 7.5, fill);
-    // a darker band along its top (it sits in), a light rim below
     painter.rect_filled(Rect::from_min_size(track.min + vec2(4.0, 2.0), vec2(track_w - 8.0, 3.0)), 1.5, Color32::from_black_alpha(70));
     painter.rect_stroke(track, 9.0, Stroke::new(1.0, Color32::from_rgba_unmultiplied(0xC8, 0xB0, 0x70, 90)), StrokeKind::Inside);
     let kc = pos2(track.left() + 9.0 + at * (track_w - 18.0), track.center().y);
-    // the knob: a ring, a silver face lighter to its middle, a highlight up left
     painter.circle_filled(kc + vec2(0.0, 1.5), 10.5, Color32::from_black_alpha(110));
     painter.circle_filled(kc, 10.5, Color32::from_rgb(0x6E, 0x6E, 0x6E));
     painter.circle_filled(kc, 9.5, Color32::from_rgb(0xC9, 0xC9, 0xC9));
@@ -3157,30 +3163,35 @@ fn forge_switch(ui: &Ui, p: &Palette, right_top: egui::Pos2, h: f32, mode: lg_ap
     painter.circle_stroke(kc, 7.5, Stroke::new(1.0, Color32::from_rgb(0xE6, 0xE6, 0xE6)));
     painter.circle_filled(kc, 5.5, Color32::from_rgb(0xD8, 0xD8, 0xD8));
     painter.circle_filled(kc + vec2(-2.5, -2.5), 2.2, Color32::from_white_alpha(200));
-    // hovered: the three, each with its sign and what it does
-    let resp = resp.on_hover_ui(|ui| {
-        ui.set_max_width(420.0);
-        let rows: [(Mode, &str); 3] = [
-            (Mode::Off, "Off: no suggestions, nothing blinks and no locks."),
-            (Mode::Collector, "Collector: the best copy of each ST item is kept (gold lock), every other copy can be dismantled; the pieces you could forge blink."),
-            (Mode::Backup, "Collector + backup: the best copy (gold lock) and a backup, the second best (green lock), are kept; the rest can be dismantled. A green lock clicked lets that backup go."),
-        ];
-        for (m, t) in rows {
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
-                match m {
-                    Mode::Off => {
-                        ui.painter().circle(r.center(), 6.0, p.paper, Stroke::new(1.0, p.ink_muted));
+    let click = ui
+        .interact(track.expand(3.0), ui.scope_id().with("collector-mode-switch"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    // hovered anywhere on the pill: the three explained, at once
+    if lit {
+        hover.show_tooltip_ui(|ui| {
+            ui.set_max_width(380.0);
+            let rows: [(Mode, &str); 3] = [
+                (Mode::Off, "Off: every item can be dispersed."),
+                (Mode::Collector, "Collector: the best copy is kept."),
+                (Mode::Backup, "Collector + Backup: the best copy is kept; the second best copy is marked green but can be used."),
+            ];
+            for (m, t) in rows {
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                    match m {
+                        Mode::Off => {
+                            ui.painter().circle(r.center(), 6.0, p.paper, Stroke::new(1.0, p.ink_muted));
+                        }
+                        Mode::Collector => lock(ui.painter(), r.center(), 14.0, p.gold, false),
+                        Mode::Backup => lock(ui.painter(), r.center(), 14.0, fixed::GREEN, false),
                     }
-                    Mode::Collector => lock(ui.painter(), r.center(), 14.0, p.gold, false),
-                    Mode::Backup => lock(ui.painter(), r.center(), 14.0, fixed::GREEN, false),
-                }
-                let strong = m == mode;
-                ui.label(egui::RichText::new(t).color(if strong { p.ink } else { p.ink_soft }).strong());
-            });
-        }
-    });
-    resp.clicked().then(|| mode.next())
+                    let color = if m == mode { p.ink } else { p.ink_soft };
+                    ui.add(egui::Label::new(egui::RichText::new(t).color(color).strong()).wrap());
+                });
+            }
+        });
+    }
+    click.clicked().then(|| mode.next())
 }
 
 /// A padlock centred on `c`, `s` tall (open: its shackle lifted on one side).
