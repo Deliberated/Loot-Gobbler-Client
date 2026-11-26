@@ -3444,7 +3444,8 @@ fn st_bar(
                 // where it is
                 let n = f.tokens.iter().filter(|c| on_side(&c.held)).count() as i32;
                 let enough = n >= f.amount;
-                let tt = format!("{n} / {} token{}", f.amount, if f.amount == 1 { "" } else { "s" });
+                // needed / held
+                let tt = format!("{} / {n} token{}", f.amount, if n == 1 { "" } else { "s" });
                 jtext::draw(&painter, pos2(sx, y), Align2::LEFT_TOP, &tt, &f16, if enough { fixed::GREEN } else { fixed::MUTED });
                 y += lh16 + 6.0;
                 match &f.st_slot {
