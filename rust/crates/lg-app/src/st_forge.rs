@@ -166,6 +166,14 @@ impl Stock {
         self
     }
 
+    /// Whether a spare ST item of a kind (on a side: Some(true) seasonal, Some(false) regular) would be there but for
+    /// the rarities left out.
+    pub fn spare_left_out(&self, data: &GameData, st_slot: &str, side: Option<bool>) -> bool {
+        let on = |c: &Copy| c.held.seasonal.is_none() || c.held.seasonal == side;
+        let all = Stock { copies: self.copies.clone(), keep: self.keep, freed: self.freed.clone(), rarities: [true; 5] };
+        !self.spares(data, st_slot).iter().any(on) && all.spares(data, st_slot).iter().any(on)
+    }
+
     /// How many copies of `item` are kept.
     pub fn kept(&self, item: i32) -> usize {
         if self.freed.contains(&item) { 1 } else { self.keep }

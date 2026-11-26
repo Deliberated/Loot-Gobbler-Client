@@ -3749,7 +3749,13 @@ fn st_bar(
                     }
                     Some(slot) => match f.spares.iter().find(|c| on_side(&c.held)) {
                         None => {
-                            let t = widgets::fit(&painter, &format!("no spare ST {}", slot.to_lowercase()), &fs, half - 6.0);
+                            // none, or only of rarities left out (the rarity button)
+                            let t = if stock.spare_left_out(data, slot, Some(seasonal)) {
+                                format!("spare ST {} left out by rarity", slot.to_lowercase())
+                            } else {
+                                format!("no spare ST {}", slot.to_lowercase())
+                            };
+                            let t = widgets::fit(&painter, &t, &fs, half - 6.0);
                             jtext::draw(&painter, pos2(sx, y), Align2::LEFT_TOP, &t, &fs, fixed::MUTED);
                         }
                         Some(spare) => {
