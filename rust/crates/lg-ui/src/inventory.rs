@@ -2386,7 +2386,7 @@ fn key_details(ui: &Ui, p: &Palette, icons: &mut crate::icons::Icons, app: &lg_a
 }
 
 /// How tall the bar's token flow is.
-const FLOW_H: f32 = 34.0;
+const FLOW_H: f32 = 46.0;
 
 /// Where the bar under a set is and how it shows: the piece clicked (alone), the set's card (joined to it), the bar as
 /// far as open, its full height, how far open, the forge mode.
@@ -2555,7 +2555,9 @@ fn st_bar(
     for (k, id) in pieces.iter().enumerate() {
         let x0 = bar.left() + 8.0 + k as f32 * colw;
         if k > 0 {
-            widgets::pack_divider(&painter, x0 - 4.0, bar.top() + 8.0, bar.top() + full_h - 8.0, p.gold);
+            // down to the token flow's line, when there is one
+            let flow_top = if plan.is_empty() { bar.top() + full_h - 8.0 } else { bar.top() + full_h - FLOW_H - 6.0 };
+            widgets::pack_divider(&painter, x0 - 4.0, bar.top() + 8.0, flow_top, p.gold);
         }
         // the piece
         let y0 = bar.top() + 6.0;
@@ -2665,13 +2667,19 @@ fn st_bar(
     // the token flow: each place holding the set's tokens, its side, how many and how many pieces they make
     if let Some(f) = plan.first() {
         let fy = bar.top() + full_h - FLOW_H;
-        painter.line_segment([pos2(bar.left() + 8.0, fy), pos2(bar.right() - 8.0, fy)], Stroke::new(1.0, p.line));
+        // as the dividers: a gold line with short caps
+        let g = p.gold;
+        let line = Stroke::new(2.0, Color32::from_rgba_unmultiplied(g.r(), g.g(), g.b(), 170));
+        painter.line_segment([pos2(bar.left() + 8.0, fy), pos2(bar.right() - 8.0, fy)], line);
+        for x in [bar.left() + 8.0, bar.right() - 8.0] {
+            painter.line_segment([pos2(x, fy - 3.0), pos2(x, fy + 3.0)], line);
+        }
         let cy = fy + FLOW_H / 2.0;
         let mut x = bar.left() + 10.0;
-        if let Some(tx) = icons.object(ui.ctx(), data, f.token, 22) {
-            painter.image(tx.id(), Rect::from_center_size(pos2(x + 11.0, cy), vec2(22.0, 22.0)), uv(), Color32::WHITE);
+        if let Some(tx) = icons.object(ui.ctx(), data, f.token, 32) {
+            painter.image(tx.id(), Rect::from_center_size(pos2(x + 16.0, cy), vec2(32.0, 32.0)), uv(), Color32::WHITE);
         }
-        x += 30.0;
+        x += 40.0;
         let amount = plan.iter().map(|f| f.amount).min().unwrap_or(1).max(1);
         // grouped by place, in the order held
         let mut places: Vec<(&lg_app::loadout::Held, i32)> = Vec::new();
@@ -2685,9 +2693,10 @@ fn st_bar(
             jtext::draw(&painter, pos2(x, cy), Align2::LEFT_CENTER, "No tokens for this set held", &fs, fixed::MUTED);
         }
         for (k, (h, n)) in places.iter().enumerate() {
-            let cr = Rect::from_center_size(pos2(x + CHIP / 2.0, cy), vec2(CHIP, CHIP));
+            const FLOW_CHIP: f32 = 36.0;
+            let cr = Rect::from_center_size(pos2(x + FLOW_CHIP / 2.0, cy), vec2(FLOW_CHIP, FLOW_CHIP));
             copy_chip(ui, &painter, p, icons, app, rarity, h, f.token, cr, ("st-flow", k));
-            x += CHIP + 4.0;
+            x += FLOW_CHIP + 4.0;
             let side = if h.seasonal == Some(true) { "S" } else { "R" };
             let make = n / amount;
             let tt = format!("{side}  ×{n}  makes {make} piece{}", if make == 1 { "" } else { "s" });
