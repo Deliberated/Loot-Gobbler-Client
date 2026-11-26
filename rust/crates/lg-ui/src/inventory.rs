@@ -3285,11 +3285,11 @@ fn st_bar(
         0.0,
         card_fill,
     );
-    let fade_end = (bar.top() + 150.0).min(bar.bottom() - 2.0);
+    let fade_end = (bar.top() + 110.0).min(bar.bottom() - 2.0);
     if fade_end > bar.top() + 2.0 {
         // softly out, rounded: each point of a fine grid a mix of the two colours by its distance from the card
         // (an ellipse: as far down as `fade_end`, `spread` out to either side)
-        let spread = 150.0;
+        let spread = 110.0;
         let (l, r) = (card.left() + 2.0, card.right() - 2.0);
         let (x0, x1) = ((l - spread).max(bar.left() + 2.0), (r + spread).min(bar.right() - 2.0));
         let depth = fade_end - bar.top() - 2.0;
