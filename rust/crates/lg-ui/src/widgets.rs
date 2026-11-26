@@ -1228,16 +1228,21 @@ pub fn swoosh(ctx: &egui::Context, p: &Palette, page: egui::Rect, side: f32, t: 
         let head = if side > 0.0 { page.right() + len - span * u } else { page.left() - len + span * u };
         let tail = head + side * len;
         let cy = page.top() + page.height() * y;
-        let alpha = (1.0 - u * u) * if k == 1 { 0.9 } else { 0.65 };
-        let th = if k == 1 { 5.0 } else { 3.5 };
-        let mut mesh = egui::Mesh::default();
+        let alpha = (1.0 - u * u) * if k == 1 { 0.75 } else { 0.55 };
+        // a soft band, not a hairline: a solid core fading out above and below it, and towards its tail
+        let (core, soft) = if k == 1 { (4.0, 7.0) } else { (3.0, 5.0) };
         let col = |a: f32| p.gold.gamma_multiply(a);
-        mesh.colored_vertex(egui::pos2(head, cy - th / 2.0), col(alpha));
-        mesh.colored_vertex(egui::pos2(head, cy + th / 2.0), col(alpha));
-        mesh.colored_vertex(egui::pos2(tail, cy - th / 2.0), col(0.0));
-        mesh.colored_vertex(egui::pos2(tail, cy + th / 2.0), col(0.0));
-        mesh.add_triangle(0, 1, 2);
-        mesh.add_triangle(1, 3, 2);
+        let rows = [(-core / 2.0 - soft, 0.0), (-core / 2.0, 1.0), (core / 2.0, 1.0), (core / 2.0 + soft, 0.0)];
+        let mut mesh = egui::Mesh::default();
+        for (x, a) in [(head, alpha), (tail, 0.0)] {
+            for (dy, f) in rows {
+                mesh.colored_vertex(egui::pos2(x, cy + dy), col(a * f));
+            }
+        }
+        for r in 0..3u32 {
+            mesh.add_triangle(r, r + 1, r + 4);
+            mesh.add_triangle(r + 1, r + 5, r + 4);
+        }
         painter.add(egui::Shape::mesh(mesh));
     }
 }
