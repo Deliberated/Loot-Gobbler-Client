@@ -268,6 +268,11 @@ impl Window {
                 self.inventory.page = 0;
                 self.inventory.upe_char = p[4..].parse().unwrap_or(0);
             }
+            // the Overview's Suggest Inventory Optimization: the Items page with it on
+            ("Inventory", "optimize") => {
+                self.inventory.page = 0;
+                self.inventory.opt = true;
+            }
             ("Inventory", p) if p.starts_with("item:") => {
                 // Java `showItem`: the Items page, the item scrolled to and pulsing, its history beside the grid
                 self.inventory.page = 0;

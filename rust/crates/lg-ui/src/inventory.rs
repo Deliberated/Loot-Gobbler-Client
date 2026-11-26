@@ -39,14 +39,18 @@ pub struct InventoryView {
     pub st_selected: Option<String>,
     /// The piece of the set clicked whose copies its bar shows alone (None: all four).
     pub st_piece: Option<i32>,
-    /// The set whose bar is open or still closing.
-    st_bar_last: Option<String>,
+    /// How far each set's bar is open (the one clicked opening, the one before closing), by the set's name.
+    st_bar_t: HashMap<String, f32>,
     /// Items and ST Sets melted into one page: the collection left, the sets right.
     pub melt: bool,
     /// Where the melt goes when it ends: 0 back to Items, 1 on to ST Sets (the items slide out left).
     melt_exit: usize,
     /// How far melted (0 apart, 1 one), moving towards `melt`.
     melt_t: f32,
+    /// The inventory optimization on: your spare copies framed in the collection, listed in the column on the left.
+    pub opt: bool,
+    /// Its list's order: 0 by kind (ST, UT) and how many spare, 1 by feed power, 2 by what dismantling gives.
+    pub opt_sort: usize,
     /// The set whose pieces beat in the collection, and since when.
     beat: Option<(String, f64)>,
     /// The key clicked on the Keys page: the side shows what it gives (a mystery key) or its dungeon.
@@ -91,12 +95,208 @@ fn glow_ups(dur: f64) -> [(f64, f64); 3] {
     out
 }
 
+/// How wide the optimization's column is.
+const OPT_COLUMN_W: f32 = 380.0;
+
+/// An item held more often than kept (the forge mode: the best copy, with a backup also the second best): its copies,
+/// the most enchanted first, and how many of them are kept.
+struct Spare {
+    item: i32,
+    copies: Vec<lg_app::loadout::Held>,
+    keep: usize,
+}
+
+impl Spare {
+    fn free(&self) -> usize {
+        self.copies.len().saturating_sub(self.keep)
+    }
+}
+
+/// The forge mode and the items whose backup was let go, as the settings say.
+fn forge_mode(props: &lg_app::properties::Properties) -> (lg_app::st_forge::Mode, std::collections::HashSet<i32>) {
+    use lg_app::st_forge::{FREED_KEY, Mode};
+    let freed = props.get(FREED_KEY).map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
+    (Mode::of(props.get(Mode::KEY)), freed)
+}
+
+/// Every collectible item you hold more copies of than you keep, on your living characters and in your vaults, in the
+/// order `sort` asks: 0 STs, then UTs, then the rest, each the most spare copies first; 1 the most feed power first;
+/// 2 the most forge essence from dismantling first.
+fn spares(app: &lg_app::App, props: &lg_app::properties::Properties, sort: usize) -> Vec<Spare> {
+    let data = app.world.data();
+    let (mode, freed) = forge_mode(props);
+    let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
+    let copies = app.holdings.copies_of(&living, |id| data.items.collectible.contains(&id));
+    let enchants = |h: &lg_app::loadout::Held| h.enchant_ids.as_ref().map_or(0, |e| e.iter().filter(|x| **x >= 0).count());
+    let mut out: Vec<Spare> = copies
+        .into_iter()
+        .filter_map(|(item, mut copies)| {
+            let keep = if mode == lg_app::st_forge::Mode::Backup && !freed.contains(&item) { 2 } else { 1 };
+            if copies.len() <= keep {
+                return None;
+            }
+            copies.sort_by_key(|h| std::cmp::Reverse(enchants(h)));
+            Some(Spare { item, copies, keep })
+        })
+        .collect();
+    let kind = |id: i32| {
+        data.items.item(id).map_or(2, |i| {
+            if i.is_st() {
+                0
+            } else if i.is_ut() {
+                1
+            } else {
+                2
+            }
+        })
+    };
+    let feed = |id: i32| data.items.item(id).map_or(0, |i| i.feed_power.max(0));
+    let name = |id: i32| data.items.item(id).map_or(String::new(), |i| i.name.clone());
+    match sort {
+        1 => out.sort_by(|a, b| feed(b.item).cmp(&feed(a.item)).then(b.free().cmp(&a.free())).then(name(a.item).cmp(&name(b.item)))),
+        2 => out.sort_by(|a, b| {
+            essence(data, b.item).cmp(&essence(data, a.item)).then(b.free().cmp(&a.free())).then(name(a.item).cmp(&name(b.item)))
+        }),
+        _ => out.sort_by(|a, b| kind(a.item).cmp(&kind(b.item)).then(b.free().cmp(&a.free())).then(name(a.item).cmp(&name(b.item)))),
+    }
+    out
+}
+
+/// What dismantling one copy gives, as one number: common essence once, rare twice, legendary four, mythical eight
+/// times.
+fn essence(data: &lg_gamedata::GameData, item: i32) -> i32 {
+    data.dismantle.get(&item).map_or(0, |d| d[0] + 2 * d[1] + 4 * d[2] + 8 * d[3])
+}
+
+impl InventoryView {
+    /// The optimization's column: each item you hold spare copies of, where each copy is (the seasonal side left,
+    /// the regular right; the copy kept with a gold lock, a backup with a green one, the spare ones in gold boxes),
+    /// how many are spare and its feed power or forge essence.
+    fn opt_column(&mut self, ui: &mut Ui, c: &mut Ctx, rarity: &Rarity, r: Rect) {
+        let p = *c.p;
+        let app = c.app;
+        let data = app.world.data();
+        let list = spares(app, c.props, self.opt_sort);
+        let (mode, _) = forge_mode(c.props);
+        let icons = &mut *c.icons;
+        let title = match self.opt_sort {
+            1 => "Spare Copies · By Feed Power",
+            2 => "Spare Copies · By Forge Essence",
+            _ => "Spare Copies",
+        };
+        widgets::section(
+            ui,
+            &p,
+            r,
+            title,
+            fixed::GREEN,
+            |_, _| {},
+            |ui, r| {
+                egui::ScrollArea::vertical().id_salt("opt-list").show(ui, |ui| {
+                    let top = ui.cursor().min;
+                    let painter = ui.painter().clone();
+                    let w = r.width() - 12.0 - 16.0;
+                    let x = top.x + 8.0;
+                    let mut y = top.y + 8.0;
+                    let (f16, fs) = (text(16.0), text(13.0));
+                    if !app.holdings.known() {
+                        jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, "Log in once so your items are known.", &f16, fixed::MUTED);
+                    } else if list.is_empty() {
+                        jtext::draw(
+                            &painter,
+                            pos2(x, y),
+                            Align2::LEFT_TOP,
+                            "No spare copies: nothing to feed or dismantle.",
+                            &f16,
+                            fixed::MUTED,
+                        );
+                    }
+                    const CHIP: f32 = 26.0;
+                    for (k, sp) in list.iter().enumerate() {
+                        if k > 0 {
+                            painter.rect_filled(Rect::from_min_size(pos2(x, y - 5.0), vec2(w, 1.0)), 0.0, p.line);
+                        }
+                        // the item, how many are spare, its feed power or what dismantling it gives
+                        if let Some(t) = icons.object(ui.ctx(), data, sp.item, 30) {
+                            painter.image(t.id(), Rect::from_min_size(pos2(x, y), vec2(30.0, 30.0)), uv(), Color32::WHITE);
+                        }
+                        let it = data.items.item(sp.item);
+                        let name = it.map_or(format!("Item {}", sp.item), |i| i.name.clone());
+                        let tag = it.map_or(String::new(), |i| i.tier_tag());
+                        let value = match self.opt_sort {
+                            2 => format!("{} essence", essence(data, sp.item)),
+                            _ => format!("{} FP", it.map_or(0, |i| i.feed_power.max(0))),
+                        };
+                        let vw = jtext::width(&painter, &value, &fs);
+                        let nt = widgets::fit(&painter, &format!("{name} {tag}"), &f16, w - 40.0 - vw - 50.0);
+                        jtext::draw(&painter, pos2(x + 38.0, y + 8.0), Align2::LEFT_CENTER, &nt, &f16, p.ink);
+                        jtext::draw(&painter, pos2(x + w, y + 8.0), Align2::RIGHT_CENTER, &value, &fs, p.gold);
+                        let free = format!("{} spare of {}", sp.free(), sp.copies.len());
+                        jtext::draw(&painter, pos2(x + 38.0, y + 24.0), Align2::LEFT_CENTER, &free, &fs, fixed::MUTED);
+                        y += 34.0;
+                        // its copies: seasonal left, regular right
+                        let half = w / 2.0;
+                        let mut rows_h: f32 = 0.0;
+                        for (side, seasonal) in [(0.0, true), (1.0, false)] {
+                            let sx = x + side * half;
+                            let per = (((half - 4.0) / (CHIP + 3.0)).floor() as usize).max(1);
+                            let list: Vec<(usize, &lg_app::loadout::Held)> =
+                                sp.copies.iter().enumerate().filter(|(_, h)| (h.seasonal == Some(true)) == seasonal).collect();
+                            if list.is_empty() {
+                                jtext::draw(
+                                    &painter,
+                                    pos2(sx, y + CHIP / 2.0),
+                                    Align2::LEFT_CENTER,
+                                    if seasonal { "seasonal: none" } else { "regular: none" },
+                                    &fs,
+                                    fixed::MUTED,
+                                );
+                                rows_h = rows_h.max(CHIP);
+                                continue;
+                            }
+                            for (n, (rank, h)) in list.iter().enumerate() {
+                                let cr = Rect::from_min_size(
+                                    pos2(sx + (n % per) as f32 * (CHIP + 3.0), y + (n / per) as f32 * (CHIP + 3.0)),
+                                    vec2(CHIP, CHIP),
+                                );
+                                copy_chip(ui, &painter, &p, icons, app, rarity, h, sp.item, cr, ("opt-copy", sp.item, *rank));
+                                if mode != lg_app::st_forge::Mode::Off || *rank == 0 {
+                                    if *rank == 0 {
+                                        lock(&painter, cr.left_top() + vec2(5.0, 6.0), 10.0, p.gold, false);
+                                    } else if *rank < sp.keep {
+                                        lock(&painter, cr.left_top() + vec2(5.0, 6.0), 10.0, fixed::GREEN, false);
+                                    } else {
+                                        painter.rect_stroke(cr.expand(1.0), 0.0, Stroke::new(2.0, p.gold), StrokeKind::Outside);
+                                    }
+                                }
+                            }
+                            rows_h = rows_h.max(list.len().div_ceil(per) as f32 * (CHIP + 3.0));
+                        }
+                        // a click on the item: it in the grid, pulsing
+                        let row = Rect::from_min_max(pos2(x, y - 34.0), pos2(x + w, y));
+                        if ui
+                            .interact(row, ui.scope_id().with(("opt-row", sp.item)), Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text("Show it in the collection")
+                            .clicked()
+                        {
+                            self.show_item = Some(sp.item);
+                        }
+                        y += rows_h + 12.0;
+                    }
+                    ui.allocate_exact_size(vec2(r.width() - 12.0, y - top.y), Sense::hover());
+                });
+            },
+        );
+    }
+}
+
 /// A set's pieces beating in the melted collection, `elapsed` s after the set was clicked: the second and third of an
 /// opened item's glow-ups, then 2 s of rest, over and over. Each box's place as in `pulse_ts`.
 fn heartbeat(elapsed: f64) -> Vec<f32> {
     let g = glow_ups(PULSE_S);
     let (from, to) = (g[1].0, g[2].0 + g[2].1);
-    let cycle = to - from + 2.0;
+    let cycle = to - from + 1.5;
     let e = from + elapsed.rem_euclid(cycle);
     g[1..].iter().filter(|(s, d)| e >= *s && e < s + d).map(|(s, d)| ((e - s) / d).clamp(0.0, 1.0) as f32).collect()
 }
@@ -285,7 +485,21 @@ impl InventoryView {
         let pages_end = pages_x + widgets::segmented_width(ui.painter(), &PAGES, false) + 10.0;
         resource_row(ui, &p, c.icons, app, pos2(all.right(), all.top()), 36.0, pages_end, focus.map(|ch| ch.seasonal));
         let mut body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
-        if col_t > 0.0 {
+        // the optimization: its list in a column of its own, sliding out from the left
+        let ot = ui.ctx().animate_bool_with_time(ui.scope_id().with("opt-column"), self.opt && self.page == 0, 0.22);
+        let ot = ot * ot * (3.0 - 2.0 * ot);
+        if ot > 0.0 {
+            let shown = OPT_COLUMN_W * ot;
+            let at =
+                Rect::from_min_max(pos2(body.left() + shown - OPT_COLUMN_W, body.top()), pos2(body.left() + shown - 8.0, body.bottom()));
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(at));
+            child.set_clip_rect(Rect::from_min_max(body.min, pos2(body.left() + shown, body.bottom())).intersect(ui.clip_rect()));
+            self.opt_column(&mut child, c, rarity, at);
+            body = Rect::from_min_max(pos2(body.left() + shown, body.top()), body.max);
+            if ot < 1.0 {
+                ui.ctx().request_repaint();
+            }
+        } else if col_t > 0.0 {
             // it slides out from under the left edge
             let shown = UPE_COLUMN_W * col_t;
             let at = Rect::from_min_max(pos2(body.left() + shown - UPE_COLUMN_W, body.top()), pos2(body.left() + shown, body.bottom()));
@@ -642,6 +856,10 @@ impl InventoryView {
             .map(|s| s.pieces.to_vec())
             .unwrap_or_default();
         let beat_since = self.beat.as_ref().map_or(0.0, |b| b.1);
+        // the optimization: the items you hold spare copies of
+        let spare_items: std::collections::HashSet<i32> =
+            if self.opt { spares(app, c.props, 0).into_iter().map(|s| s.item).collect() } else { Default::default() };
+        let mut opt = self.opt;
         let title = if self.upe_char != 0 {
             let name = match (app.characters.get(self.upe_char), app.upe.runs.get(&self.upe_char).filter(|r| r.marked)) {
                 (Some(ch), Some(r)) => format!("{} ({})", ch.class_name, lg_app::upe::label(&r.mode)),
@@ -675,8 +893,26 @@ impl InventoryView {
                 if let Some(i) = widgets::segmented(ui, &p, pos2(fx, head.top()), h, &FILTERS, filter, true, &[]) {
                     filter = i;
                 }
+                // Suggest Inventory Optimization: on or off
+                let or = Rect::from_min_size(pos2(fx - 4.0 - (h - 6.0), head.top() + 3.0), vec2(h - 6.0, h - 6.0));
+                let oresp = ui
+                    .interact(or, ui.scope_id().with("opt-button"), Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(if opt { "Inventory optimization on: click to turn it off" } else { "Suggest Inventory Optimization" });
+                painter.rect(or, 0.0, if opt { p.gold } else { p.paper }, Stroke::new(1.0, p.line), StrokeKind::Inside);
+                let oink = if opt {
+                    Color32::from_rgb(0x2A, 0x20, 0x10)
+                } else if oresp.hovered() {
+                    p.gold
+                } else {
+                    p.ink_muted
+                };
+                widgets::optimize_icon(&painter, or.center(), or.height() - 8.0, oink);
+                if oresp.clicked() {
+                    opt = !opt;
+                }
                 // the search box
-                let sr = Rect::from_min_size(pos2(fx - 8.0 - 220.0, head.top() + 3.0), vec2(220.0, h - 6.0));
+                let sr = Rect::from_min_size(pos2(or.left() - 8.0 - 220.0, head.top() + 3.0), vec2(220.0, h - 6.0));
                 crate::widgets::search_field(ui, &p, sr, &mut search, "Search items or enchants", "collection-search");
                 widgets::tip(
                     ui,
@@ -857,10 +1093,19 @@ impl InventoryView {
                             fade(sub_c),
                         );
                     }
+                    if !spare_items.is_empty() {
+                        for (i, cell) in cells.iter().enumerate() {
+                            if spare_items.contains(&cell.id) {
+                                painter.rect_stroke(cell_rect(i).shrink(1.0), 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
+                            } else {
+                                painter.rect_filled(cell_rect(i), 0.0, Color32::from_black_alpha(110));
+                            }
+                        }
+                    }
                     if !beat_pieces.is_empty() {
                         for (i, cell) in cells.iter().enumerate() {
                             if !beat_pieces.contains(&cell.id) {
-                                painter.rect_filled(cell_rect(i), 0.0, Color32::from_black_alpha(110));
+                                painter.rect_filled(cell_rect(i), 0.0, Color32::from_black_alpha(160));
                             }
                         }
                         for t in heartbeat(time_s - beat_since) {
@@ -914,6 +1159,7 @@ impl InventoryView {
                 self.st_piece = beat_pieces.contains(&id).then_some(id);
             }
         }
+        self.opt = opt;
         if grid_only {
             return;
         }
@@ -924,6 +1170,60 @@ impl InventoryView {
         let head = widgets::section_head_height(&painter);
         let have = grid.iter().filter(|id| owned_set.contains(id)).count();
         let pct = if grid.is_empty() { 0.0 } else { 100.0 * have as f64 / grid.len() as f64 };
+        let mut side = side;
+        if self.opt {
+            // what to do with the spare copies: feed them, craft with them (Items and ST Sets), forge them
+            let lh16 = jtext::height(&painter, &text(16.0));
+            let or = Rect::from_min_size(side.min, vec2(side.width(), head + 2.0 + 10.0 + 4.0 * (lh16 + 2.0) + 10.0 + 34.0 + 10.0));
+            let sort = self.opt_sort;
+            let mut choice: Option<usize> = None;
+            widgets::section(
+                ui,
+                &p,
+                or,
+                "Optimization",
+                fixed::GREEN,
+                |_, _| {},
+                |ui, r| {
+                    let painter = ui.painter().clone();
+                    let (x, w) = (r.left() + 10.0, r.width() - 20.0);
+                    let mut y = r.top() + 10.0;
+                    for l in [
+                        "Your spare copies are framed and listed on the left.",
+                        "Feed: the most feed power first.",
+                        "Craft: Items and ST Sets side by side.",
+                        "Forge: what dismantling gives, the most first.",
+                    ] {
+                        jtext::draw(
+                            &painter,
+                            pos2(x, y),
+                            Align2::LEFT_TOP,
+                            &widgets::fit(&painter, l, &text(16.0), w),
+                            &text(16.0),
+                            p.ink_soft,
+                        );
+                        y += lh16 + 2.0;
+                    }
+                    y += 10.0;
+                    let names = ["Feed", "Craft", "Forge"];
+                    let on = match sort {
+                        1 => 0,
+                        2 => 2,
+                        _ => usize::MAX,
+                    };
+                    if let Some(i) = widgets::segmented(ui, &p, pos2(x, y), 34.0, &names, on, false, &[]) {
+                        choice = Some(i);
+                    }
+                },
+            );
+            match choice {
+                Some(0) => self.opt_sort = if sort == 1 { 0 } else { 1 },
+                Some(2) => self.opt_sort = if sort == 2 { 0 } else { 2 },
+                Some(_) => self.melt = true,
+                None => {}
+            }
+            side = Rect::from_min_max(pos2(side.left(), or.bottom() + 8.0), side.max);
+        }
         let prog = Rect::from_min_size(
             side.min,
             vec2(side.width(), head + 2.0 + 20.0 + jtext::height(&painter, &small()) + 4.0 + 12.0 + 4.0 + lh),
@@ -1500,13 +1800,15 @@ impl InventoryView {
         .keeping(mode, freed.clone());
         let craftable: std::collections::HashSet<i32> =
             sets.iter().flat_map(|s| stock.plan(data, s, &has)).filter(|c| c.craftable).map(|c| c.piece).collect();
+        let picked = (self.upe_char != 0).then(|| app.characters.get(self.upe_char)).flatten();
+        let class_only: Option<String> = focus.or(picked).map(|ch| ch.class_name.clone());
         let mut shown: Vec<&lg_gamedata::st_sets::StSet> = sets
             .iter()
             .filter(|s| {
                 // Tokens: only the sets the forge crafts from a token
                 let ok = self.st_filter != 1 || token_of(s) != 0;
-                // with a focus: its class's sets, and any other with a piece it can forge
-                let focus_ok = focus.is_none_or(|ch| s.class_name == ch.class_name || s.pieces.iter().any(|p| craftable.contains(p)));
+                // a character in focus or picked in the column: its class's sets only
+                let focus_ok = class_only.as_deref().is_none_or(|k| s.class_name == k);
                 ok && focus_ok && self.st_class.as_ref().is_none_or(|k| *k == s.class_name)
             })
             .collect();
@@ -1536,7 +1838,20 @@ impl InventoryView {
         let mut freed_click: Option<i32> = None;
         let mut piece_pick: Option<Option<i32>> = None;
         let st_piece = self.st_piece;
-        let bar_last = self.st_bar_last.clone();
+        // the bars: the set clicked opening, any other closing
+        let dt = ui.input(|i| i.stable_dt).min(0.1);
+        if let Some(n) = &self.st_selected {
+            self.st_bar_t.entry(n.clone()).or_insert(0.0);
+        }
+        for (n, t) in self.st_bar_t.iter_mut() {
+            let open = self.st_selected.as_deref() == Some(n.as_str());
+            *t = if open { (*t + dt / 0.22).min(1.0) } else { (*t - dt / 0.22).max(0.0) };
+        }
+        self.st_bar_t.retain(|n, t| *t > 0.0 || self.st_selected.as_deref() == Some(n.as_str()));
+        if self.st_bar_t.values().any(|t| *t > 0.0 && *t < 1.0) {
+            ui.ctx().request_repaint();
+        }
+        let bars: Vec<(String, f32)> = self.st_bar_t.iter().map(|(n, t)| (n.clone(), t * t * (3.0 - 2.0 * t))).collect();
         let icons = &mut *c.icons;
         widgets::section(
             ui,
@@ -1605,30 +1920,41 @@ impl InventoryView {
                             fixed::MUTED,
                         );
                     }
-                    // the bar under the set clicked, as tall as a card: its row, how far open (it closes the same way)
-                    let open_i = selected_name.as_deref().and_then(|n| shown.iter().position(|s| s.name == n));
-                    let bar_i = open_i.or_else(|| bar_last.as_deref().and_then(|n| shown.iter().position(|s| s.name == n)));
-                    let t = ui.ctx().animate_value_with_time(ui.scope_id().with("st-bar"), if open_i.is_some() { 1.0 } else { 0.0 }, 0.22);
-                    let bar_row = bar_i.map(|i| (i as f32 / cols).floor());
-                    let flow = bar_i.is_some_and(|i| mode != Mode::Off && !stock.plan(data, shown[i], &has).is_empty());
-                    let full_h = ch + if flow { FLOW_H } else { 0.0 };
-                    let bar_h = (full_h * t).round();
-                    let shift = |row: f32| if bar_row.is_some_and(|br| row > br) { bar_h + GAP * t } else { 0.0 };
+                    // the bars under the sets: as tall as a card and some, the one clicked opening, the one before closing;
+                    // per row only the most open one
+                    let mut open_bars: Vec<(f32, usize, f32, f32)> = Vec::new();
+                    for (name, t) in &bars {
+                        if *t <= 0.0 {
+                            continue;
+                        }
+                        let Some(i) = shown.iter().position(|s| s.name == *name) else { continue };
+                        let row = (i as f32 / cols).floor();
+                        let flow = mode != Mode::Off && !stock.plan(data, shown[i], &has).is_empty();
+                        let full_h = ch + 40.0 + if flow { FLOW_H } else { 0.0 };
+                        match open_bars.iter_mut().find(|b| b.0 == row) {
+                            Some(b) if b.2 >= *t => {}
+                            Some(b) => *b = (row, i, *t, full_h),
+                            None => open_bars.push((row, i, *t, full_h)),
+                        }
+                    }
+                    let grown = |b: &(f32, usize, f32, f32)| (b.3 * b.2).round() + GAP * b.2;
+                    let shift = |row: f32| open_bars.iter().filter(|b| b.0 < row).map(grown).sum::<f32>();
+                    let extra: f32 = open_bars.iter().map(grown).sum();
                     // a click on the grid's blank space closes it
                     let rows_n = (shown.len() as f32 / cols).ceil();
-                    let blank = Rect::from_min_size(top, vec2(r.width() - 12.0, 20.0 + rows_n * (ch + GAP) + bar_h + GAP));
+                    let blank = Rect::from_min_size(top, vec2(r.width() - 12.0, 20.0 + rows_n * (ch + GAP) + extra));
                     if ui.interact(blank, ui.scope_id().with("st-blank"), Sense::click()).clicked() {
                         pick = Some(None);
                     }
-                    let mut bar_card: Option<Rect> = None;
+                    let mut bar_cards: HashMap<usize, Rect> = HashMap::new();
                     for (i, s) in shown.iter().enumerate() {
                         let (col, row) = (i as f32 % cols, (i as f32 / cols).floor());
                         let cr = Rect::from_min_size(
                             pos2(top.x + 10.0 + col * (cw + GAP), top.y + 10.0 + row * (ch + GAP) + shift(row)),
                             vec2(cw, ch),
                         );
-                        if bar_i == Some(i) {
-                            bar_card = Some(cr);
+                        if open_bars.iter().any(|b| b.1 == i) {
+                            bar_cards.insert(i, cr);
                         }
                         let n = n_of(s);
                         let done = n == 4;
@@ -1775,11 +2101,14 @@ impl InventoryView {
                             painter.rect_stroke(cr, 0.0, Stroke::new(3.0, p.gold_hover), StrokeKind::Inside);
                         }
                     }
-                    if let (Some(i), Some(card)) = (bar_i, bar_card)
-                        && t > 0.0
-                    {
-                        let row_bottom = top.y + 10.0 + bar_row.unwrap_or(0.0) * (ch + GAP) + ch;
-                        let bar = Rect::from_min_size(pos2(top.x + 10.0, row_bottom + GAP * t), vec2(cols * (cw + GAP) - GAP, bar_h));
+                    for b in &open_bars {
+                        let (row, i, t, full_h) = *b;
+                        let Some(card) = bar_cards.get(&i).copied() else { continue };
+                        let bar = Rect::from_min_size(
+                            pos2(top.x + 10.0, card.bottom() + GAP * t),
+                            vec2(cols * (cw + GAP) - GAP, (full_h * t).round()),
+                        );
+                        let _ = row;
                         let done = n_of(shown[i]) == 4;
                         let card_fill = if done { mix(p.gold, p.paper, 0.45) } else { p.header };
                         let look = BarLook { piece: st_piece, card, bar, full_h, t, mode, card_fill };
@@ -1788,7 +2117,7 @@ impl InventoryView {
                         }
                     }
                     let rows = (shown.len() as f32 / cols).ceil();
-                    ui.allocate_exact_size(vec2(r.width() - 12.0, 20.0 + rows * (ch + GAP) + bar_h + GAP * t), Sense::hover());
+                    ui.allocate_exact_size(vec2(r.width() - 12.0, 20.0 + rows * (ch + GAP) + extra), Sense::hover());
                 });
             },
         );
@@ -1813,9 +2142,6 @@ impl InventoryView {
         if let Some(sel) = pick {
             if sel.is_none() {
                 self.st_piece = None;
-            }
-            if sel.is_some() {
-                self.st_bar_last = sel.clone();
             }
             self.st_selected = sel;
         }
@@ -2563,7 +2889,7 @@ fn key_details(ui: &Ui, p: &Palette, icons: &mut crate::icons::Icons, app: &lg_a
 }
 
 /// How tall the bar's token flow is.
-const FLOW_H: f32 = 46.0;
+const FLOW_H: f32 = 58.0;
 
 /// Where the bar under a set is and how it shows: the piece clicked (alone), the set's card (joined to it), the bar as
 /// far as open, its full height, how far open, the forge mode.
@@ -2724,7 +3050,7 @@ fn st_bar(
     let (f16, fs) = (text(16.0), text(13.0));
     let lhs = jtext::height(&painter, &fs);
     let colw = (bar.width() - 16.0) / pieces.len() as f32;
-    const CHIP: f32 = 32.0;
+    const CHIP: f32 = 38.0;
     let mut toggled = None;
     let same = |a: &lg_app::loadout::Held, b: &lg_app::loadout::Held| {
         a.char_id == b.char_id && a.vault == b.vault && a.slot == b.slot && a.enchant_ids == b.enchant_ids
@@ -2737,14 +3063,14 @@ fn st_bar(
             widgets::pack_divider(&painter, x0 - 4.0, bar.top() + 8.0, flow_top, p.gold);
         }
         // the piece
-        let y0 = bar.top() + 6.0;
-        if let Some(tx) = icons.object(ui.ctx(), data, *id, 24) {
-            painter.image(tx.id(), Rect::from_min_size(pos2(x0, y0), vec2(24.0, 24.0)), uv(), Color32::WHITE);
+        let y0 = bar.top() + 12.0;
+        if let Some(tx) = icons.object(ui.ctx(), data, *id, 30) {
+            painter.image(tx.id(), Rect::from_min_size(pos2(x0, y0), vec2(30.0, 30.0)), uv(), Color32::WHITE);
         }
         let name = data.items.item(*id).map_or(format!("Item {id}"), |i| i.name.clone());
         let nt = widgets::fit(&painter, &name, &f16, colw - 40.0);
-        jtext::draw(&painter, pos2(x0 + 30.0, y0 + 12.0), Align2::LEFT_CENTER, &nt, &f16, p.ink);
-        let cy = y0 + 24.0 + 4.0;
+        jtext::draw(&painter, pos2(x0 + 38.0, y0 + 15.0), Align2::LEFT_CENTER, &nt, &f16, p.ink);
+        let cy = y0 + 30.0 + 10.0;
         let half = (colw - 8.0) / 2.0;
         let forge = plan.iter().find(|f| f.piece == *id).filter(|_| !has(*id));
         // the copies kept (by rank: the best, then a backup) and the next one, free to dismantle
@@ -2754,7 +3080,7 @@ fn st_bar(
         for (side, seasonal) in [(0.0, true), (1.0, false)] {
             let sx = x0 + side * half;
             jtext::draw(&painter, pos2(sx, cy), Align2::LEFT_TOP, if seasonal { "SEASONAL" } else { "REGULAR" }, &fs, fixed::MUTED);
-            let mut y = cy + lhs + 3.0;
+            let mut y = cy + lhs + 6.0;
             let on_side = |h: &lg_app::loadout::Held| h.seasonal.is_none() || h.seasonal == Some(seasonal);
             if let Some(f) = forge {
                 // missing, the forge makes it: the tokens on this side, and the spare ST item it takes
@@ -2762,7 +3088,7 @@ fn st_bar(
                 let enough = n >= f.amount;
                 let tt = format!("{n} / {} token{}", f.amount, if f.amount == 1 { "" } else { "s" });
                 jtext::draw(&painter, pos2(sx, y), Align2::LEFT_TOP, &tt, &fs, if enough { fixed::GREEN } else { fixed::MUTED });
-                y += lhs + 3.0;
+                y += lhs + 6.0;
                 match &f.st_slot {
                     None => {
                         jtext::draw(&painter, pos2(sx, y), Align2::LEFT_TOP, "no ST item needed", &fs, fixed::MUTED);
@@ -2776,11 +3102,12 @@ fn st_bar(
                             // the copy kept (gold lock), then the spare (gold box)
                             let best = stock.ranked(spare.item);
                             if let Some(b) = best.first() {
-                                let br = Rect::from_min_size(pos2(sx, y), vec2(CHIP, CHIP));
+                                const KEPT: f32 = 28.0;
+                                let br = Rect::from_min_size(pos2(sx, y + (CHIP - KEPT) / 2.0), vec2(KEPT, KEPT));
                                 copy_chip(ui, &painter, p, icons, app, rarity, &b.held, b.item, br, ("st-kept", *id, seasonal));
                                 lock(&painter, br.left_top() + vec2(5.0, 6.0), 10.0, p.gold, false);
                             }
-                            let sr = Rect::from_min_size(pos2(sx + CHIP + 6.0, y), vec2(CHIP, CHIP));
+                            let sr = Rect::from_min_size(pos2(sx + 28.0 + 4.0, y), vec2(CHIP, CHIP));
                             copy_chip(ui, &painter, p, icons, app, rarity, &spare.held, spare.item, sr, ("st-spare", *id, seasonal));
                             painter.rect_stroke(sr.expand(1.0), 0.0, Stroke::new(2.0, p.gold), StrokeKind::Outside);
                         }
@@ -2853,10 +3180,10 @@ fn st_bar(
         }
         let cy = fy + FLOW_H / 2.0;
         let mut x = bar.left() + 10.0;
-        if let Some(tx) = icons.object(ui.ctx(), data, f.token, 32) {
-            painter.image(tx.id(), Rect::from_center_size(pos2(x + 16.0, cy), vec2(32.0, 32.0)), uv(), Color32::WHITE);
+        if let Some(tx) = icons.object(ui.ctx(), data, f.token, 40) {
+            painter.image(tx.id(), Rect::from_center_size(pos2(x + 20.0, cy), vec2(40.0, 40.0)), uv(), Color32::WHITE);
         }
-        x += 40.0;
+        x += 50.0;
         let amount = plan.iter().map(|f| f.amount).min().unwrap_or(1).max(1);
         // grouped by place, in the order held
         let mut places: Vec<(&lg_app::loadout::Held, i32)> = Vec::new();
@@ -2870,7 +3197,7 @@ fn st_bar(
             jtext::draw(&painter, pos2(x, cy), Align2::LEFT_CENTER, "No tokens for this set held", &fs, fixed::MUTED);
         }
         for (k, (h, n)) in places.iter().enumerate() {
-            const FLOW_CHIP: f32 = 36.0;
+            const FLOW_CHIP: f32 = 44.0;
             let cr = Rect::from_center_size(pos2(x + FLOW_CHIP / 2.0, cy), vec2(FLOW_CHIP, FLOW_CHIP));
             copy_chip(ui, &painter, p, icons, app, rarity, h, f.token, cr, ("st-flow", k));
             x += FLOW_CHIP + 4.0;

@@ -164,6 +164,34 @@ pub struct TokenCost {
     pub st_slot: Option<String>,
 }
 
+/// From `forgeProperties.xml`, what dismantling each item gives: its `DismantleRequirements` (common, rare, legendary,
+/// mythical), for the items that can be dismantled and give anything.
+pub fn dismantle(doc: &str) -> std::collections::HashMap<i32, [i32; 4]> {
+    const OPEN: &str = "<ForgeProperties type=\"";
+    let mut out = std::collections::HashMap::new();
+    let mut rest = doc;
+    while let Some(i) = rest.find(OPEN) {
+        rest = &rest[i + OPEN.len()..];
+        let Some(q) = rest.find('"') else { break };
+        let id = i32::from_str_radix(rest[..q].trim_start_matches("0x").trim_start_matches("0X"), 16).ok();
+        let Some(end) = rest.find("</ForgeProperties>") else { break };
+        let body = &rest[..end];
+        rest = &rest[end..];
+        let (Some(id), true) = (id, body.contains("<CanDismantle")) else { continue };
+        let Some(d) = body.find("<DismantleRequirements") else { continue };
+        let tag = &body[d..body[d..].find('>').map_or(body.len(), |e| d + e)];
+        let attr = |name: &str| {
+            let key = format!("{name}=\"");
+            tag.find(&key).and_then(|k| tag[k + key.len()..].split('"').next()).and_then(|v| v.trim().parse::<i32>().ok()).unwrap_or(0)
+        };
+        let v = [attr("common"), attr("rare"), attr("legendary"), attr("mythical")];
+        if v.iter().any(|x| *x > 0) {
+            out.insert(id, v);
+        }
+    }
+    out
+}
+
 /// Java `SetTokens.load`: from `forgeProperties.xml`, the pieces the forge makes from a set token.
 pub fn set_tokens(doc: &str, items: &Items) -> std::collections::HashMap<i32, TokenCost> {
     let mut out = std::collections::HashMap::new();
@@ -207,6 +235,16 @@ pub fn set_tokens(doc: &str, items: &Items) -> std::collections::HashMap<i32, To
 #[cfg(test)]
 mod token_tests {
     use super::*;
+
+    #[test]
+    fn dismantling_gives_essence() {
+        let doc = r#"<ForgeProperties type="0x23c0" id="W"><CanDismantle />
+    <DismantleRequirements common="40" rare="30" legendary="0" mythical="0" /></ForgeProperties>
+  <ForgeProperties type="0x10" id="No"><DismantleRequirements common="5" /></ForgeProperties>"#;
+        let d = dismantle(doc);
+        assert_eq!(d.get(&0x23c0), Some(&[40, 30, 0, 0]));
+        assert!(!d.contains_key(&0x10), "not dismantlable");
+    }
 
     #[test]
     fn reads_set_token_recipes() {

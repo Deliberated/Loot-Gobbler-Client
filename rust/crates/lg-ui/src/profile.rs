@@ -950,7 +950,7 @@ fn optimization_box(ui: &Ui, p: &Palette, r: egui::Rect) {
         if lit { p.gold } else { p.ink },
     );
     if resp.clicked() {
-        crate::window::open_later(ui.ctx(), "Inventory:items".to_string());
+        crate::window::open_later(ui.ctx(), "Inventory:optimize".to_string());
     }
 }
 

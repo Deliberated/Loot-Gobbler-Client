@@ -138,6 +138,9 @@ pub struct GameData {
     pub enemy_sprites: enemy_sprites::EnemySprites,
     /// The pieces the forge makes from set tokens.
     pub set_tokens: HashMap<i32, st_sets::TokenCost>,
+    /// What dismantling an item in the forge gives (`forgeProperties.xml` `DismantleRequirements`): common, rare,
+    /// legendary, mythical essence.
+    pub dismantle: HashMap<i32, [i32; 4]>,
     /// Dye and cloth item type -> texture code (Java: `Dyes`).
     pub dyes: HashMap<i32, i32>,
     /// The items as Loot Gobbler knows them (Java: `ItemDb`).
@@ -187,6 +190,7 @@ impl GameData {
         d.enemy_sprites = enemy_sprites::EnemySprites::load(assets);
         if let Some(s) = read("xml/forgeProperties.xml") {
             d.set_tokens = st_sets::set_tokens(&s, &d.items);
+            d.dismantle = st_sets::dismantle(&s);
         }
         let (dungeons, problems) = dungeons::Dungeons::load(&assets.join("xml"));
         d.dungeons = dungeons;
