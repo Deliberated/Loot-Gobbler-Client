@@ -384,7 +384,11 @@ fn player_card(ui: &mut Ui, p: &Palette, app: &App, icons: &mut Icons, now: i64,
     for k in 0..SUGGESTIONS {
         let (col, rw) = ((k % 2) as f32, (k / 2) as f32);
         let r = egui::Rect::from_min_size(pos2(top.x + col * (w + gap), top.y + rw * (h + gap)), vec2(w, h));
-        suggestion(ui.painter(), p, r);
+        if k == 0 {
+            optimization_box(ui, p, r);
+        } else {
+            suggestion(ui.painter(), p, r);
+        }
     }
     let rows = SUGGESTIONS.div_ceil(2) as f32;
     ui.allocate_exact_size(vec2(2.0 * w + gap, rows * (h + gap) - gap), Sense::hover());
@@ -920,6 +924,35 @@ fn portal(painter: &egui::Painter, m: &Member, at: Rect, count_f: &egui::FontId,
 /// One number with its caption and a line below (Java `tile`).
 /// How many suggestion boxes the overview shows.
 const SUGGESTIONS: usize = 4;
+
+/// The first suggestion box: Suggest Inventory Optimization (the optimization icon); a click opens Inventory > Items.
+fn optimization_box(ui: &Ui, p: &Palette, r: egui::Rect) {
+    let resp = ui
+        .interact(r, ui.scope_id().with("suggest-optimization"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("What to feed, craft and forge: your items looked through");
+    let painter = ui.painter();
+    let lit = resp.hovered();
+    painter.rect(
+        r,
+        0.0,
+        if lit { p.paper } else { p.header },
+        egui::Stroke::new(1.0, if lit { p.gold } else { p.line }),
+        egui::StrokeKind::Inside,
+    );
+    widgets::optimize_icon(painter, egui::pos2(r.left() + 30.0, r.center().y), 34.0, p.gold);
+    crate::jtext::draw(
+        painter,
+        egui::pos2(r.left() + 66.0, r.center().y),
+        egui::Align2::LEFT_CENTER,
+        "Suggest Inventory Optimization",
+        &widgets::head_px(24.0),
+        if lit { p.gold } else { p.ink },
+    );
+    if resp.clicked() {
+        crate::window::open_later(ui.ctx(), "Inventory:items".to_string());
+    }
+}
 
 /// A suggestion box in `r`: a quill and "Coming soon" for now.
 fn suggestion(painter: &egui::Painter, p: &Palette, r: egui::Rect) {
