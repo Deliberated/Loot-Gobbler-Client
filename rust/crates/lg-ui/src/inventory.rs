@@ -169,6 +169,73 @@ fn essence(data: &lg_gamedata::GameData, item: i32) -> i32 {
 }
 
 impl InventoryView {
+    /// The Optimization section at the top of `at` (the right column, or above the ST sets when crafting): what to
+    /// do with the spare copies, and Feed / Craft / Forge (Feed and Forge order the list, Craft melts Items and ST
+    /// Sets; again: back). Gives its rect.
+    fn opt_section(ui: &mut Ui, p: &Palette, at: Rect, opt_sort: &mut usize, melt: &mut bool, melt_exit: &mut usize) -> Rect {
+        let painter = ui.painter().clone();
+        let head = widgets::section_head_height(&painter);
+        let lh16 = jtext::height(&painter, &text(16.0));
+        let or = Rect::from_min_size(at.min, vec2(at.width(), head + 2.0 + 10.0 + 4.0 * (lh16 + 2.0) + 10.0 + 34.0 + 10.0));
+        let sort = *opt_sort;
+        let crafting = *melt;
+        let mut choice: Option<usize> = None;
+        widgets::section(
+            ui,
+            p,
+            or,
+            "Optimization",
+            fixed::GREEN,
+            |_, _| {},
+            |ui, r| {
+                let painter = ui.painter().clone();
+                let (x, w) = (r.left() + 10.0, r.width() - 20.0);
+                let mut y = r.top() + 10.0;
+                for l in [
+                    "Your spare copies are framed and listed on the left.",
+                    "Feed: the most feed power first.",
+                    "Craft: the ST sets beside your items.",
+                    "Forge: what dismantling gives, the most first.",
+                ] {
+                    jtext::draw(
+                        &painter,
+                        pos2(x, y),
+                        Align2::LEFT_TOP,
+                        &widgets::fit(&painter, l, &text(16.0), w),
+                        &text(16.0),
+                        p.ink_soft,
+                    );
+                    y += lh16 + 2.0;
+                }
+                y += 10.0;
+                let names = ["Feed", "Craft", "Forge"];
+                let on = if crafting {
+                    1
+                } else {
+                    match sort {
+                        1 => 0,
+                        2 => 2,
+                        _ => usize::MAX,
+                    }
+                };
+                if let Some(i) = widgets::segmented(ui, p, pos2(x, y), 34.0, &names, on, false, &[]) {
+                    choice = Some(i);
+                }
+            },
+        );
+        match choice {
+            Some(0) => *opt_sort = if sort == 1 { 0 } else { 1 },
+            Some(2) => *opt_sort = if sort == 2 { 0 } else { 2 },
+            // craft: the ST sets come in beside the items (again: they go)
+            Some(_) => {
+                *melt = !*melt;
+                *melt_exit = 0;
+            }
+            None => {}
+        }
+        or
+    }
+
     /// The optimization's column: each item you hold spare copies of, where each copy is (the seasonal side left,
     /// the regular right; the copy kept with a gold lock, a backup with a green one, the spare ones in gold boxes),
     /// how many are spare and its feed power or forge essence.
@@ -465,10 +532,11 @@ impl InventoryView {
                     self.melt_exit = 0;
                     self.page = i;
                 }
-                // from the plain ST Sets to Items: through the melt, parting back to the items
+                // from the plain ST Sets, Items: first the two melted (the items slide in from the left); Items again
+                // then the items alone
                 (false, 0) if self.page == 1 => {
-                    self.melt_t = 1.0;
-                    self.melt_exit = 0;
+                    self.melt = true;
+                    self.melt_exit = 1;
                     self.page = 0;
                 }
                 _ => self.page = i,
@@ -515,7 +583,8 @@ impl InventoryView {
         // parting to ST Sets the collection slides out to the left
         if mt > 0.0 && self.page <= 1 {
             let mid = body.left() + (body.width() * 0.5).round();
-            let (items_r, sets_r) = if self.melt || self.melt_exit == 0 {
+            // from or to the plain ST Sets the items slide at the left; from or to Items the sets come and go at the right
+            let (items_r, sets_r) = if self.melt_exit == 0 {
                 let split = body.right() + (mid - body.right()) * mt;
                 (
                     Rect::from_min_max(body.min, pos2(split, body.bottom())),
@@ -541,6 +610,14 @@ impl InventoryView {
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
                 child.set_clip_rect(shown.intersect(ui.clip_rect()));
                 if sets {
+                    // crafting from the optimization: its section stays on top, the sets come in below it
+                    let r = if self.opt {
+                        let side = Rect::from_min_max(pos2(r.left() + 8.0, r.top()), r.max);
+                        let or = Self::opt_section(&mut child, &p, side, &mut self.opt_sort, &mut self.melt, &mut self.melt_exit);
+                        Rect::from_min_max(pos2(r.left(), or.bottom() + 8.0), r.max)
+                    } else {
+                        r
+                    };
                     self.st_sets(&mut child, c, rarity, r, true);
                 } else {
                     self.items(&mut child, c, rarity, r, true);
@@ -912,7 +989,9 @@ impl InventoryView {
                     opt = !opt;
                 }
                 // the search box
-                let sr = Rect::from_min_size(pos2(or.left() - 8.0 - 220.0, head.top() + 3.0), vec2(220.0, h - 6.0));
+                // narrower when the section is (melted): the title keeps its room
+                let sw = if head.width() < 760.0 { 150.0 } else { 220.0 };
+                let sr = Rect::from_min_size(pos2(or.left() - 8.0 - sw, head.top() + 3.0), vec2(sw, h - 6.0));
                 crate::widgets::search_field(ui, &p, sr, &mut search, "Search items or enchants", "collection-search");
                 widgets::tip(
                     ui,
@@ -1172,56 +1251,7 @@ impl InventoryView {
         let pct = if grid.is_empty() { 0.0 } else { 100.0 * have as f64 / grid.len() as f64 };
         let mut side = side;
         if self.opt {
-            // what to do with the spare copies: feed them, craft with them (Items and ST Sets), forge them
-            let lh16 = jtext::height(&painter, &text(16.0));
-            let or = Rect::from_min_size(side.min, vec2(side.width(), head + 2.0 + 10.0 + 4.0 * (lh16 + 2.0) + 10.0 + 34.0 + 10.0));
-            let sort = self.opt_sort;
-            let mut choice: Option<usize> = None;
-            widgets::section(
-                ui,
-                &p,
-                or,
-                "Optimization",
-                fixed::GREEN,
-                |_, _| {},
-                |ui, r| {
-                    let painter = ui.painter().clone();
-                    let (x, w) = (r.left() + 10.0, r.width() - 20.0);
-                    let mut y = r.top() + 10.0;
-                    for l in [
-                        "Your spare copies are framed and listed on the left.",
-                        "Feed: the most feed power first.",
-                        "Craft: Items and ST Sets side by side.",
-                        "Forge: what dismantling gives, the most first.",
-                    ] {
-                        jtext::draw(
-                            &painter,
-                            pos2(x, y),
-                            Align2::LEFT_TOP,
-                            &widgets::fit(&painter, l, &text(16.0), w),
-                            &text(16.0),
-                            p.ink_soft,
-                        );
-                        y += lh16 + 2.0;
-                    }
-                    y += 10.0;
-                    let names = ["Feed", "Craft", "Forge"];
-                    let on = match sort {
-                        1 => 0,
-                        2 => 2,
-                        _ => usize::MAX,
-                    };
-                    if let Some(i) = widgets::segmented(ui, &p, pos2(x, y), 34.0, &names, on, false, &[]) {
-                        choice = Some(i);
-                    }
-                },
-            );
-            match choice {
-                Some(0) => self.opt_sort = if sort == 1 { 0 } else { 1 },
-                Some(2) => self.opt_sort = if sort == 2 { 0 } else { 2 },
-                Some(_) => self.melt = true,
-                None => {}
-            }
+            let or = Self::opt_section(ui, &p, side, &mut self.opt_sort, &mut self.melt, &mut self.melt_exit);
             side = Rect::from_min_max(pos2(side.left(), or.bottom() + 8.0), side.max);
         }
         let prog = Rect::from_min_size(

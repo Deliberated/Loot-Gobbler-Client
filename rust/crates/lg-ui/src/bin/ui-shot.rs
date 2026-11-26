@@ -527,6 +527,11 @@ fn main() {
                             win.inventory.st_class = Some(s.class_name.clone());
                         }
                     }
+                    // "Inventory:craft": the optimization on, crafting (Items and ST Sets melted under it)
+                    if tab == "Inventory:craft" {
+                        win.open("Inventory:optimize");
+                        win.inventory.melt = true;
+                    }
                     // "Inventory:melt[:<set title>]": Items and ST Sets melted (that set clicked)
                     if let Some(rest) = tab.strip_prefix("Inventory:melt") {
                         win.open("Inventory");
