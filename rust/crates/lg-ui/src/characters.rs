@@ -208,7 +208,7 @@ impl CharactersView {
 
     /// The stats windows: one opens after a moment on a character's portrait (following the pointer over it) and stays while the pointer
     /// is on the character or on it; its pin keeps it open (and lets it be dragged) until the pin is clicked again.
-    fn stats_windows(&mut self, ui: &Ui, c: &Ctx) {
+    fn stats_windows(&mut self, ui: &Ui, c: &mut Ctx) {
         const OPEN_AFTER: f64 = 0.1;
         const GRACE: f64 = 0.3;
         let p = *c.p;
@@ -259,6 +259,17 @@ impl CharactersView {
         if t.hover.is_some() {
             ui.ctx().request_repaint_after_secs(GRACE as f32);
         }
+        // the portraits of the characters shown
+        let data = app.world.data();
+        let mut faces: std::collections::HashMap<i32, egui::TextureHandle> = std::collections::HashMap::new();
+        for id in t.hover.iter().map(|h| h.0).chain(t.pinned.iter().map(|x| x.0)) {
+            if let Some(ch) = app.characters.get(id) {
+                let skin = if ch.skin > 0 { ch.skin } else { ch.class_type };
+                if let Some(tex) = c.icons.skin(ui.ctx(), data, skin, ch.tex1, ch.tex2, 40) {
+                    faces.insert(id, tex);
+                }
+            }
+        }
         // a window: the stats in a rounded gold frame, the pin at its top right; whether the pin was clicked
         let window = |ui: &mut Ui, ch: &Char, pinned: bool| -> (Rect, bool) {
             let framed = egui::Frame::new()
@@ -266,7 +277,7 @@ impl CharactersView {
                 .stroke(Stroke::new(2.0, if pinned { fixed::GREEN } else { p.gold }))
                 .corner_radius(6.0)
                 .inner_margin(10.0)
-                .show(ui, |ui| stats_grid(ui, ch, app));
+                .show(ui, |ui| stats_grid(ui, ch, app, faces.get(&ch.char_id).map(egui::TextureHandle::id)));
             let r = framed.response.rect;
             let pr = Rect::from_min_size(pos2(r.right() - 34.0, r.top() + 6.0), vec2(26.0, 26.0));
             let resp = ui
@@ -1274,7 +1285,7 @@ fn pin_icon(painter: &egui::Painter, r: Rect, on: bool, hover: bool) {
 
 /// A character's stats: per stat its base, the potions it still needs to max (after a bar), the gear bonus while it
 /// is played and the bonus of its class's exaltations; maxed stats in yellow.
-fn stats_grid(ui: &mut Ui, c: &Char, app: &lg_app::App) {
+fn stats_grid(ui: &mut Ui, c: &Char, app: &lg_app::App, face: Option<egui::TextureId>) {
     // the stats in the game's order, and where each sits among the exaltations (dex, spd, vit, wis, def, att, mp, hp)
     const NAMES: [&str; 8] = ["HP", "MP", "ATT", "DEF", "SPD", "DEX", "VIT", "WIS"];
     const EXALT_AT: [usize; 8] = [7, 6, 5, 4, 1, 0, 2, 3];
@@ -1292,7 +1303,12 @@ fn stats_grid(ui: &mut Ui, c: &Char, app: &lg_app::App) {
     {
         ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
         let (Some(base), Some(max)) = (base, max) else {
-            ui.label(egui::RichText::new(format!("{maxed} of 8 stats maxed")).font(text(18.0)));
+            ui.horizontal(|ui| {
+                if let Some(f) = face {
+                    ui.add(egui::Image::new((f, vec2(40.0, 40.0))));
+                }
+                ui.label(egui::RichText::new(format!("{maxed} of 8 stats maxed")).font(text(18.0)));
+            });
             ui.label(
                 egui::RichText::new("Play this character or refresh the list to see its potions left.")
                     .font(text(16.0))
@@ -1313,7 +1329,12 @@ fn stats_grid(ui: &mut Ui, c: &Char, app: &lg_app::App) {
         } else {
             format!("{maxed}/8 · {total} potion{} to 8/8", if total == 1 { "" } else { "s" })
         };
-        ui.label(egui::RichText::new(head).font(text(20.0)).color(STATS_MAXED));
+        ui.horizontal(|ui| {
+            if let Some(f) = face {
+                ui.add(egui::Image::new((f, vec2(40.0, 40.0))));
+            }
+            ui.label(egui::RichText::new(head).font(text(20.0)).color(STATS_MAXED));
+        });
         let (cw, ch, gap) = (132.0, 50.0, 4.0);
         let (area, _) = ui.allocate_exact_size(vec2(2.0 * cw + gap, 4.0 * ch + 3.0 * gap), Sense::hover());
         let painter = ui.painter();
