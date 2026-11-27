@@ -1442,8 +1442,8 @@ impl CaravanView {
             self.zoom = Some(z);
             c.asks.push(Ask::Set("caravanZoom".into(), format!("{z:.3}")));
         }
-        // the palette of balloon colours: one clicked is yours (synced with your profile); a click anywhere else
-        // closes it
+        // the palette of balloon colours and tethers: one clicked is yours (synced with your profile); it stays open
+        // until a click anywhere else
         if palette_at.is_some() {
             self.palette = palette_at;
         } else if let Some(at) = self.palette {
@@ -1508,12 +1508,11 @@ impl CaravanView {
                         },
                     );
                 });
+            // a pick keeps the palette open (to try another); a click anywhere else closes it
             if let Some(i) = picked_colour {
                 c.asks.push(Ask::BalloonColour(i));
-                self.palette = None;
             } else if let Some(k) = picked_tether {
                 c.asks.push(Ask::BalloonTether(k));
-                self.palette = None;
             } else if ui.input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|q| !shown.response.rect.contains(q))) {
                 self.palette = None;
             }
