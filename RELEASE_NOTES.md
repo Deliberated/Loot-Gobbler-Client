@@ -17,3 +17,6 @@ v0.0.7: Seasons
 **Faster caravan:** 
 - The guild's drops kept on your PC are really kept now: each start only fetches what is new, instead of all of them again
 - The drop log catches up at 120 drops every second
+
+**Deaths in boss fights:** 
+- Players whose name the game sends with extra codes are now marked as died in the boss tables too

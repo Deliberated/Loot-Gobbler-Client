@@ -156,13 +156,14 @@ pub fn is_boss_mob(data: &lg_gamedata::GameData, object_type: i32) -> bool {
     MOONLIGHT_BOSSES.contains(&object_type) || data.object(object_type).is_some_and(|o| o.has_label("BOSS") || o.has_label("MINIBOSS"))
 }
 
-/// Java `DeathParser.extractNameFromMessage`: the 10th part between quotes.
+/// Java `DeathParser.extractNameFromMessage`: the 10th part between quotes; as the name is shown (`fight::name`):
+/// without what the game adds after a comma ("Gestorm,fe14"), which Java kept, so such a death was never matched.
 pub fn death_name(message: Option<&str>) -> Option<&str> {
     let mut parts: Vec<&str> = message?.split('"').collect();
     while parts.last() == Some(&"") {
         parts.pop(); // Java's split drops trailing empty parts
     }
-    parts.get(9).copied()
+    parts.get(9).map(|n| n.split(',').next().unwrap_or(""))
 }
 
 /// Java `CharacterStore.liveTexture`: a dye's texture, or the value itself when it is one already.
@@ -564,6 +565,9 @@ mod tests {
         let m = r#"{"k":"s.death","t":{"player":"Bob","enemy":"x"}}"#;
         // split by quotes: {, k, :, s.death, ,, t, :{, player, :, Bob, ...
         assert_eq!(death_name(Some(m)), Some("Bob"));
+        // the codes the game adds to some names after a comma: as the name is shown
+        let coded = r#"{"k":"s.death","t":{"player":"Stepixon,c89f,fe3","level":"20","enemy":"Miasma Portal",}}"#;
+        assert_eq!(death_name(Some(coded)), Some("Stepixon"));
         assert_eq!(death_name(Some(r#"a"b"c"#)), None);
         assert_eq!(death_name(None), None);
     }
