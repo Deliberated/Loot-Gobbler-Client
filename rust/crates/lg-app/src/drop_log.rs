@@ -155,6 +155,11 @@ impl DropLog {
         added || was != self.caught_up
     }
 
+    /// Asked again right away (a drop of yours just went up).
+    pub fn soon(&mut self) {
+        self.next_at = 0;
+    }
+
     /// The call failed: again in a while.
     pub fn failed(&mut self, now: i64) {
         self.loading = false;
@@ -176,9 +181,13 @@ impl DropLog {
         for m in &mut caravan.members {
             let items = self.items(m.id, start);
             if self.caught_up {
-                // the server's list may already have a drop the copy has not yet
-                if items.len() >= m.items.len() {
-                    m.items = items;
+                // all of the copy's, and the server's newest it has not fetched yet (just uploaded): both
+                let same = |a: &CaravanItem, b: &CaravanItem| a.item_id == b.item_id && a.time == b.time && a.r#where == b.r#where;
+                let newer: Vec<CaravanItem> = m.items.iter().filter(|s| !items.iter().any(|i| same(i, s))).cloned().collect();
+                m.items = items;
+                if !newer.is_empty() {
+                    m.items.extend(newer);
+                    m.items.sort_by(|a, b| b.time.cmp(&a.time));
                 }
                 continue;
             }
@@ -225,6 +234,21 @@ mod tests {
         log.fill(&mut c);
         let ids: Vec<i32> = c.members[0].items.iter().map(|i| i.item_id).collect();
         assert_eq!(ids, vec![999, 103, 102, 101]);
+    }
+
+    /// Caught up, the copy's items with the server's newest the copy has not fetched yet (they were just uploaded):
+    /// none of either lost.
+    #[test]
+    fn the_servers_newest_stay_until_the_copy_has_them() {
+        use crate::guild::CaravanMember;
+        let mut log = DropLog::default();
+        log.take("s|1", &answer("Gob", "a", &[1, 2, 3], false), 0);
+        assert!(log.caught_up);
+        let newest = CaravanItem { item_id: 999, time: "2026-01-02T00:00:00".into(), r#where: "Nest".into(), ..Default::default() };
+        let mut c =
+            Caravan { members: vec![CaravanMember { id: 7, total: 4, items: vec![newest], ..Default::default() }], ..Default::default() };
+        log.fill(&mut c);
+        assert_eq!(c.members[0].items.iter().map(|i| i.item_id).collect::<Vec<_>>(), vec![999, 103, 102, 101]);
     }
 
     #[test]

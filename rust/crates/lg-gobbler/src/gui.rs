@@ -529,6 +529,8 @@ impl Gui {
         }
         if sync.uploaded.contains(&"collection") {
             self.app.server.guild.caravan_stale = true;
+            // and the drop log fetches them
+            self.app.server.guild.log.soon();
         }
         if sync.uploaded.contains(&"collection") || sync.uploaded.contains(&"dps_history") {
             self.app.server.profile_guild.stale = true; // your run or drops reached the server

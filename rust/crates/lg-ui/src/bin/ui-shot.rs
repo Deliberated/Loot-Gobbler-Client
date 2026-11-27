@@ -494,6 +494,14 @@ fn main() {
                     member(5, "Orrbrix", 0, 9, 3, 4),
                 ],
             }));
+            // UI_SHOT_CARAVAN_FROM=<data dir>: instead, the caravan and the guild's drop log kept in that folder, as the
+            // app shows them at start (you: account 1)
+            if let Ok(dir) = std::env::var("UI_SHOT_CARAVAN_FROM") {
+                let dir = std::path::PathBuf::from(dir);
+                app.server.guild.caravan = None;
+                app.server.guild.log = lg_app::drop_log::DropLog::import(&dir);
+                app.server.caravan_import(&dir);
+            }
         }
         // "badge": inside a dungeon for 4:40 (the menu bar's dungeon box)
         if tab == "badge" {
