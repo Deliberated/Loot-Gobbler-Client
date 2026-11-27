@@ -142,7 +142,7 @@ impl DropLog {
         if added || was != self.caught_up {
             self.dirty = true;
         }
-        self.caught_up && (added || !was)
+        added || was != self.caught_up
     }
 
     /// The call failed: again in a while.
@@ -158,17 +158,24 @@ impl DropLog {
         out.into_iter().map(|d| d.item.clone()).collect()
     }
 
-    /// The caravan's members with all their items from the copy (once it has caught up; until then the server's
-    /// lists stay).
+    /// The caravan's members (as the server sent them) with their items from the copy: all of them once it has
+    /// caught up; while it is still catching up (oldest first), the server's newest ones with the copy's older ones
+    /// before them, so what came already shows (also after a restart).
     pub fn fill(&self, caravan: &mut Caravan) {
-        if !self.caught_up {
-            return;
-        }
         for m in &mut caravan.members {
             let items = self.items(m.id);
-            // the server's list may already have a drop the copy has not yet
-            if items.len() >= m.items.len() {
-                m.items = items;
+            if self.caught_up {
+                // the server's list may already have a drop the copy has not yet
+                if items.len() >= m.items.len() {
+                    m.items = items;
+                }
+                continue;
+            }
+            // the server sends at most its 120 newest: the copy's drops older than the oldest of them go behind
+            if m.items.len() < m.total as usize
+                && let Some(oldest) = m.items.last().map(|i| i.time.clone())
+            {
+                m.items.extend(items.into_iter().filter(|i| i.time < oldest));
             }
         }
     }
@@ -187,9 +194,32 @@ mod tests {
     }
 
     #[test]
+    fn catching_up_puts_older_drops_behind_the_servers_newest() {
+        use crate::guild::CaravanMember;
+        let mut log = DropLog::default();
+        // the first page: drops 1..3 of player 7 (oldest first), more waiting
+        log.take("s|1", &answer("Gob", "a", &[1, 2, 3], true), 0);
+        assert!(!log.caught_up);
+        // the server's newest of 7's (it found 10): drop 3 and a newer one; the copy's older ones go behind them
+        let newest = |id: i32, t: &str| CaravanItem { item_id: id, time: t.into(), ..Default::default() };
+        let mut c = Caravan {
+            members: vec![CaravanMember {
+                id: 7,
+                total: 10,
+                items: vec![newest(999, "2026-01-02T00:00:00"), newest(103, "2026-01-01T00:00:03")],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        log.fill(&mut c);
+        let ids: Vec<i32> = c.members[0].items.iter().map(|i| i.item_id).collect();
+        assert_eq!(ids, vec![999, 103, 102, 101]);
+    }
+
+    #[test]
     fn takes_pages_and_starts_over_for_another_log() {
         let mut log = DropLog::default();
-        assert!(!log.take("s|1", &answer("Gob", "a", &[1, 2], true), 0));
+        assert!(log.take("s|1", &answer("Gob", "a", &[1, 2], true), 0));
         assert_eq!((log.after, log.caught_up, log.next_at), (2, false, PAGE_EVERY_MS));
         log.asked = log.after;
         assert!(log.take("s|1", &answer("Gob", "a", &[3], false), 5));

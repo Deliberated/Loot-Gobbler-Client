@@ -1048,9 +1048,11 @@ impl Connection {
             "droplog" => {
                 let account = format!("{}|{}", self.url, self.user.as_ref().map_or(0, |u| u.id));
                 if self.guild.log.take(&account, &j, now_ms())
-                    && let Some(Ok(c)) = &mut self.guild.caravan
+                    && let Some(raw) = &self.guild.caravan_raw
                 {
-                    self.guild.log.fill(c);
+                    let mut c = raw.clone();
+                    self.guild.log.fill(&mut c);
+                    self.guild.caravan = Some(Ok(c));
                     self.guild.version += 1;
                 }
             }
@@ -1186,6 +1188,7 @@ impl Connection {
     fn caravan_done(&mut self, mut c: Result<crate::guild::Caravan, Error>) {
         self.guild.caravan_loading = false;
         if let Ok(c) = &mut c {
+            self.guild.caravan_raw = Some(c.clone());
             self.guild.log.fill(c);
         }
         self.guild.caravan = Some(c);

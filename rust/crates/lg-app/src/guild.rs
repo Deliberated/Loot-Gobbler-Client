@@ -814,6 +814,8 @@ pub struct GuildState {
     pub version: u64,
     /// The loot caravan (Java `CaravanView`): None until loaded; loading, asked again meanwhile, to load when shown.
     pub caravan: Option<Result<Caravan, crate::server::Error>>,
+    /// The caravan as the server sent it (the drop log's items are added to a copy of it).
+    pub(crate) caravan_raw: Option<Caravan>,
     pub(crate) caravan_loading: bool,
     pub(crate) caravan_again: bool,
     pub caravan_stale: bool,
