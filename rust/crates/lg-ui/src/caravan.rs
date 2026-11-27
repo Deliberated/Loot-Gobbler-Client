@@ -977,6 +977,16 @@ impl CaravanView {
                             let extra = scene_h - HEIGHT;
                             if extra > 0.0 {
                                 p2.rect_filled(Rect::from_min_size(sr.min, vec2(sw, extra)), 0.0, SKY);
+                                // stars in it too, as many to the area as the backdrop has, twinkling the same way
+                                let mut rnd = lg_app::java::JavaRandom::new(11);
+                                let n = (40.0 * extra / 150.0) as i64;
+                                for i in 0..n {
+                                    let sx = rnd.next_int(10_000) as f32 / 10_000.0 * sw;
+                                    let sy = rnd.next_int(10_000) as f32 / 10_000.0 * (extra - 4.0);
+                                    let dim = (scene.phase as i64 / 12 + i) % 7 == 0;
+                                    let c = if dim { darker(darker(rgb(0xF4E6C6))) } else { rgb(0xF4E6C6) };
+                                    p2.rect_filled(Rect::from_min_size(sr.min + vec2(sx.floor(), sy.floor()), vec2(4.0, 4.0)), 0.0, c);
+                                }
                             }
                             crate::guild::backdrop(&p2, Rect::from_min_size(sr.min + vec2(0.0, extra), vec2(sw, HEIGHT)), scene.phase, 1.0);
                             if !has {
