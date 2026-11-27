@@ -1,34 +1,29 @@
-v0.0.5: Balloons over the Loot Caravan
+v0.0.6: Your own balloon
 
-**Loot Caravan balloons:** 
-- A wagon piles its items up to 15 rows; once full, they go up onto a hot air balloon tied to it, and the player rides up there with them
-- The wagon then fills up again, wider now that the driver's seat is free, and each full load joins the heap on the balloon
-- The balloon inflates a little as its heap grows; neighbouring balloons never touch
-- Balloons float gently up and down
+**Your balloon:** 
+- Click your balloon in the Loot Caravan to pick its colour from 9 pastels: the middle takes the one you pick, the outer pieces get a second one at random
+- Click the same colour again for a new second colour
+- Pick how your balloon is tied to your wagon: two ropes, one thick rope, two chains, two slack ropes or a rope ladder
+- The shuffle button at the top right picks a colour and a tether at random
+- The palette stays open until you click somewhere else
+- Your picks sync with your profile, and your guildmates see them on your balloon (needs the Loot Gobbler server updated to v0.9.5)
 
-**Gems set into the planks:** 
-- Once the gold chest holds five stones of a colour, four of them leave it as one gem set into the wagon's planks (and the balloon's deck), in a random spot
-- When the planks are full, rarer gems replace lower ones: blue replaces green, purple green or blue, gold any of them
-- The chest keeps at most four of each colour
+**Balloons:** 
+- Burners fire now and then, flames rising into the balloon
+- Balloons float higher above their wagons
+- Riders are a bit smaller
 
-**Bigger caravan view:** 
-- The caravan fills the whole page and resizes with the window, with street, sky and stars around it
-- Drag the scene with the mouse to look around; Ctrl + mouse wheel zooms, now smoothly
-- The mouse wheel scrolls down to the member's card below
+**The sky:** 
+- Something waits high up in the sky above the caravan: drag up or zoom out to find it
+- Stars and the moon stay where they are when you zoom or drag
 
-**All of the guild's drops:** 
-- The caravan now shows every item a guildmate found, not just their 120 newest
-- Loot Gobbler keeps a copy of the guild's drops on your PC and only fetches what is new; the first time it catches up in the background, 120 drops every 10 seconds
-- Needs the Loot Gobbler server updated to v0.0.5
+**Zooming:** 
+- Ctrl + mouse wheel zooms in and out at the mouse pointer
 
-**Character stats:** 
-- Click a character to pick it, click it again for a window with its stats: the potions still needed, exaltation and gear bonuses, and its portrait
-- Pin the window to keep it open and drag it anywhere; unpinned, it closes after a short countdown
+**Faster caravan:** 
+- The caravan from last time shows right away at start, balloons and all
+- Guildmates' items show while the drop log is still catching up
+- The drop log catches up twice as fast, 120 drops every 5 seconds
 
-**Focus:** 
-- A character focused with its eye now counts even when it has a game mode run
-- In Characters > Classes, the focused character's class is highlighted and opened
-
-**Animations:** 
-- The section pour flows as one water drop, also when Items and ST Sets merge or come apart
-- Smoother page slides between tabs and sections
+**Gold chest stones:** 
+- Stones no longer go into the planks; the gobbler keeps count of them for later
