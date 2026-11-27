@@ -737,7 +737,17 @@ fn member(ui: &mut Ui, c: &mut Ctx, body: Rect) {
 }
 
 /// The sky with its stars and moon, the hills, the road with its moving lines (Java `Scene.paintBackdrop`).
-pub fn backdrop(painter: &egui::Painter, r: Rect, phase: f64, k: f32) {
+/// `sky_things`: its stars and moon too (the caravan page places its own, zooming with the scene).
+/// The moon, its top left at `at`, at scale `k`: a soft glow, the disc, two craters.
+pub fn moon(painter: &egui::Painter, at: egui::Pos2, k: f32) {
+    let r = |x: f32, y: f32, w: f32, h: f32| Rect::from_min_size(at + vec2(x * k, y * k), vec2(w * k, h * k));
+    painter.rect_filled(r(-6.0, -6.0, 60.0, 60.0), 0.0, Color32::from_rgba_unmultiplied(244, 230, 198, 30));
+    painter.rect_filled(r(0.0, 0.0, 48.0, 48.0), 0.0, rgb(0xF4E6C6));
+    painter.rect_filled(r(8.0, 10.0, 10.0, 10.0), 0.0, rgb(0xD2B988));
+    painter.rect_filled(r(28.0, 28.0, 6.0, 6.0), 0.0, rgb(0xD2B988));
+}
+
+pub fn backdrop(painter: &egui::Painter, r: Rect, phase: f64, k: f32, sky_things: bool) {
     const HEIGHT: f32 = 440.0;
     // drawn at scale k (the Profile's small wagon: half size)
     let w = (r.width() / k).floor();
@@ -746,7 +756,7 @@ pub fn backdrop(painter: &egui::Painter, r: Rect, phase: f64, k: f32) {
     let star = rgb(0xF4E6C6);
     painter.rect_filled(Rect::from_min_size(r.min, sz(w, HEIGHT)), 0.0, rgb(0x141B2B));
     let mut rnd = lg_app::java::JavaRandom::new(7);
-    for i in 0..40 {
+    for i in 0..if sky_things { 40 } else { 0 } {
         let sx = i64::from(rnd.next_int(10_000));
         let sy = 8 + rnd.next_int(150);
         let dim = (phase as i64 / 12 + i) % 7 == 0;
@@ -762,11 +772,10 @@ pub fn backdrop(painter: &egui::Painter, r: Rect, phase: f64, k: f32) {
         };
         painter.rect_filled(Rect::from_min_size(at((sx * w as i64 / 10_000) as f32, sy as f32), sz(4.0, 4.0)), 0.0, c);
     }
-    let mx = w - 120f32.max((w / 7.0).floor());
-    painter.rect_filled(Rect::from_min_size(at(mx - 6.0, 28.0), sz(60.0, 60.0)), 0.0, Color32::from_rgba_unmultiplied(244, 230, 198, 30));
-    painter.rect_filled(Rect::from_min_size(at(mx, 34.0), sz(48.0, 48.0)), 0.0, star);
-    painter.rect_filled(Rect::from_min_size(at(mx + 8.0, 44.0), sz(10.0, 10.0)), 0.0, rgb(0xD2B988));
-    painter.rect_filled(Rect::from_min_size(at(mx + 28.0, 62.0), sz(6.0, 6.0)), 0.0, rgb(0xD2B988));
+    if sky_things {
+        let mx = w - 120f32.max((w / 7.0).floor());
+        moon(painter, at(mx, 34.0), k);
+    }
     let hills = |top: f32, height: f32, color: Color32, peaks: &[i32]| {
         let n = peaks.len() as i64;
         let mut pts: Vec<egui::Pos2> = peaks

@@ -51,6 +51,38 @@ pub const TETHER_STYLES: usize = 5;
 /// Pictures: every balloon's burner burning.
 pub static ALWAYS_BURN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// The night sky's stars and the moon at places of their own in the scene (as the caravan is laid out from `t`), so
+/// zooming and dragging move them with it: a few stars in each square of the sky, twinkling now and then; the moon
+/// above the caravan's far end.
+fn sky(p: &egui::Painter, t: &T, ground: f32, caravan_w: f32, phase: f64) {
+    const TILE: f32 = 160.0;
+    let clip = p.clip_rect();
+    // the part of the sky in view, in the scene's units
+    let world = |q: Pos2| (PAD + (q.x - t.o.x - t.start) / t.f, ground + (q.y - t.gy) / t.f);
+    let (x0, y0) = world(clip.min);
+    let (x1, y1) = world(clip.max);
+    // not over the hills
+    let horizon = t.gy - 120.0;
+    let star = rgb(0xF4E6C6);
+    for ty in ((y0 / TILE).floor() as i64)..=((y1 / TILE).ceil() as i64) {
+        for tx in ((x0 / TILE).floor() as i64)..=((x1 / TILE).ceil() as i64) {
+            let mut rnd = lg_app::java::JavaRandom::new(tx.wrapping_mul(73_856_093) ^ ty.wrapping_mul(19_349_663));
+            for k in 0..4 {
+                let wx = tx as f32 * TILE + rnd.next_int(TILE as i32) as f32;
+                let wy = ty as f32 * TILE + rnd.next_int(TILE as i32) as f32;
+                let at = t.p(wx, wy);
+                if at.y > horizon {
+                    continue;
+                }
+                let dim = (phase as i64 / 12 + tx + ty * 3 + k) % 7 == 0;
+                let c = if dim { darker(darker(star)) } else { star };
+                p.rect_filled(Rect::from_min_size(pos2(at.x.floor(), at.y.floor()), vec2(4.0, 4.0)), 0.0, c);
+            }
+        }
+    }
+    crate::guild::moon(p, t.p(PAD + caravan_w * 0.92, ground - 380.0), t.f);
+}
+
 /// A satellite in pixels of `u`, its body's centre at `c`: a box wrapped in gold foil, a solar panel on a strut to
 /// each side, a dish with its antenna on top, a light blinking red.
 fn satellite(p: &egui::Painter, c: Pos2, u: f32, phase: f64) {
@@ -253,7 +285,7 @@ pub struct CaravanView {
     shown_zoom: Option<f64>,
     /// The scene's scroll offset and size last frame and its scale then; where in the view the pointer zoomed
     /// (while the zoom glides, that point stays under it).
-    road: Option<(egui::Vec2, egui::Vec2, f32)>,
+    road: Option<(egui::Vec2, egui::Vec2, f32, f32)>,
     /// Your balloon clicked: the palette open there.
     palette: Option<egui::Pos2>,
     zoom_anchor: Option<egui::Vec2>,
@@ -899,7 +931,7 @@ impl Scene<'_> {
         block(p, t, cx - 17.0, mouth - 3.0, 34.0, 8.0, WOOD_DARK);
         // now and then the burner fires up into the envelope for five seconds, each balloon on its own rhythm
         let secs = self.phase * 0.07;
-        let period = 30.0 + (m.id.rem_euclid(7) as f64) * 3.0;
+        let period = 20.0 + (m.id.rem_euclid(7) as f64) * 2.0;
         let offset = (m.id.wrapping_mul(17).rem_euclid(97)) as f64;
         let into = if ALWAYS_BURN.load(std::sync::atomic::Ordering::Relaxed) { 2.5 } else { (secs + offset) % period };
         if into < 5.0 {
@@ -930,7 +962,9 @@ impl Scene<'_> {
         }
         // the driver sitting at the front, low on the deck
         let bob = (2.0 * (self.phase * 0.25).sin()).round() as f32;
-        self.driver(ui, icons, p, m, t.r(bx + 2.0, by - DRIVER + 12.0 + bob, DRIVER, DRIVER), Color32::WHITE);
+        // a bit smaller up there than on the wagon
+        const RIDER: f32 = 48.0;
+        self.driver(ui, icons, p, m, t.r(bx + 6.0, by - RIDER + 9.0 + bob, RIDER, RIDER), Color32::WHITE);
         // the deck: planks over a beam, a post at each end
         block(p, t, bx + 12.0, by + PLATFORM_H - 3.0, plat_w - 24.0, 7.0, WOOD_DARK);
         block(p, t, bx, by, plat_w, PLATFORM_H, WOOD);
@@ -1039,7 +1073,7 @@ pub fn small_wagon(
     if extra > 0.0 {
         p2.rect_filled(Rect::from_min_size(o, vec2(width, extra * ZOOM)), 0.0, SKY);
     }
-    crate::guild::backdrop(&p2, Rect::from_min_size(o + vec2(0.0, extra * ZOOM), vec2(width, HEIGHT * ZOOM)), phase, ZOOM);
+    crate::guild::backdrop(&p2, Rect::from_min_size(o + vec2(0.0, extra * ZOOM), vec2(width, HEIGHT * ZOOM)), phase, ZOOM, true);
     let ground = HEIGHT - 34.0;
     let t = T { o, start: PAD * ZOOM, ground, f: ZOOM, gy: o.y + (extra + ground) * ZOOM };
     scene.paint_ox(&p2, &t, PAD, ground);
@@ -1190,6 +1224,11 @@ impl CaravanView {
                     let vp = Rect::from_min_size(frame.min + vec2(2.0, 2.0), vec2(view_w, vp_h));
                     let mut road = ui.new_child(egui::UiBuilder::new().max_rect(vp));
                     let mut hits = Hits::default();
+                    // where the caravan starts across the scene: after the street, or in the middle while it is narrower
+                    let start_x = {
+                        let (sw, drawn) = (content_w.max(view_w), scene.content_width(&painter) * f_scale);
+                        if drawn + 2.0 * STREET > sw { STREET } else { (sw - drawn) / 2.0 }
+                    };
                     let mut area = egui::ScrollArea::both()
                         .id_salt("caravan-road")
                         .scroll_source(egui::scroll_area::ScrollSource {
@@ -1198,15 +1237,17 @@ impl CaravanView {
                             mouse_wheel: false,
                         })
                         .stick_to_bottom(anchor.is_none());
-                    // zooming: the point under the pointer stays there (from the street's start across, from the
-                    // bottom up, as the scene is laid out)
-                    if let (Some((off, content, s0)), Some(m)) = (road_was, anchor)
+                    // zooming: the point under the pointer stays there. Across the scene scales from where the caravan
+                    // starts; up and down from the road's line (what is under it does not scale)
+                    if let (Some((off, content, s0, start0)), Some(m)) = (road_was, anchor)
                         && has
                         && (f_scale - s0).abs() > 1e-5
                     {
                         let k = f_scale / s0;
-                        let x = STREET + (off.x + m.x - STREET) * k - m.x;
-                        let y = scene_h + GROUND_ROOM - (content.y - off.y - m.y) * k - m.y;
+                        let x = start_x + (off.x + m.x - start0) * k - m.x;
+                        let below = 34.0 + GROUND_ROOM;
+                        let above_road = (content.y - below) - (off.y + m.y);
+                        let y = scene_h - 34.0 - above_road * k - m.y;
                         area = area.scroll_offset(vec2(x.max(0.0), y.max(0.0)));
                     }
                     let out = area.show(&mut road, |ui| {
@@ -1219,25 +1260,21 @@ impl CaravanView {
                         let extra = scene_h - HEIGHT;
                         if extra > 0.0 {
                             p2.rect_filled(Rect::from_min_size(sr.min, vec2(sw, extra)), 0.0, SKY);
-                            // stars in it too, as many to the area as the backdrop has, twinkling the same way
-                            let mut rnd = lg_app::java::JavaRandom::new(11);
-                            let n = (40.0 * extra / 150.0) as i64;
-                            for i in 0..n {
-                                let sx = rnd.next_int(10_000) as f32 / 10_000.0 * sw;
-                                let sy = rnd.next_int(10_000) as f32 / 10_000.0 * (extra - 4.0);
-                                let dim = (scene.phase as i64 / 12 + i) % 7 == 0;
-                                let c = if dim { darker(darker(rgb(0xF4E6C6))) } else { rgb(0xF4E6C6) };
-                                p2.rect_filled(Rect::from_min_size(sr.min + vec2(sx.floor(), sy.floor()), vec2(4.0, 4.0)), 0.0, c);
-                            }
                         }
-                        crate::guild::backdrop(&p2, Rect::from_min_size(sr.min + vec2(0.0, extra), vec2(sw, HEIGHT)), scene.phase, 1.0);
+                        crate::guild::backdrop(
+                            &p2,
+                            Rect::from_min_size(sr.min + vec2(0.0, extra), vec2(sw, HEIGHT)),
+                            scene.phase,
+                            1.0,
+                            false,
+                        );
                         if !has {
                             return;
                         }
                         let ground = HEIGHT - 34.0;
-                        let drawn = scene.content_width(&p2) * f_scale;
-                        let start = if drawn + 2.0 * STREET > sw { STREET } else { (sw - drawn) / 2.0 };
-                        let t = T { o: sr.min + vec2(0.0, extra), start, ground, f: f_scale, gy: sr.min.y + extra + ground };
+                        let t = T { o: sr.min + vec2(0.0, extra), start: start_x, ground, f: f_scale, gy: sr.min.y + extra + ground };
+                        // the stars and the moon at places of their own in the scene: zooming moves them with it
+                        sky(&p2, &t, ground, scene.content_width(&p2), scene.phase);
                         // the satellite: a place of its own in the scene (three quarters along the caravan, high above
                         // the road), zoomed and dragged with it
                         if SHOW_SATELLITE.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1310,7 +1347,7 @@ impl CaravanView {
                             }
                         }
                     });
-                    road_now = Some((out.state.clamped_offset(), out.content_size, f_scale));
+                    road_now = Some((out.state.clamped_offset(), out.content_size, f_scale, start_x));
 
                     y = frame.bottom() + 8.0;
                     // the status line
