@@ -254,25 +254,6 @@ impl T {
     }
 }
 
-/// The gold chest's stones set into the planks (every four of a colour one block): a grid of blocks this big, edge to
-/// edge, over the wagon bed and the balloon's deck, each stone in a cell of its own picked at random.
-const INLAY: f32 = 4.0;
-
-/// The balloon deck's rows of stones, and its grid (columns, rows) for a platform that wide.
-const DECK_ROWS: usize = 1;
-fn deck_grid(plat_w: f32) -> (usize, usize) {
-    (((plat_w - 6.0) / INLAY) as usize, DECK_ROWS)
-}
-
-/// One stone set into a plank: a little block of its colour, lit at its top left, dark at its bottom right.
-fn inlay(p: &egui::Painter, t: &T, x: f32, y: f32, col: Color32) {
-    p.rect_filled(t.r(x, y, INLAY, INLAY), 0.0, col);
-    p.rect_filled(t.r(x, y, INLAY, 1.0), 0.0, brighter(col));
-    p.rect_filled(t.r(x, y, 1.0, INLAY), 0.0, brighter(col));
-    p.rect_filled(t.r(x, y + INLAY - 1.0, INLAY, 1.0), 0.0, darker(col));
-    p.rect_filled(t.r(x + INLAY - 1.0, y, 1.0, INLAY), 0.0, darker(col));
-}
-
 /// A filled block with a dark pixel outline.
 fn block(painter: &egui::Painter, t: &T, x: f32, y: f32, w: f32, h: f32, fill: Color32) {
     painter.rect_filled(t.r(x, y, w, h), 0.0, INK);
@@ -437,7 +418,7 @@ impl Scene<'_> {
         let mut shown = Vec::new();
         for (r, n) in count.iter().enumerate().skip(1) {
             let k = if *n == 0 { 0 } else { 1.max(n / per) };
-            // in the gold chest what has not gone out onto the planks
+            // in the gold chest what has not gone out of it (four at a time, counted)
             let k = if per == 10 { left[r] } else { k };
             shown.extend(std::iter::repeat_n(r, k));
         }
@@ -461,53 +442,23 @@ impl Scene<'_> {
         p.rect_filled(t.r(cx - 2.0, rim + 6.0, 4.0, 5.0), 0.0, lock);
     }
 
-    /// The planks' grid of `cells` (the wagon bed's, then the balloon deck's) and the gold chest: each colour's stones
-    /// go out four at a time as one stone in the grid once a fifth comes. A stone takes a free cell picked at random;
-    /// with none free it replaces one of a lower rarity picked at random (blue only green, purple green or blue, gold
-    /// any of them); a stone that finds no place stays in the chest, which holds at most four of a colour. The rarity
-    /// in each cell (0: none) and the stones left in the chest by rarity. Only for the gold chest (over 50 enchanted
-    /// items, each stone ten of them): else nothing goes out.
-    fn planks(m: &CaravanMember, cells: usize) -> (Vec<usize>, [usize; 5]) {
+    /// The gold chest's stones (each standing for ten enchanted items of a rarity, only over 50 enchanted items in
+    /// all; else a stone per item): each colour's go out four at a time once a fifth comes, so the chest keeps one
+    /// to four of each. By rarity: the stones in the chest, and those that went out of it (counted for later, not
+    /// shown).
+    fn hoard(m: &CaravanMember) -> ([usize; 5], [usize; 5]) {
         let mut count = [0usize; 5];
         for it in m.items.iter().filter(|it| it.enchants > 0) {
             count[it.enchants.min(4) as usize] += 1;
         }
-        let mut grid = vec![0usize; cells];
-        let mut chest = [0usize; 5];
         let gold = count.iter().sum::<usize>() > 50;
-        for (r, n) in count.iter().enumerate().skip(1) {
-            chest[r] = if *n == 0 { 0 } else { 1.max(n / if gold { 10 } else { 1 }) };
-        }
-        if !gold {
-            return (grid, chest);
-        }
-        // the stones going out, colours mixed (the same each time for a member)
-        let mut rnd = lg_app::java::JavaRandom::new(m.id.wrapping_mul(7919));
-        let mut out: Vec<usize> = (1..5).flat_map(|r| std::iter::repeat_n(r, chest[r].saturating_sub(1) / 4)).collect();
-        for i in (1..out.len()).rev() {
-            out.swap(i, rnd.next_int(i as i32 + 1) as usize);
-        }
-        let mut free: Vec<usize> = (0..cells).collect();
-        for i in (1..free.len()).rev() {
-            free.swap(i, rnd.next_int(i as i32 + 1) as usize);
-        }
-        let mut placed = [0usize; 5];
-        for r in out {
-            if let Some(c) = free.pop() {
-                grid[c] = r;
-            } else {
-                let lower: Vec<usize> = (0..cells).filter(|c| grid[*c] < r).collect();
-                if lower.is_empty() {
-                    continue; // no place: it stays in the chest
-                }
-                grid[lower[rnd.next_int(lower.len() as i32) as usize]] = r;
-            }
-            placed[r] += 1;
-        }
+        let (mut chest, mut out) = ([0usize; 5], [0usize; 5]);
         for r in 1..5 {
-            chest[r] = (chest[r] - 4 * placed[r]).min(4);
+            let k = if count[r] == 0 { 0 } else { 1.max(count[r] / if gold { 10 } else { 1 }) };
+            out[r] = if gold { k.saturating_sub(1) / 4 } else { 0 };
+            chest[r] = k - 4 * out[r];
         }
-        (grid, chest)
+        (chest, out)
     }
 
     /// The member's most played character, facing left.
@@ -539,16 +490,8 @@ impl Scene<'_> {
         let mine = m.id == self.me;
         let (once, copies) = pile(m);
         let (up, mut pile_items) = balloon_split(m, once);
-        // the planks' stones: the bed's grid, then the balloon deck's
-        let (bed_cols, bed_rows) = (((WAGON_W - 6.0) / INLAY) as usize, ((BED_H - 6.0) / INLAY) as usize);
-        // the bed's cells inside its border, but none under the score plate (a stone there could not be seen)
-        let plate_w_here = if self.small { 0.0 } else { plate_w.max(jtext::width(p, &self.plate(m), &text(19.0)) + 10.0) };
-        let bed_cells: Vec<(f32, f32)> = (0..bed_rows)
-            .flat_map(|r| (0..bed_cols).map(move |c| (x + 3.0 + c as f32 * INLAY, bed_y + 3.0 + r as f32 * INLAY)))
-            .filter(|(cx, cy)| !(*cx + INLAY > x + 6.0 && *cx < x + 6.0 + plate_w_here && *cy + INLAY > bed_y + 5.0 && *cy < bed_y + 26.0))
-            .collect();
-        let deck_cells = if up.is_empty() { 0 } else { deck_grid(platform_w(up.len().min(HEAP_SHOWN))).0 * DECK_ROWS };
-        let (grid, left) = Scene::planks(m, bed_cells.len() + deck_cells);
+        // the gold chest's stones (those gone out of it are counted, not shown)
+        let (left, _gone) = Scene::hoard(m);
         pile_items.reverse(); // drawn from the bottom up
         // the driver up on the balloon: the seat free for items too
         let cols = if up.is_empty() { PILE_COLS } else { WIDE_COLS };
@@ -563,8 +506,7 @@ impl Scene<'_> {
             // the balloon floats on its own: slower than the loot bobs, smoothly (not in whole pixels), each its own way
             let float = (5.0 * (self.phase * 0.035 + index as f64 * 1.7).sin()) as f32;
             let deck_y = bed_y - rows_h - TETHER - PLATFORM_H + float;
-            let deck = grid.get(bed_cells.len()..).unwrap_or(&[]);
-            Some(self.balloon(ui, icons, p, t, m, &up, deck, cx, deck_y, (x + 10.0, x + WAGON_W - 10.0, bed_y), mine, hits))
+            Some(self.balloon(ui, icons, p, t, m, &up, cx, deck_y, (x + 10.0, x + WAGON_W - 10.0, bed_y), mine, hits))
         };
         let mut top = balloon_top.unwrap_or(bed_y);
         for (i, it) in pile_items.iter().enumerate() {
@@ -598,12 +540,6 @@ impl Scene<'_> {
         // the bed with the score plate and the name
         block(p, t, x, bed_y, WAGON_W, BED_H, WOOD);
         p.rect_filled(t.r(x + 3.0, bed_y + BED_H - 9.0, WAGON_W - 6.0, 6.0), 0.0, WOOD_DARK);
-        // the stones set into the bed, under the plate and the name
-        for (r, (cx, cy)) in grid.iter().zip(&bed_cells) {
-            if *r > 0 {
-                inlay(p, t, *cx, *cy, STONE[*r]);
-            }
-        }
         let pf = text(19.0);
         let sf = text(19.0 * t.f);
         let wid = |s: &str| jtext::width(p, s, &pf);
@@ -661,7 +597,6 @@ impl Scene<'_> {
         t: &T,
         m: &CaravanMember,
         items: &[&CaravanItem],
-        deck: &[usize],
         cx: f32,
         deck_y: f32,
         tie: (f32, f32, f32),
@@ -737,15 +672,6 @@ impl Scene<'_> {
         }
         for x in [bx + 1.0, bx + plat_w - 6.0] {
             block(p, t, x, by - 14.0, 5.0, 16.0, WOOD_DARK);
-        }
-        // its share of the planks' stones
-        let (deck_cols, _) = deck_grid(plat_w);
-        for (i, r) in deck.iter().enumerate() {
-            if *r > 0 {
-                // inside the plank's border (3 px), the row in the middle of it
-                let y = by + 3.0 + ((PLATFORM_H - 6.0 - INLAY) / 2.0).max(0.0);
-                inlay(p, t, bx + 3.0 + (i % deck_cols) as f32 * INLAY, y, STONE[*r]);
-            }
         }
         // the heap: from the bottom row up, each row from its middle outwards, the rarest on top
         let mut slots: Vec<(f32, f32)> = Vec::new();
@@ -1283,20 +1209,13 @@ mod tests {
     }
 
     #[test]
-    fn planks_fill_then_rarer_stones_replace_lower_ones() {
+    fn the_gold_chest_keeps_one_to_four_and_counts_the_rest() {
         use super::*;
-        // within 50 enchanted items: a plain chest, nothing goes out
-        let (grid, left) = Scene::planks(&hoarder([10, 10, 0, 0]), 4);
-        assert_eq!((grid, left), (vec![0; 4], [0, 10, 10, 0, 0]));
-        // gold chest: 90 green = 9 stones: two go out (1 left), on free cells
-        let (grid, left) = Scene::planks(&hoarder([90, 0, 0, 0]), 4);
-        assert_eq!((grid.iter().filter(|c| **c == 1).count(), left[1]), (2, 1));
-        // a full grid of green: green finds no place and stays (at most four), blue takes green cells
-        let (grid, left) = Scene::planks(&hoarder([200, 90, 0, 0]), 2);
-        assert_eq!(grid.iter().filter(|c| **c == 2).count(), 2);
-        assert_eq!((left[1], left[2]), (4, 1));
-        // all gold at last: the chest keeps four of each
-        let (grid, left) = Scene::planks(&hoarder([400, 400, 400, 400]), 3);
-        assert_eq!((grid, left), (vec![4, 4, 4], [0, 4, 4, 4, 4]));
+        // within 50 enchanted items: a stone per item, none go out
+        assert_eq!(Scene::hoard(&hoarder([10, 10, 0, 0])), ([0, 10, 10, 0, 0], [0; 5]));
+        // gold chest: 90 green = 9 stones: two lots of four went out, one stays
+        assert_eq!(Scene::hoard(&hoarder([90, 0, 0, 0])), ([0, 1, 0, 0, 0], [0, 2, 0, 0, 0]));
+        // 80 = 8 stones: one lot went out, four stay
+        assert_eq!(Scene::hoard(&hoarder([0, 80, 0, 400])), ([0, 0, 4, 0, 4], [0, 0, 1, 0, 9]));
     }
 }
