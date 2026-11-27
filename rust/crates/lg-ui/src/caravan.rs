@@ -1205,10 +1205,6 @@ impl CaravanView {
                             }
                         }
                         crate::guild::backdrop(&p2, Rect::from_min_size(sr.min + vec2(0.0, extra), vec2(sw, HEIGHT)), scene.phase, 1.0);
-                        if SHOW_SATELLITE.load(std::sync::atomic::Ordering::Relaxed) {
-                            // still, high up in the sky towards the right
-                            satellite(&p2, pos2(sr.left() + (sw * 0.74).round(), sr.top() + 52.0), 3.0, scene.phase);
-                        }
                         if !has {
                             return;
                         }
@@ -1283,6 +1279,12 @@ impl CaravanView {
                         }
                     });
                     road_now = Some((out.state.clamped_offset(), out.content_size, f_scale));
+                    // the satellite stays put in the window (dragging and zooming do not move it), high up towards the
+                    // right, over the sky
+                    if SHOW_SATELLITE.load(std::sync::atomic::Ordering::Relaxed) {
+                        let sky = ui.painter().with_clip_rect(vp.intersect(ui.clip_rect()));
+                        satellite(&sky, pos2(vp.left() + (vp.width() * 0.74).round(), vp.top() + 52.0), 3.0, phase(ui));
+                    }
                     y = frame.bottom() + 8.0;
                     // the status line
                     let status = match caravan {
@@ -1454,6 +1456,7 @@ impl CaravanView {
         } else if let Some(at) = self.palette {
             let mut picked_colour = None;
             let mut picked_tether = None;
+            let mut scramble = false;
             let shown = egui::Area::new(egui::Id::unique("lg-balloon-palette"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(at + vec2(12.0, -60.0))
@@ -1516,6 +1519,12 @@ impl CaravanView {
                                     picked_tether = Some(k as i32);
                                 }
                             }
+                            // both at random (another colour and another tether than now)
+                            ui.add_space(8.0);
+                            let (br, _) = ui.allocate_exact_size(vec2(TETHER_STYLES as f32 * 34.0 - 6.0, 30.0), Sense::hover());
+                            if crate::inventory::button(ui, &p, br, "Scramble", false, "balloon-scramble") {
+                                scramble = true;
+                            }
                         },
                     );
                 });
@@ -1524,6 +1533,13 @@ impl CaravanView {
                 c.asks.push(Ask::BalloonColour(i));
             } else if let Some(k) = picked_tether {
                 c.asks.push(Ask::BalloonTether(k));
+            } else if scramble {
+                let mut rnd = lg_app::java::JavaRandom::new(c.now);
+                let n = BALLOON_COLOURS.len() as i32;
+                let colour = own_colour.unwrap_or(0) % n;
+                let tether = own_tether.unwrap_or(0);
+                c.asks.push(Ask::BalloonColour((colour + 1 + rnd.next_int(n - 1)) % n));
+                c.asks.push(Ask::BalloonTether((tether + 1 + rnd.next_int(TETHER_STYLES as i32 - 1)) % TETHER_STYLES as i32));
             } else if ui.input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|q| !shown.response.rect.contains(q))) {
                 self.palette = None;
             }
