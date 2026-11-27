@@ -100,6 +100,10 @@ pub struct CaravanView {
     /// The zoom wanted (Ctrl + wheel), and the one shown, gliding towards it.
     zoom: Option<f64>,
     shown_zoom: Option<f64>,
+    /// The scene's scroll offset and size last frame and its scale then; where in the view the pointer zoomed
+    /// (while the zoom glides, that point stays under it).
+    road: Option<(egui::Vec2, egui::Vec2, f32)>,
+    zoom_anchor: Option<egui::Vec2>,
     asked_at: i64,
 }
 
@@ -894,6 +898,9 @@ impl CaravanView {
         let refresh = std::cell::Cell::new(false);
         let mut picked = self.picked;
         let mut new_zoom = None;
+        let (road_was, anchor) = (self.road, self.zoom_anchor);
+        let mut road_now = None;
+        let mut anchor_set: Option<egui::Vec2> = None;
         let icons = &mut *c.icons;
         let mut open_item = None;
         let now = c.now;
@@ -957,109 +964,115 @@ impl CaravanView {
                     let vp = Rect::from_min_size(frame.min + vec2(2.0, 2.0), vec2(view_w, vp_h));
                     let mut road = ui.new_child(egui::UiBuilder::new().max_rect(vp));
                     let mut hits = Hits::default();
-                    egui::ScrollArea::both()
+                    let mut area = egui::ScrollArea::both()
                         .id_salt("caravan-road")
                         .scroll_source(egui::scroll_area::ScrollSource {
                             scroll_bar: true,
                             drag: egui::scroll_area::DragScroll::Always,
                             mouse_wheel: false,
                         })
-                        .stick_to_bottom(true)
-                        .show(&mut road, |ui| {
-                            let sw = content_w.max(view_w);
-                            let (all, _) = ui.allocate_exact_size(vec2(sw, scene_h + GROUND_ROOM), Sense::hover());
-                            // ground under the road
-                            ui.painter().rect_filled(
-                                Rect::from_min_max(pos2(all.left(), all.bottom() - GROUND_ROOM), all.max),
-                                0.0,
-                                GROUND,
-                            );
-                            let sr = Rect::from_min_size(all.min, vec2(sw, scene_h));
-                            let p2 = ui.painter().with_clip_rect(sr.intersect(ui.clip_rect()));
-                            let extra = scene_h - HEIGHT;
-                            if extra > 0.0 {
-                                p2.rect_filled(Rect::from_min_size(sr.min, vec2(sw, extra)), 0.0, SKY);
-                                // stars in it too, as many to the area as the backdrop has, twinkling the same way
-                                let mut rnd = lg_app::java::JavaRandom::new(11);
-                                let n = (40.0 * extra / 150.0) as i64;
-                                for i in 0..n {
-                                    let sx = rnd.next_int(10_000) as f32 / 10_000.0 * sw;
-                                    let sy = rnd.next_int(10_000) as f32 / 10_000.0 * (extra - 4.0);
-                                    let dim = (scene.phase as i64 / 12 + i) % 7 == 0;
-                                    let c = if dim { darker(darker(rgb(0xF4E6C6))) } else { rgb(0xF4E6C6) };
-                                    p2.rect_filled(Rect::from_min_size(sr.min + vec2(sx.floor(), sy.floor()), vec2(4.0, 4.0)), 0.0, c);
-                                }
+                        .stick_to_bottom(anchor.is_none());
+                    // zooming: the point under the pointer stays there (from the street's start across, from the
+                    // bottom up, as the scene is laid out)
+                    if let (Some((off, content, s0)), Some(m)) = (road_was, anchor)
+                        && has
+                        && (f_scale - s0).abs() > 1e-5
+                    {
+                        let k = f_scale / s0;
+                        let x = STREET + (off.x + m.x - STREET) * k - m.x;
+                        let y = scene_h + GROUND_ROOM - (content.y - off.y - m.y) * k - m.y;
+                        area = area.scroll_offset(vec2(x.max(0.0), y.max(0.0)));
+                    }
+                    let out = area.show(&mut road, |ui| {
+                        let sw = content_w.max(view_w);
+                        let (all, _) = ui.allocate_exact_size(vec2(sw, scene_h + GROUND_ROOM), Sense::hover());
+                        // ground under the road
+                        ui.painter().rect_filled(Rect::from_min_max(pos2(all.left(), all.bottom() - GROUND_ROOM), all.max), 0.0, GROUND);
+                        let sr = Rect::from_min_size(all.min, vec2(sw, scene_h));
+                        let p2 = ui.painter().with_clip_rect(sr.intersect(ui.clip_rect()));
+                        let extra = scene_h - HEIGHT;
+                        if extra > 0.0 {
+                            p2.rect_filled(Rect::from_min_size(sr.min, vec2(sw, extra)), 0.0, SKY);
+                            // stars in it too, as many to the area as the backdrop has, twinkling the same way
+                            let mut rnd = lg_app::java::JavaRandom::new(11);
+                            let n = (40.0 * extra / 150.0) as i64;
+                            for i in 0..n {
+                                let sx = rnd.next_int(10_000) as f32 / 10_000.0 * sw;
+                                let sy = rnd.next_int(10_000) as f32 / 10_000.0 * (extra - 4.0);
+                                let dim = (scene.phase as i64 / 12 + i) % 7 == 0;
+                                let c = if dim { darker(darker(rgb(0xF4E6C6))) } else { rgb(0xF4E6C6) };
+                                p2.rect_filled(Rect::from_min_size(sr.min + vec2(sx.floor(), sy.floor()), vec2(4.0, 4.0)), 0.0, c);
                             }
-                            crate::guild::backdrop(&p2, Rect::from_min_size(sr.min + vec2(0.0, extra), vec2(sw, HEIGHT)), scene.phase, 1.0);
-                            if !has {
-                                return;
+                        }
+                        crate::guild::backdrop(&p2, Rect::from_min_size(sr.min + vec2(0.0, extra), vec2(sw, HEIGHT)), scene.phase, 1.0);
+                        if !has {
+                            return;
+                        }
+                        let ground = HEIGHT - 34.0;
+                        let drawn = scene.content_width(&p2) * f_scale;
+                        let start = if drawn + 2.0 * STREET > sw { STREET } else { (sw - drawn) / 2.0 };
+                        let t = T { o: sr.min + vec2(0.0, extra), start, ground, f: f_scale, gy: sr.min.y + extra + ground };
+                        let mut xx = PAD;
+                        scene.paint_ox(&p2, &t, xx, ground);
+                        xx += OX_W;
+                        let plate_w =
+                            scene.riders.iter().map(|m| jtext::width(&p2, &scene.plate(m), &text(19.0)) + 10.0).fold(0.0, f32::max);
+                        for (i, m) in scene.riders.iter().enumerate() {
+                            let bar = if i == 0 { BAR } else { STEP_W + BAR };
+                            p2.rect_filled(t.r(xx, ground - 40.0, bar, 4.0), 0.0, INK);
+                            xx += bar;
+                            scene.wagon(ui, icons, &p2, &t, m, i, xx, ground, plate_w, &mut hits);
+                            xx += WAGON_W;
+                        }
+                        if !scene.walkers.is_empty() {
+                            xx += 46.0;
+                        }
+                        for (i, m) in scene.walkers.iter().enumerate() {
+                            let slot = scene.walker_width(&p2, m);
+                            scene.walker(ui, icons, &p2, &t, m, i, xx, slot, ground, &mut hits);
+                            xx += slot;
+                        }
+                        // clicks and tips: a pile item first, then a member
+                        let resp = ui.interact(sr, ui.scope_id().with("caravan-scene"), Sense::click());
+                        if let Some(pos) = resp.hover_pos() {
+                            let zd = ui.input(|i| if i.modifiers.ctrl || i.modifiers.command { i.zoom_delta() } else { 1.0 });
+                            if (zd - 1.0).abs() > 1e-3 {
+                                new_zoom = Some((wanted * f64::from(zd)).clamp(MIN_ZOOM, MAX_ZOOM));
+                                anchor_set = Some(pos - vp.min);
                             }
-                            let ground = HEIGHT - 34.0;
-                            let drawn = scene.content_width(&p2) * f_scale;
-                            let start = if drawn + 2.0 * STREET > sw { STREET } else { (sw - drawn) / 2.0 };
-                            let t = T { o: sr.min + vec2(0.0, extra), start, ground, f: f_scale, gy: sr.min.y + extra + ground };
-                            let mut xx = PAD;
-                            scene.paint_ox(&p2, &t, xx, ground);
-                            xx += OX_W;
-                            let plate_w =
-                                scene.riders.iter().map(|m| jtext::width(&p2, &scene.plate(m), &text(19.0)) + 10.0).fold(0.0, f32::max);
-                            for (i, m) in scene.riders.iter().enumerate() {
-                                let bar = if i == 0 { BAR } else { STEP_W + BAR };
-                                p2.rect_filled(t.r(xx, ground - 40.0, bar, 4.0), 0.0, INK);
-                                xx += bar;
-                                scene.wagon(ui, icons, &p2, &t, m, i, xx, ground, plate_w, &mut hits);
-                                xx += WAGON_W;
-                            }
-                            if !scene.walkers.is_empty() {
-                                xx += 46.0;
-                            }
-                            for (i, m) in scene.walkers.iter().enumerate() {
-                                let slot = scene.walker_width(&p2, m);
-                                scene.walker(ui, icons, &p2, &t, m, i, xx, slot, ground, &mut hits);
-                                xx += slot;
-                            }
-                            // clicks and tips: a pile item first, then a member
-                            let resp = ui.interact(sr, ui.scope_id().with("caravan-scene"), Sense::click());
-                            if let Some(pos) = resp.hover_pos() {
-                                let zd = ui.input(|i| if i.modifiers.ctrl || i.modifiers.command { i.zoom_delta() } else { 1.0 });
-                                if (zd - 1.0).abs() > 1e-3 {
-                                    new_zoom = Some((wanted * f64::from(zd)).clamp(MIN_ZOOM, MAX_ZOOM));
-                                }
-                                if let Some((_, id, pts, mine)) = hits.items.iter().find(|h| h.0.contains(pos)) {
-                                    let name = data
-                                        .items
-                                        .item(*id)
-                                        .filter(|i| !i.name.is_empty())
-                                        .map_or(format!("Item {id}"), |i| i.name.clone());
-                                    let tip = format!(
-                                        "{name}  ·  {} pts{}",
-                                        lg_app::guild::format(*pts),
-                                        if *mine { "  (click: show in Inventory)" } else { "" }
-                                    );
-                                    let resp = resp.clone().on_hover_text(tip);
-                                    if *mine {
-                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                        if resp.clicked() {
-                                            open_item = Some(*id);
-                                        }
-                                    }
-                                } else if let Some((_, id)) = hits.members.iter().find(|h| h.0.contains(pos))
-                                    && let Some(m) = members.iter().find(|m| m.id == *id)
-                                {
-                                    let cls = m.character.as_ref().map_or(String::new(), |c| format!(" ({})", c.class_name));
-                                    let n = if m.total == 1 { "item" } else { "items" };
-                                    let tip = format!("{}{cls}: {} points, {} {n}", m.ign, lg_app::guild::whole(scores[&m.id]), m.total);
+                            if let Some((_, id, pts, mine)) = hits.items.iter().find(|h| h.0.contains(pos)) {
+                                let name =
+                                    data.items.item(*id).filter(|i| !i.name.is_empty()).map_or(format!("Item {id}"), |i| i.name.clone());
+                                let tip = format!(
+                                    "{name}  ·  {} pts{}",
+                                    lg_app::guild::format(*pts),
+                                    if *mine { "  (click: show in Inventory)" } else { "" }
+                                );
+                                let resp = resp.clone().on_hover_text(tip);
+                                if *mine {
                                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                    if resp.clone().on_hover_text(tip).clicked() {
-                                        picked = m.id;
+                                    if resp.clicked() {
+                                        open_item = Some(*id);
                                     }
-                                } else {
-                                    // the scene itself: dragged around
-                                    let held = ui.input(|i| i.pointer.primary_down());
-                                    ui.ctx().set_cursor_icon(if held { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
                                 }
+                            } else if let Some((_, id)) = hits.members.iter().find(|h| h.0.contains(pos))
+                                && let Some(m) = members.iter().find(|m| m.id == *id)
+                            {
+                                let cls = m.character.as_ref().map_or(String::new(), |c| format!(" ({})", c.class_name));
+                                let n = if m.total == 1 { "item" } else { "items" };
+                                let tip = format!("{}{cls}: {} points, {} {n}", m.ign, lg_app::guild::whole(scores[&m.id]), m.total);
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                if resp.clone().on_hover_text(tip).clicked() {
+                                    picked = m.id;
+                                }
+                            } else {
+                                // the scene itself: dragged around
+                                let held = ui.input(|i| i.pointer.primary_down());
+                                ui.ctx().set_cursor_icon(if held { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
                             }
-                        });
+                        }
+                    });
+                    road_now = Some((out.state.clamped_offset(), out.content_size, f_scale));
                     y = frame.bottom() + 8.0;
                     // the status line
                     let status = match caravan {
@@ -1209,6 +1222,16 @@ impl CaravanView {
         self.picked = picked;
         if refresh.get() {
             c.asks.push(Ask::Server(ServerAsk::CaravanLoad));
+        }
+        // the zoom settled (the scale as last frame): no point to hold any more
+        if let Some(now) = road_now {
+            if anchor_set.is_none() && road_was.is_some_and(|w| (w.2 - now.2).abs() <= 1e-5) {
+                self.zoom_anchor = None;
+            }
+            self.road = Some(now);
+        }
+        if let Some(a) = anchor_set {
+            self.zoom_anchor = Some(a);
         }
         if let Some(z) = new_zoom {
             self.zoom = Some(z);

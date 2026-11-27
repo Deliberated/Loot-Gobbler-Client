@@ -742,7 +742,11 @@ fn main() {
                 .collect()
         });
         let mut harness = egui_kittest::Harness::builder()
-            .with_step_dt(if tab.starts_with("switch:") || click_at.is_some() { 1.0 / 60.0 } else { 0.25 })
+            .with_step_dt(if tab.starts_with("switch:") || click_at.is_some() || std::env::var("UI_SHOT_ZOOM_AT").is_ok() {
+                1.0 / 60.0
+            } else {
+                0.25
+            })
             .with_size(egui::vec2(w, h))
             .with_pixels_per_point(1.0)
             .with_accessibility_check(false)
@@ -765,6 +769,29 @@ fn main() {
                 let img = harness.render().expect("render");
                 img.save(std::path::Path::new(out).join(format!("{}-{n}.png", tab.replace(':', "-").replace(' ', "_")))).expect("save");
             }
+        }
+        // UI_SHOT_ZOOM_AT="x,y,lines": the pointer there, Ctrl + that many wheel lines (up: in), pictures before and after
+        if let Some((at, factor)) = std::env::var("UI_SHOT_ZOOM_AT").ok().and_then(|v| {
+            let p: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            (p.len() == 3).then(|| (egui::pos2(p[0], p[1]), p[2]))
+        }) {
+            harness.run_steps(20);
+            harness.input_mut().events.push(egui::Event::PointerMoved(at));
+            harness.run_steps(3);
+            let img = harness.render().expect("render");
+            img.save(std::path::Path::new(out).join(format!("{}-zoom0.png", tab.replace(':', "-").replace(' ', "_")))).expect("save");
+            // Ctrl + wheel: up zooms in (the factor as wheel lines)
+            harness.input_mut().events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, factor),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: egui::Modifiers::CTRL,
+            });
+            harness.step();
+            harness.run_steps(40);
+            let img = harness.render().expect("render");
+            img.save(std::path::Path::new(out).join(format!("{}-zoom1.png", tab.replace(':', "-").replace(' ', "_")))).expect("save");
         }
         // UI_SHOT_CLICK_AT="x,y": a click there once the view settled, then frames of what it sets off (60 a second)
         if let Some(points) = click_at {
