@@ -11,7 +11,7 @@ use std::path::Path;
 /// The most drops one answer brings.
 pub const PAGE: usize = 120;
 /// While more are waiting: the next page after this long (gentle on the server).
-pub const PAGE_EVERY_MS: i64 = 5_000;
+pub const PAGE_EVERY_MS: i64 = 3_000;
 /// Caught up: asked again after this long.
 pub const POLL_MS: i64 = 60_000;
 pub const FILE: &str = "guild_drops.json";
