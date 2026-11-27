@@ -138,7 +138,9 @@ const BALLOON_CREAM: Color32 = rgb(0xEDE6DA);
 /// The shuffle sign in `r`: two arrows crossing to the right.
 fn shuffle_icon(p: &egui::Painter, r: Rect, col: Color32) {
     let s = Stroke::new(1.8, col);
-    let (l, rt, t, b) = (r.left(), r.right() - 3.0, r.top() + 2.0, r.bottom() - 2.0);
+    // flatter than it is wide
+    let (l, rt) = (r.left(), r.right() - 3.0);
+    let (t, b) = (r.center().y - r.height() * 0.26, r.center().y + r.height() * 0.26);
     // the lines crossing
     p.line_segment([pos2(l, t), pos2(l + r.width() * 0.25, t)], s);
     p.line_segment([pos2(l + r.width() * 0.25, t), pos2(rt - 4.0, b)], s);
@@ -1228,6 +1230,12 @@ impl CaravanView {
                         let drawn = scene.content_width(&p2) * f_scale;
                         let start = if drawn + 2.0 * STREET > sw { STREET } else { (sw - drawn) / 2.0 };
                         let t = T { o: sr.min + vec2(0.0, extra), start, ground, f: f_scale, gy: sr.min.y + extra + ground };
+                        // the satellite: a place of its own in the scene (three quarters along the caravan, above the
+                        // highest load), zoomed and dragged with it
+                        if SHOW_SATELLITE.load(std::sync::atomic::Ordering::Relaxed) {
+                            let at = t.p(PAD + scene.content_width(&p2) * 0.75, ground - scene.content_height() - 60.0);
+                            satellite(&p2, at, 3.0 * t.f, scene.phase);
+                        }
                         let mut xx = PAD;
                         scene.paint_ox(&p2, &t, xx, ground);
                         xx += OX_W;
@@ -1295,12 +1303,7 @@ impl CaravanView {
                         }
                     });
                     road_now = Some((out.state.clamped_offset(), out.content_size, f_scale));
-                    // the satellite stays put in the window (dragging and zooming do not move it), high up towards the
-                    // right, over the sky
-                    if SHOW_SATELLITE.load(std::sync::atomic::Ordering::Relaxed) {
-                        let sky = ui.painter().with_clip_rect(vp.intersect(ui.clip_rect()));
-                        satellite(&sky, pos2(vp.left() + (vp.width() * 0.74).round(), vp.top() + 52.0), 3.0, phase(ui));
-                    }
+
                     y = frame.bottom() + 8.0;
                     // the status line
                     let status = match caravan {
