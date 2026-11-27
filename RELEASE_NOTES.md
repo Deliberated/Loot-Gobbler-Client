@@ -1,14 +1,14 @@
-v0.0.7: Seasons
+v0.0.7: Seasons, and your drops on time
+
+**Your drops reach the guild again:** 
+- New drops now go up to the server within seconds while you play, not only when Loot Gobbler starts
+- Your new drops stay on your wagon until the server has them, instead of disappearing when the caravan refreshes
 
 **Seasons in the Loot Caravan:** 
 - Loot Gobbler tells the server the game's seasons and when each one ends
 - The caravan now shows the current season: when a new season begins, every wagon starts over at 0
 - Nothing is lost: the earlier seasons' drops are kept for their own stage later
 - Needs the Loot Gobbler server updated to v0.9.6
-
-**Your drops reach the guild again:** 
-- New drops now go up to the server within seconds while you play, not only when Loot Gobbler starts
-- Your new drops stay on your wagon until the server has them, instead of disappearing when the caravan refreshes
 
 **Wagon and balloon:** 
 - The wagon shows your latest finds; once it is full, the whole load goes up onto the balloon and the wagon starts again
