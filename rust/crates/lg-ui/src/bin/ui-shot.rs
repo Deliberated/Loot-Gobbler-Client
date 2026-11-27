@@ -47,6 +47,18 @@ fn main() {
         }
         tabs => (None, tabs),
     };
+    // UI_SHOT_SATELLITE=1: the loot caravan's satellite mockup in the sky
+    if std::env::var("UI_SHOT_SATELLITE").is_ok() {
+        lg_ui::caravan::SHOW_SATELLITE.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    // UI_SHOT_BURN=1: the loot caravan's balloons all burning
+    if std::env::var("UI_SHOT_BURN").is_ok() {
+        lg_ui::caravan::ALWAYS_BURN.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    // UI_SHOT_TETHER=<n>: the loot caravan balloons tied to their wagons in that style (mockups)
+    if let Some(n) = std::env::var("UI_SHOT_TETHER").ok().and_then(|v| v.trim().parse::<usize>().ok()) {
+        lg_ui::caravan::TETHER_STYLE.store(n, std::sync::atomic::Ordering::Relaxed);
+    }
     // UI_SHOT_PILE_ROWS=<n>: the loot caravan's wagons piled this high before the balloon takes their items
     if let Some(n) = std::env::var("UI_SHOT_PILE_ROWS").ok().and_then(|v| v.trim().parse::<usize>().ok()) {
         lg_ui::caravan::PILE_ROWS.store(n, std::sync::atomic::Ordering::Relaxed);

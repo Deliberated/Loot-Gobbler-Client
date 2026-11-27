@@ -40,6 +40,57 @@ const GROUND: Color32 = rgb(0x4A3522);
 /// How many rows of items a wagon is piled up to: then they go up onto a hot air balloon tied to it (its driver
 /// riding up there with them), and the wagon fills up again below, wider now that its seat is free; and so on.
 pub static PILE_ROWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(15);
+/// Mockup: a satellite in the sky (where a season's loot will go). Off in the app.
+pub static SHOW_SATELLITE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Mockups: how the balloon is tied to its wagon (0 two ropes, 1 one rope to a ring, 2 two chains, 3 two slack
+/// ropes, 4 a rope ladder).
+pub static TETHER_STYLE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Pictures: every balloon's burner burning.
+pub static ALWAYS_BURN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A satellite in pixels of `u`, its body's centre at `c`: a box wrapped in gold foil, a solar panel on a strut to
+/// each side, a dish with its antenna on top, a light blinking red.
+fn satellite(p: &egui::Painter, c: Pos2, u: f32, phase: f64) {
+    let r = |x: f32, y: f32, w: f32, h: f32| Rect::from_min_size(pos2(c.x + x * u, c.y + y * u), vec2(w * u, h * u));
+    let framed = |rect: Rect, fill: Color32| {
+        p.rect_filled(rect.expand(u), 0.0, INK);
+        p.rect_filled(rect, 0.0, fill);
+    };
+    // the struts, then the panels: a dark blue grid of cells
+    p.rect_filled(r(-12.0, -0.5, 24.0, 1.0), 0.0, rgb(0x8A8578));
+    for side in [-1.0f32, 1.0] {
+        let x0 = if side < 0.0 { -26.0 } else { 12.0 };
+        let panel = r(x0, -4.0, 14.0, 8.0);
+        framed(panel, rgb(0x2F4F86));
+        for k in 1..7 {
+            p.rect_filled(r(x0 + k as f32 * 2.0, -4.0, 0.34, 8.0), 0.0, rgb(0x6F8FC6));
+        }
+        for k in 1..4 {
+            p.rect_filled(r(x0, -4.0 + k as f32 * 2.0, 14.0, 0.34), 0.0, rgb(0x6F8FC6));
+        }
+        p.rect_filled(r(x0 + 1.0, -3.0, 3.0, 1.0), 0.0, rgb(0x9DB6E0));
+    }
+    // the body, its foil band and the light
+    framed(r(-6.0, -5.0, 12.0, 10.0), rgb(0xC9C2B0));
+    p.rect_filled(r(-6.0, -1.5, 12.0, 3.0), 0.0, rgb(0xD8A93A));
+    p.rect_filled(r(-6.0, -1.5, 12.0, 0.6), 0.0, rgb(0xF1CF6A));
+    p.rect_filled(r(-5.0, -4.0, 3.0, 1.0), 0.0, rgb(0xE8E2D2));
+    // a slow heartbeat: two short blinks, then a rest
+    let beat = (phase * 0.07) % 2.4;
+    let on = beat < 0.12 || (0.3..0.42).contains(&beat);
+    let light = r(3.0, 2.5, 1.5, 1.5);
+    if on {
+        p.rect_filled(light.expand(u), 0.0, Color32::from_white_alpha(70));
+    }
+    p.rect_filled(light, 0.0, if on { Color32::WHITE } else { rgb(0x5A5A60) });
+    // the antenna and the dish
+    p.rect_filled(r(-0.4, -10.0, 0.8, 5.0), 0.0, rgb(0x8A8578));
+    let dish = c + vec2(0.0, -10.0 * u);
+    p.circle_filled(dish, 3.6 * u, INK);
+    p.circle_filled(dish, 3.0 * u, rgb(0xE6E2D8));
+    p.rect_filled(Rect::from_min_size(dish - vec2(4.0 * u, 0.0), vec2(8.0 * u, 4.0 * u)), 0.0, SKY);
+    p.rect_filled(Rect::from_min_size(dish - vec2(0.6 * u, 0.6 * u), vec2(1.2 * u, 1.2 * u)), 0.0, rgb(0x8A8578));
+}
 /// A wagon's columns of items once its driver rides the balloon.
 const WIDE_COLS: usize = 7;
 /// The widest the heap on the balloon grows; past it, it grows upwards.
@@ -67,7 +118,7 @@ const HEAP_ITEM: f32 = 8.5;
 const HEAP_CELL: f32 = 6.5;
 const HEAP_ROW: f32 = 5.5;
 const MOUTH_GAP: f32 = 26.0;
-const TETHER: f32 = 34.0;
+const TETHER: f32 = 160.0;
 
 /// The balloon colours a player picks from (pastels): the middle gore's; the outer ones are a softer shade of it.
 pub const BALLOON_COLOURS: [Color32; 9] = [
@@ -646,8 +697,70 @@ impl Scene<'_> {
         let ey = mouth - low;
         // the tethers down to the wagon, the ropes up to the mouth
         let rope = Stroke::new(2.0 * t.f, INK);
-        p.line_segment([t.p(bx + 8.0, by + PLATFORM_H), t.p(tie.0, tie.2)], rope);
-        p.line_segment([t.p(bx + plat_w - 8.0, by + PLATFORM_H), t.p(tie.1, tie.2)], rope);
+        let (top, bottom) = (by + PLATFORM_H, tie.2);
+        let mid_x = (tie.0 + tie.1) / 2.0;
+        match TETHER_STYLE.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => {
+                // one thick rope from the deck's middle to a ring on the wagon
+                p.line_segment([t.p(cx, top), t.p(mid_x, bottom - 6.0)], Stroke::new(4.0 * t.f, INK));
+                p.line_segment([t.p(cx, top), t.p(mid_x, bottom - 6.0)], Stroke::new(2.0 * t.f, rgb(0xB89A6A)));
+                p.circle_stroke(t.p(mid_x, bottom - 3.0), 4.0 * t.f, Stroke::new(2.0 * t.f, rgb(0x8A8578)));
+            }
+            2 => {
+                // two chains: links side on and face on in turn
+                for (a, b) in [(bx + 8.0, tie.0), (bx + plat_w - 8.0, tie.1)] {
+                    let n = ((bottom - top) / 6.0).max(1.0) as usize;
+                    for k in 0..n {
+                        let f0 = k as f32 / n as f32;
+                        let f1 = (k as f32 + 1.0) / n as f32;
+                        let p0 = t.p(a + (b - a) * f0, top + (bottom - top) * f0);
+                        let p1 = t.p(a + (b - a) * f1, top + (bottom - top) * f1);
+                        if k % 2 == 0 {
+                            p.rect_stroke(
+                                Rect::from_two_pos(p0 - vec2(2.0 * t.f, 0.0), p1 + vec2(2.0 * t.f, 0.0)),
+                                2.0 * t.f,
+                                Stroke::new(1.5 * t.f, rgb(0x9A958A)),
+                                StrokeKind::Middle,
+                            );
+                        } else {
+                            p.line_segment([p0, p1], Stroke::new(2.0 * t.f, rgb(0x6E6A62)));
+                        }
+                    }
+                }
+            }
+            3 => {
+                // two slack ropes, sagging outwards a little and swinging with the balloon
+                let sway = (4.0 * (self.phase * 0.035).sin()) as f32;
+                for (a, b, side) in [(bx + 8.0, tie.0, -1.0f32), (bx + plat_w - 8.0, tie.1, 1.0)] {
+                    let n = 20;
+                    let pts: Vec<Pos2> = (0..=n)
+                        .map(|k| {
+                            let f = k as f32 / n as f32;
+                            let bow = (std::f32::consts::PI * f).sin() * (14.0 * side + sway);
+                            t.p(a + (b - a) * f + bow, top + (bottom - top) * f)
+                        })
+                        .collect();
+                    p.add(egui::Shape::line(pts, rope));
+                }
+            }
+            4 => {
+                // a rope ladder from the deck's middle down to the wagon
+                let (w2, n) = (7.0, ((bottom - top) / 9.0).max(1.0) as usize);
+                for side in [-1.0f32, 1.0] {
+                    p.line_segment([t.p(cx + side * w2, top), t.p(mid_x + side * w2, bottom)], Stroke::new(2.0 * t.f, INK));
+                }
+                for k in 1..n {
+                    let f = k as f32 / n as f32;
+                    let x = cx + (mid_x - cx) * f;
+                    let y = top + (bottom - top) * f;
+                    p.line_segment([t.p(x - w2, y), t.p(x + w2, y)], Stroke::new(2.0 * t.f, rgb(0x8C6C47)));
+                }
+            }
+            _ => {
+                p.line_segment([t.p(bx + 8.0, top), t.p(tie.0, bottom)], rope);
+                p.line_segment([t.p(bx + plat_w - 8.0, top), t.p(tie.1, bottom)], rope);
+            }
+        }
         for (a, b) in [(-14.0, 4.0), (14.0, plat_w - 4.0), (-5.0, PLATFORM_FRONT), (5.0, plat_w * 0.78)] {
             p.line_segment([t.p(cx + a, mouth), t.p(bx + b, by)], Stroke::new(1.5 * t.f, INK));
         }
@@ -690,6 +803,37 @@ impl Scene<'_> {
         p.add(egui::Shape::closed_line(outline, Stroke::new(t.f, INK)));
         block(p, t, cx - 12.0, ey - er - 6.0, 24.0, 9.0, WOOD_DARK);
         block(p, t, cx - 17.0, mouth - 3.0, 34.0, 8.0, WOOD_DARK);
+        // now and then the burner fires up into the envelope for five seconds, each balloon on its own rhythm
+        let secs = self.phase * 0.07;
+        let period = 30.0 + (m.id.rem_euclid(7) as f64) * 3.0;
+        let offset = (m.id.wrapping_mul(17).rem_euclid(97)) as f64;
+        let into = if ALWAYS_BURN.load(std::sync::atomic::Ordering::Relaxed) { 2.5 } else { (secs + offset) % period };
+        if into < 5.0 {
+            // up and down quickly while burning, rising at the start and dying down at the end
+            let swell = ((into / 0.6).min(1.0) * ((5.0 - into) / 0.6).min(1.0)) as f32;
+            let flicker = (0.75 + 0.25 * (self.phase * 1.9).sin() * (self.phase * 0.7).cos()) as f32;
+            let tall = 30.0 * swell * flicker;
+            let wide = 6.0 * swell;
+            if tall > 1.0 {
+                // from the burner just below the mouth up into it: what reaches the ring is inside the balloon (cut off)
+                let base = mouth + 22.0;
+                let below_ring = t.p(0.0, mouth + 5.0).y;
+                let p = &p.with_clip_rect(
+                    Rect::from_min_max(pos2(f32::NEG_INFINITY, below_ring), pos2(f32::INFINITY, f32::INFINITY)).intersect(p.clip_rect()),
+                );
+                let lean = (2.0 * (self.phase * 1.3).sin()) as f32;
+                let flame = |h: f32, w: f32, col: Color32| {
+                    p.add(egui::Shape::convex_polygon(
+                        vec![t.p(cx - w, base), t.p(cx + w, base), t.p(cx + lean * h / tall, base - h)],
+                        col,
+                        Stroke::NONE,
+                    ));
+                };
+                flame(tall, wide, rgb(0xE8662A));
+                flame(tall * 0.72, wide * 0.68, rgb(0xF4A63A));
+                flame(tall * 0.42, wide * 0.38, rgb(0xFFE38A));
+            }
+        }
         // the driver sitting at the front, low on the deck
         let bob = (2.0 * (self.phase * 0.25).sin()).round() as f32;
         self.driver(ui, icons, p, m, t.r(bx + 2.0, by - DRIVER + 12.0 + bob, DRIVER, DRIVER), Color32::WHITE);
@@ -984,6 +1128,11 @@ impl CaravanView {
                             }
                         }
                         crate::guild::backdrop(&p2, Rect::from_min_size(sr.min + vec2(0.0, extra), vec2(sw, HEIGHT)), scene.phase, 1.0);
+                        if SHOW_SATELLITE.load(std::sync::atomic::Ordering::Relaxed) {
+                            // drifting slowly along, high in the sky
+                            let drift = (scene.phase * 0.15) as f32 % 60.0;
+                            satellite(&p2, pos2(sr.left() + sw * 0.62 + drift, sr.top() + 48.0), 4.0, scene.phase);
+                        }
                         if !has {
                             return;
                         }
