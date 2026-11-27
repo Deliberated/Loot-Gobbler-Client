@@ -7,4 +7,5 @@ v0.0.7: Seasons
 - Needs the Loot Gobbler server updated to v0.9.6
 
 **Faster caravan:** 
+- The guild's drops kept on your PC are really kept now: each start only fetches what is new, instead of all of them again
 - The drop log catches up at 120 drops every second

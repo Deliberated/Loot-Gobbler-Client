@@ -92,7 +92,10 @@ impl Gui {
             java_offer.map(|p| lg_ui::welcome::JavaOffer { take: lg_app::files::holds_data(&p), path: p.display().to_string() });
         g.seen_run = g.app.dps_history.runs.first().map(|r| r.start);
         // Java `GobblerServer.reconnect` on start: the saved server and session
+        // (keeping the guild's drop log and caravan read from disk: only what is new is fetched)
+        let kept = std::mem::take(&mut g.app.server.guild);
         g.app.server = lg_app::server::Connection::new(&g.window.props, &format!("Loot Gobbler {}", env!("CARGO_PKG_VERSION")));
+        g.app.server.guild = kept;
         g.app.server.reconnect();
         g.seen_saves = g.app.amulet_saves.count();
         g.seen_matrix = g.app.cooldowns.matrix_fired;
