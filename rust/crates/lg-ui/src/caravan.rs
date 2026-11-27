@@ -42,9 +42,10 @@ const GROUND: Color32 = rgb(0x4A3522);
 pub static PILE_ROWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(15);
 /// Mockup: a satellite in the sky (where a season's loot will go). Off in the app.
 pub static SHOW_SATELLITE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// Mockups: how the balloon is tied to its wagon (0 two ropes, 1 one rope to a ring, 2 two chains, 3 two slack
-/// ropes, 4 a rope ladder).
-pub static TETHER_STYLE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// How a balloon is tied to its wagon (each player picks: 0 two ropes, 1 one thick rope to a ring, 2 two chains,
+/// 3 two slack ropes, 4 a rope ladder). Pictures: every balloon in this style (none: as picked).
+pub static TETHER_STYLE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(usize::MAX);
+pub const TETHER_STYLES: usize = 5;
 /// Pictures: every balloon's burner burning.
 pub static ALWAYS_BURN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -134,13 +135,64 @@ pub const BALLOON_COLOURS: [Color32; 9] = [
 ];
 const BALLOON_CREAM: Color32 = rgb(0xEDE6DA);
 
-/// A balloon's five gores in a picked colour (None: the first, rose with sage sides).
-fn balloon_gores(colour: Option<i32>) -> [Color32; 5] {
-    let c = colour.and_then(|i| BALLOON_COLOURS.get(i as usize).copied());
-    let (middle, side) = match c {
-        None => (BALLOON_COLOURS[0], rgb(0x9FB3AC)),
-        Some(c) => (c, crate::theme::mix(c, rgb(0x8E9C98), 0.45)),
+/// A small picture of a tether style in `r` (the palette's buttons).
+fn tether_icon(p: &egui::Painter, r: Rect, style: usize) {
+    let rope = rgb(0xB89A6A);
+    let (l, rt, top, bot, mx) = (r.left() + 3.0, r.right() - 3.0, r.top(), r.bottom(), r.center().x);
+    match style {
+        1 => {
+            p.line_segment([pos2(mx, top), pos2(mx, bot - 4.0)], Stroke::new(5.0, rope));
+            p.circle_stroke(pos2(mx, bot - 2.0), 3.0, Stroke::new(1.5, rgb(0x9A958A)));
+        }
+        2 => {
+            for x in [l, rt] {
+                let mut y = top;
+                while y < bot {
+                    p.circle_stroke(pos2(x, y + 1.5), 1.5, Stroke::new(1.0, rgb(0x9A958A)));
+                    y += 4.0;
+                }
+            }
+        }
+        3 => {
+            for (x, side) in [(l, -1.0f32), (rt, 1.0)] {
+                let pts: Vec<Pos2> = (0..=10)
+                    .map(|k| {
+                        let f = k as f32 / 10.0;
+                        pos2(x + (std::f32::consts::PI * f).sin() * 3.0 * side, top + (bot - top) * f)
+                    })
+                    .collect();
+                p.add(egui::Shape::line(pts, Stroke::new(1.5, rope)));
+            }
+        }
+        4 => {
+            for x in [mx - 4.0, mx + 4.0] {
+                p.line_segment([pos2(x, top), pos2(x, bot)], Stroke::new(1.5, rope));
+            }
+            let mut y = top + 3.0;
+            while y < bot {
+                p.line_segment([pos2(mx - 4.0, y), pos2(mx + 4.0, y)], Stroke::new(1.5, rgb(0x8C6C47)));
+                y += 5.0;
+            }
+        }
+        _ => {
+            for x in [l, rt] {
+                p.line_segment([pos2(x, top), pos2(x, bot)], Stroke::new(1.5, rope));
+            }
+        }
+    }
+}
+
+/// A balloon's five gores (whose it is, the colour picked; None: the first, rose with sage sides): the colour
+/// picked in the middle, a second pastel on both sides, picked at random among the others but the same for that
+/// player and colour wherever it is drawn.
+fn balloon_gores(player: i64, colour: Option<i32>) -> [Color32; 5] {
+    let Some(i) = colour.filter(|i| (0..BALLOON_COLOURS.len() as i32).contains(i)) else {
+        return [rgb(0x9FB3AC), BALLOON_CREAM, BALLOON_COLOURS[0], BALLOON_CREAM, rgb(0x9FB3AC)];
     };
+    let n = BALLOON_COLOURS.len() as i64;
+    let mut rnd = lg_app::java::JavaRandom::new(player.wrapping_mul(31).wrapping_add(i64::from(i)));
+    let other = (i64::from(i) + 1 + i64::from(rnd.next_int(n as i32 - 1))) % n;
+    let (middle, side) = (BALLOON_COLOURS[i as usize], BALLOON_COLOURS[other as usize]);
     [side, BALLOON_CREAM, middle, BALLOON_CREAM, side]
 }
 
@@ -353,8 +405,9 @@ struct Scene<'a> {
     phase: f64,
     picked: i64,
     me: i64,
-    /// Your balloon's colour as picked here (before the server has it).
+    /// Your balloon's colour and tether as picked here (before the server has them).
     own_balloon: Option<i32>,
+    own_tether: Option<i32>,
     gold: Color32,
     gold_hover: Color32,
     /// The Profile's own wagon: no score plate, the name in the middle.
@@ -699,12 +752,27 @@ impl Scene<'_> {
         let rope = Stroke::new(2.0 * t.f, INK);
         let (top, bottom) = (by + PLATFORM_H, tie.2);
         let mid_x = (tie.0 + tie.1) / 2.0;
-        match TETHER_STYLE.load(std::sync::atomic::Ordering::Relaxed) {
+        let forced = TETHER_STYLE.load(std::sync::atomic::Ordering::Relaxed);
+        let picked = if m.id == self.me { self.own_tether.or(m.tether) } else { m.tether };
+        let style = if forced != usize::MAX { forced } else { picked.map_or(0, |s| s.clamp(0, TETHER_STYLES as i32 - 1) as usize) };
+        match style {
             1 => {
-                // one thick rope from the deck's middle to a ring on the wagon
-                p.line_segment([t.p(cx, top), t.p(mid_x, bottom - 6.0)], Stroke::new(4.0 * t.f, INK));
-                p.line_segment([t.p(cx, top), t.p(mid_x, bottom - 6.0)], Stroke::new(2.0 * t.f, rgb(0xB89A6A)));
-                p.circle_stroke(t.p(mid_x, bottom - 3.0), 4.0 * t.f, Stroke::new(2.0 * t.f, rgb(0x8A8578)));
+                // one big, girthy rope from the deck's middle down to an iron ring on the wagon, its strands twisting
+                let (a, b) = (t.p(cx, top), t.p(mid_x, bottom - 9.0));
+                p.line_segment([a, b], Stroke::new(10.0 * t.f, INK));
+                p.line_segment([a, b], Stroke::new(7.0 * t.f, rgb(0xB89A6A)));
+                let n = ((bottom - 9.0 - top) / 5.0).max(1.0) as usize;
+                for k in 0..n {
+                    let f = (k as f32 + 0.5) / n as f32;
+                    let q = a + (b - a) * f;
+                    p.line_segment(
+                        [q + vec2(-3.0 * t.f, -1.5 * t.f), q + vec2(3.0 * t.f, 1.5 * t.f)],
+                        Stroke::new(1.5 * t.f, rgb(0x8C7048)),
+                    );
+                }
+                p.line_segment([a, b], Stroke::new(1.0 * t.f, rgb(0xD8BE8C)));
+                p.circle_stroke(t.p(mid_x, bottom - 5.0), 6.0 * t.f, Stroke::new(4.0 * t.f, INK));
+                p.circle_stroke(t.p(mid_x, bottom - 5.0), 6.0 * t.f, Stroke::new(2.5 * t.f, rgb(0x9A958A)));
             }
             2 => {
                 // two chains: links side on and face on in turn
@@ -775,7 +843,7 @@ impl Scene<'_> {
             .collect();
         p.add(egui::Shape::convex_polygon(outline.clone(), INK, Stroke::NONE));
         let colour = if m.id == self.me { self.own_balloon.or(m.balloon) } else { m.balloon };
-        let gores = balloon_gores(colour);
+        let gores = balloon_gores(m.id, colour);
         let n = gores.len() as f32;
         // a gore is bounded by meridians: x = cx + sin(k * pi/2) * half
         let at = |k: f32, dy: f32| cx + (k * std::f32::consts::FRAC_PI_2).sin() * half(dy);
@@ -929,6 +997,7 @@ pub fn small_wagon(
         picked: -1,
         me: m.id,
         own_balloon: None,
+        own_tether: None,
         gold,
         gold_hover: gold,
         small: true,
@@ -1019,6 +1088,7 @@ impl CaravanView {
         let mut picked = self.picked;
         let mut new_zoom = None;
         let own_colour = c.app.profile.balloon;
+        let own_tether = c.app.profile.tether;
         let mut palette_at: Option<egui::Pos2> = None;
         let (road_was, anchor) = (self.road, self.zoom_anchor);
         let mut road_now = None;
@@ -1066,6 +1136,7 @@ impl CaravanView {
                         picked,
                         me,
                         own_balloon: own_colour,
+                        own_tether,
                         gold: p.gold,
                         gold_hover: p.gold_hover,
                         small: false,
@@ -1377,6 +1448,7 @@ impl CaravanView {
             self.palette = palette_at;
         } else if let Some(at) = self.palette {
             let mut picked_colour = None;
+            let mut picked_tether = None;
             let shown = egui::Area::new(egui::Id::unique("lg-balloon-palette"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(at + vec2(12.0, -60.0))
@@ -1408,11 +1480,39 @@ impl CaravanView {
                                     picked_colour = Some(i as i32);
                                 }
                             }
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new("Tied with").font(text(18.0)).color(p.ink));
+                            ui.add_space(6.0);
+                            let (row, _) = ui.allocate_exact_size(vec2(TETHER_STYLES as f32 * 34.0 - 6.0, 40.0), Sense::hover());
+                            for k in 0..TETHER_STYLES {
+                                let r = Rect::from_min_size(row.min + vec2(k as f32 * 34.0, 0.0), vec2(28.0, 40.0));
+                                let resp = ui
+                                    .interact(r, ui.scope_id().with(("balloon-tether", k)), Sense::click())
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .on_hover_text(["Two ropes", "One thick rope", "Two chains", "Two slack ropes", "A rope ladder"][k]);
+                                let on = own_tether.unwrap_or(0) == k as i32;
+                                ui.painter().rect_filled(r, 4.0, rgb(0x2A2418));
+                                tether_icon(ui.painter(), r.shrink(5.0), k);
+                                let ring = if on {
+                                    Stroke::new(3.0, p.gold)
+                                } else if resp.hovered() {
+                                    Stroke::new(2.0, p.ink)
+                                } else {
+                                    Stroke::new(1.0, Color32::from_black_alpha(140))
+                                };
+                                ui.painter().rect_stroke(r, 4.0, ring, StrokeKind::Outside);
+                                if resp.clicked() {
+                                    picked_tether = Some(k as i32);
+                                }
+                            }
                         },
                     );
                 });
             if let Some(i) = picked_colour {
                 c.asks.push(Ask::BalloonColour(i));
+                self.palette = None;
+            } else if let Some(k) = picked_tether {
+                c.asks.push(Ask::BalloonTether(k));
                 self.palette = None;
             } else if ui.input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|q| !shown.response.rect.contains(q))) {
                 self.palette = None;

@@ -271,6 +271,7 @@ pub(crate) fn profile(p: &crate::profile::Profile) -> String {
         .int("guildRank", p.guild_rank)
         .int("updatedAt", p.updated_at)
         .raw("balloon", p.balloon.map(|b| b.to_string()))
+        .raw("tether", p.tether.map(|b| b.to_string()))
         .raw("stSetsDone", p.st_sets_done.as_deref().map(gson_out::longs))
         .raw("exaltChanges", p.exalt_changes.as_ref().map(|c| array(c.iter().map(exalt_change))))
         .end()

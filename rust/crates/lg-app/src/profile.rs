@@ -14,6 +14,8 @@ pub struct Profile {
     pub exalt_changes: Option<Vec<crate::exalt_store::Change>>,
     /// The colour picked for your loot caravan balloon (0-8 of the palette); None: the first.
     pub balloon: Option<i32>,
+    /// How your balloon is tied to your wagon (0-4); None: the first (two ropes).
+    pub tether: Option<i32>,
     /// Set when the file should be written.
     pub dirty: bool,
 }
@@ -48,6 +50,7 @@ impl Profile {
                 p.updated_at = x;
             }
             p.balloon = gson::int(v.get("balloon")).ok().flatten();
+            p.tether = gson::int(v.get("tether")).ok().flatten();
             p.st_sets_done = match v.get("stSetsDone") {
                 None | Some(Json::Null) => None,
                 Some(Json::Array(a)) => Some(a.iter().map(|x| gson::long(Some(x)).ok().flatten()).collect::<Option<Vec<_>>>()?),
@@ -78,6 +81,16 @@ impl Profile {
             return;
         }
         self.balloon = Some(colour);
+        self.updated_at = now;
+        self.dirty = true;
+    }
+
+    /// How your balloon is tied to your wagon, picked: synced with the profile.
+    pub fn set_tether(&mut self, style: i32, now: i64) {
+        if self.tether == Some(style) {
+            return;
+        }
+        self.tether = Some(style);
         self.updated_at = now;
         self.dirty = true;
     }

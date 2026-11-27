@@ -98,6 +98,8 @@ pub struct CaravanMember {
     pub character: Option<CaravanCharacter>,
     /// Their balloon's colour (0-8), if they picked one.
     pub balloon: Option<i32>,
+    /// How their balloon is tied to their wagon (0-4), if they picked it.
+    pub tether: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -230,6 +232,10 @@ pub fn caravan_of(j: &Json) -> Caravan {
             }),
             balloon: match m.get("balloon") {
                 Some(Json::Number(_)) => Some(int(m.get("balloon"), 0)),
+                _ => None,
+            },
+            tether: match m.get("tether") {
+                Some(Json::Number(_)) => Some(int(m.get("tether"), 0)),
                 _ => None,
             },
         }),

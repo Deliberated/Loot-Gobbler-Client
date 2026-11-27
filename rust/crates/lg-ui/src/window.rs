@@ -27,6 +27,8 @@ pub enum Ask {
     ToggleChar(i32, bool),
     /// Your loot caravan balloon's colour picked (0-8).
     BalloonColour(i32),
+    /// How your balloon is tied to your wagon, picked (0-4).
+    BalloonTether(i32),
     /// Nothing (what a message's button asks).
     Nothing,
     /// Play a sound: a bundled file ("pm.wav"), "item:<setting key>" or "startup:<id>" (Settings' previews).
