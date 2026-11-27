@@ -83,6 +83,10 @@ for f in "$work"/rustfiles/*; do
     n=$(basename "$f")
     # a file only the Rust app keeps (e.g. drop_owners.txt): nothing of Java's to compare it with
     [ -e "$work/run/$n" ] || continue
+    # fields only the Rust app writes (Java has nothing to compare them with): left out of its copy first
+    case "$n" in
+        characters.json) sed -E 's/"baseStats":\[[^]]*\],?//g' "$f" > "$work/rust-$n" && f="$work/rust-$n" ;;
+    esac
     if cmp -s "$f" "$work/run/$n"; then
         files_same=$((files_same + 1))
     else
