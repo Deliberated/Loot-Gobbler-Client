@@ -23,7 +23,7 @@ v0.0.6: Your own balloon
 **Faster caravan:** 
 - The caravan from last time shows right away at start, balloons and all
 - Guildmates' items show while the drop log is still catching up
-- The drop log catches up twice as fast, 120 drops every 5 seconds
+- The drop log catches up over three times as fast, 120 drops every 3 seconds
 
 **Gold chest stones:** 
 - Stones no longer go into the planks; the gobbler keeps count of them for later
