@@ -34,7 +34,7 @@ const POLL_MS: i64 = 60_000;
 /// Room around the caravan on the page: street before and after it, sky above the tallest load, ground under the
 /// road.
 const STREET: f32 = 140.0;
-const SKY_ROOM: f32 = 60.0;
+const SKY_ROOM: f32 = 180.0;
 const GROUND_ROOM: f32 = 40.0;
 const GROUND: Color32 = rgb(0x4A3522);
 /// How many rows of items a wagon is piled up to: then they go up onto a hot air balloon tied to it (its driver
@@ -97,7 +97,9 @@ const STONE: [Color32; 5] = [Color32::BLACK, rgb(0x4CD15A), rgb(0x3FB6F2), rgb(0
 #[derive(Default)]
 pub struct CaravanView {
     picked: i64,
+    /// The zoom wanted (Ctrl + wheel), and the one shown, gliding towards it.
     zoom: Option<f64>,
+    shown_zoom: Option<f64>,
     asked_at: i64,
 }
 
@@ -330,11 +332,13 @@ impl Scene<'_> {
     }
 
     /// Java `fit`: enlarged up to MAX_FIT while it fits the width (with a margin) and the sky.
-    fn fit(&self, painter: &egui::Painter, width: f32) -> f32 {
+    /// Enlarged up to MAX_FIT while it fits the width (with a margin) and `height`; too high for it, made smaller to
+    /// fit down to 70 %; too wide, dragged into view instead.
+    fn fit(&self, painter: &egui::Painter, width: f32, height: f32) -> f32 {
         let by_width = (width - 2.0 * FIT_MARGIN) / self.content_width(painter);
-        let by_height = (HEIGHT - 34.0 - 16.0) / self.content_height();
-        // never smaller than drawn: what does not fit is dragged into view (balloons up high, more wagons)
-        MAX_FIT.min(by_width).min(by_height).max(1.0)
+        let by_height = (height - 34.0 - 16.0) / self.content_height();
+        let up = MAX_FIT.min(by_width).min(by_height);
+        if up >= 1.0 { up } else { by_height.clamp(0.7, 1.0) }
     }
 
     fn paint_ox(&self, p: &egui::Painter, t: &T, x: f32, ground: f32) {
@@ -845,9 +849,19 @@ impl CaravanView {
         let weights = &app.server.weights;
         let guild = &app.server.guild;
         let online = app.server.user.is_some() && app.server.state == lg_app::server::State::Online;
-        let zoom = *self.zoom.get_or_insert_with(|| {
+        let wanted = *self.zoom.get_or_insert_with(|| {
             c.props.get("caravanZoom").and_then(|v| v.trim().parse::<f64>().ok()).map_or(1.0, |z| z.clamp(MIN_ZOOM, MAX_ZOOM))
         });
+        // the zoom shown glides to the one wanted (a few frames), so zooming is smooth
+        let shown = self.shown_zoom.get_or_insert(wanted);
+        let dt = f64::from(ui.input(|i| i.stable_dt).min(0.1));
+        *shown += (wanted - *shown) * (1.0 - (-dt * 14.0).exp());
+        if (wanted - *shown).abs() < 1e-3 {
+            *shown = wanted;
+        } else {
+            ui.ctx().request_repaint();
+        }
+        let zoom = *shown;
         // the minute's check while on screen, and a reload once your drops reached the server
         if online && (c.now - self.asked_at >= POLL_MS || guild.caravan_stale) {
             if self.asked_at != 0 || guild.caravan_stale {
@@ -926,18 +940,15 @@ impl CaravanView {
                     };
                     let view_w = w - 4.0;
                     let has = !scene.riders.is_empty() || !scene.walkers.is_empty();
-                    let f_scale = if has { scene.fit(&painter, view_w) * zoom as f32 } else { 1.0 };
+                    // as big as the page (it follows the window), never lower than the road needs; the status line
+                    // and the member's card below it, the mouse wheel scrolls down to them; the scene's sky grows.
+                    // Dragged with the mouse up to its edges, the road at the bottom first
+                    let vp_h = (r.height() - 12.0 - 4.0 - 12.0).max(HEIGHT + 18.0);
+                    let fit_h = vp_h - 18.0 - GROUND_ROOM - SKY_ROOM;
+                    let f_scale = if has { scene.fit(&painter, view_w, fit_h) * zoom as f32 } else { 1.0 };
                     let scene_h = if has { HEIGHT.max((scene.content_height() * f_scale).ceil() + 34.0 + 20.0 + SKY_ROOM) } else { HEIGHT };
                     let content_w =
                         if has { 400f32.max(STREET + (scene.content_width(&painter) * f_scale).ceil() + STREET) } else { 400.0 };
-                    // a window onto the scene as high as the road: dragged with the mouse (or scrolled) up to its edges,
-                    // the road at the bottom first
-                    // as high as the page leaves room for, above the status line and the member's card (never lower
-                    // than the road needs); the scene's sky grows with it
-                    let fh = jtext::height(&painter, &f);
-                    let finds_h = 14.0 + jtext::height(&painter, &crate::theme::head(30.0)) + 4.0 + 4.0 * (36.0 + fh + 6.0) - 6.0 + 14.0;
-                    let below = fh + 12.0 + self_card_height(&painter).max(finds_h) + 8.0 + 12.0;
-                    let vp_h = (r.bottom() - y - 4.0 - 8.0 - below).max(HEIGHT + 18.0);
                     let scene_h = scene_h.max(vp_h - 18.0 - GROUND_ROOM);
                     let frame = Rect::from_min_size(pos2(x, y), vec2(w, vp_h + 4.0));
                     painter.rect_stroke(frame, 0.0, Stroke::new(2.0, p.line), StrokeKind::Inside);
@@ -946,7 +957,11 @@ impl CaravanView {
                     let mut hits = Hits::default();
                     egui::ScrollArea::both()
                         .id_salt("caravan-road")
-                        .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                        .scroll_source(egui::scroll_area::ScrollSource {
+                            scroll_bar: true,
+                            drag: egui::scroll_area::DragScroll::Always,
+                            mouse_wheel: false,
+                        })
                         .stick_to_bottom(true)
                         .show(&mut road, |ui| {
                             let sw = content_w.max(view_w);
@@ -996,7 +1011,7 @@ impl CaravanView {
                             if let Some(pos) = resp.hover_pos() {
                                 let zd = ui.input(|i| if i.modifiers.ctrl || i.modifiers.command { i.zoom_delta() } else { 1.0 });
                                 if (zd - 1.0).abs() > 1e-3 {
-                                    new_zoom = Some((zoom * f64::from(zd)).clamp(MIN_ZOOM, MAX_ZOOM));
+                                    new_zoom = Some((wanted * f64::from(zd)).clamp(MIN_ZOOM, MAX_ZOOM));
                                 }
                                 if let Some((_, id, pts, mine)) = hits.items.iter().find(|h| h.0.contains(pos)) {
                                     let name = data
