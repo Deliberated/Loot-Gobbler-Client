@@ -259,7 +259,7 @@ impl T {
 const INLAY: f32 = 4.0;
 
 /// The balloon deck's rows of stones, and its grid (columns, rows) for a platform that wide.
-const DECK_ROWS: usize = ((PLATFORM_H - 4.0) / INLAY) as usize;
+const DECK_ROWS: usize = 1;
 fn deck_grid(plat_w: f32) -> (usize, usize) {
     (((plat_w - 6.0) / INLAY) as usize, DECK_ROWS)
 }
@@ -541,8 +541,14 @@ impl Scene<'_> {
         let (up, mut pile_items) = balloon_split(m, once);
         // the planks' stones: the bed's grid, then the balloon deck's
         let (bed_cols, bed_rows) = (((WAGON_W - 6.0) / INLAY) as usize, ((BED_H - 6.0) / INLAY) as usize);
+        // the bed's cells inside its border, but none under the score plate (a stone there could not be seen)
+        let plate_w_here = if self.small { 0.0 } else { plate_w.max(jtext::width(p, &self.plate(m), &text(19.0)) + 10.0) };
+        let bed_cells: Vec<(f32, f32)> = (0..bed_rows)
+            .flat_map(|r| (0..bed_cols).map(move |c| (x + 3.0 + c as f32 * INLAY, bed_y + 3.0 + r as f32 * INLAY)))
+            .filter(|(cx, cy)| !(*cx + INLAY > x + 6.0 && *cx < x + 6.0 + plate_w_here && *cy + INLAY > bed_y + 5.0 && *cy < bed_y + 26.0))
+            .collect();
         let deck_cells = if up.is_empty() { 0 } else { deck_grid(platform_w(up.len().min(HEAP_SHOWN))).0 * DECK_ROWS };
-        let (grid, left) = Scene::planks(m, bed_cols * bed_rows + deck_cells);
+        let (grid, left) = Scene::planks(m, bed_cells.len() + deck_cells);
         pile_items.reverse(); // drawn from the bottom up
         // the driver up on the balloon: the seat free for items too
         let cols = if up.is_empty() { PILE_COLS } else { WIDE_COLS };
@@ -557,7 +563,7 @@ impl Scene<'_> {
             // the balloon floats on its own: slower than the loot bobs, smoothly (not in whole pixels), each its own way
             let float = (5.0 * (self.phase * 0.035 + index as f64 * 1.7).sin()) as f32;
             let deck_y = bed_y - rows_h - TETHER - PLATFORM_H + float;
-            let deck = grid.get(bed_cols * bed_rows..).unwrap_or(&[]);
+            let deck = grid.get(bed_cells.len()..).unwrap_or(&[]);
             Some(self.balloon(ui, icons, p, t, m, &up, deck, cx, deck_y, (x + 10.0, x + WAGON_W - 10.0, bed_y), mine, hits))
         };
         let mut top = balloon_top.unwrap_or(bed_y);
@@ -593,9 +599,9 @@ impl Scene<'_> {
         block(p, t, x, bed_y, WAGON_W, BED_H, WOOD);
         p.rect_filled(t.r(x + 3.0, bed_y + BED_H - 9.0, WAGON_W - 6.0, 6.0), 0.0, WOOD_DARK);
         // the stones set into the bed, under the plate and the name
-        for (i, r) in grid.iter().take(bed_cols * bed_rows).enumerate() {
+        for (r, (cx, cy)) in grid.iter().zip(&bed_cells) {
             if *r > 0 {
-                inlay(p, t, x + 3.0 + (i % bed_cols) as f32 * INLAY, bed_y + 3.0 + (i / bed_cols) as f32 * INLAY, STONE[*r]);
+                inlay(p, t, *cx, *cy, STONE[*r]);
             }
         }
         let pf = text(19.0);
@@ -736,7 +742,9 @@ impl Scene<'_> {
         let (deck_cols, _) = deck_grid(plat_w);
         for (i, r) in deck.iter().enumerate() {
             if *r > 0 {
-                inlay(p, t, bx + 3.0 + (i % deck_cols) as f32 * INLAY, by + 2.0 + (i / deck_cols) as f32 * INLAY, STONE[*r]);
+                // inside the plank's border (3 px), the row in the middle of it
+                let y = by + 3.0 + ((PLATFORM_H - 6.0 - INLAY) / 2.0).max(0.0);
+                inlay(p, t, bx + 3.0 + (i % deck_cols) as f32 * INLAY, y, STONE[*r]);
             }
         }
         // the heap: from the bottom row up, each row from its middle outwards, the rarest on top
