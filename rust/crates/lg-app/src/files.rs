@@ -105,6 +105,12 @@ pub(crate) fn collection(c: &crate::collection::Collection) -> String {
 impl App {
     /// Writes the files of the records that changed (Java: each record's `save()`), into `dir`.
     pub fn save_changed(&mut self, dir: &Path) -> std::io::Result<()> {
+        // what changed is still the sync's to upload
+        for k in self.dirty_kinds() {
+            if !self.unsynced.contains(&k) {
+                self.unsynced.push(k);
+            }
+        }
         let write = |name: &str, text: String| -> std::io::Result<()> {
             // as Java: a temporary file moved over the old one
             let tmp = dir.join(format!("{name}.tmp"));

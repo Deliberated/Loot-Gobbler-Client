@@ -856,6 +856,8 @@ pub struct GuildState {
     pub caravan_dirty: bool,
     /// The season end the caravan was asked again for (once it has passed: the new season's caravan).
     pub(crate) season_reload: i64,
+    /// Your drops put onto your wagon that the server's answers do not have yet: (your id, name, the drop).
+    pub(crate) unsent: Vec<(i64, String, CaravanItem)>,
     pub(crate) caravan_loading: bool,
     pub(crate) caravan_again: bool,
     pub caravan_stale: bool,
@@ -935,16 +937,8 @@ impl GuildState {
     }
 
     /// Java `CaravanView.dropped`: one of your drops onto your wagon right away (the server counts it once the
-    /// upload is in).
+    /// upload is in); kept until then, so the caravan built again from the server's answers still shows it.
     pub fn dropped(&mut self, item_id: i32, find: &crate::collection::Find, me_id: i64, me_ign: &str) {
-        let Some(Ok(c)) = &mut self.caravan else { return };
-        let m = match c.members.iter().position(|x| x.id == me_id) {
-            Some(i) => &mut c.members[i],
-            None => {
-                c.members.push(CaravanMember { id: me_id, ign: me_ign.into(), ..Default::default() });
-                c.members.last_mut().expect("just added")
-            }
-        };
         let item = CaravanItem {
             item_id,
             bag: bag_name(&find.bag),
@@ -953,23 +947,46 @@ impl GuildState {
             enchants: find.enchant_ids.as_ref().map_or(find.enchants, |e| e.len() as i32),
             at: find.at,
         };
-        if !m.tally.is_empty() || m.total == 0 {
-            // older servers send no tally: the score comes from the items then
-            match m.tally.iter_mut().find(|t| t.item_id == item_id && t.enchants == item.enchants && t.r#where == item.r#where) {
-                Some(t) => t.count += 1,
-                None => m.tally.push(Tally { item_id, r#where: item.r#where.clone(), enchants: item.enchants, count: 1 }),
-            }
-        }
-        match m.by_bag.iter_mut().find(|(b, _)| *b == item.bag) {
-            Some((_, n)) => *n += 1,
-            None => m.by_bag.push((item.bag.clone(), 1)),
-        }
-        m.items.insert(0, item);
-        m.items.truncate(120);
-        m.total += 1;
-        m.last_drop = Some(find.time.clone());
+        self.unsent.push((me_id, me_ign.to_string(), item.clone()));
+        let Some(Ok(c)) = &mut self.caravan else { return };
+        add_item(c, me_id, me_ign, item);
         self.version += 1;
     }
+
+    /// Your drops the server does not have yet onto the caravan built from its answers; those it has are let go.
+    pub(crate) fn add_unsent(&mut self, c: &mut Caravan) {
+        let same = |a: &CaravanItem, b: &CaravanItem| a.item_id == b.item_id && a.time == b.time && a.r#where == b.r#where;
+        self.unsent.retain(|(id, _, item)| !c.members.iter().any(|m| m.id == *id && m.items.iter().any(|i| same(i, item))));
+        for (id, ign, item) in &self.unsent {
+            add_item(c, *id, ign, item.clone());
+        }
+    }
+}
+
+/// One drop of a member's onto their wagon (the member added if not listed yet), newest first.
+fn add_item(c: &mut Caravan, id: i64, ign: &str, item: CaravanItem) {
+    let m = match c.members.iter().position(|x| x.id == id) {
+        Some(i) => &mut c.members[i],
+        None => {
+            c.members.push(CaravanMember { id, ign: ign.into(), ..Default::default() });
+            c.members.last_mut().expect("just added")
+        }
+    };
+    if !m.tally.is_empty() || m.total == 0 {
+        // older servers send no tally: the score comes from the items then
+        match m.tally.iter_mut().find(|t| t.item_id == item.item_id && t.enchants == item.enchants && t.r#where == item.r#where) {
+            Some(t) => t.count += 1,
+            None => m.tally.push(Tally { item_id: item.item_id, r#where: item.r#where.clone(), enchants: item.enchants, count: 1 }),
+        }
+    }
+    match m.by_bag.iter_mut().find(|(b, _)| *b == item.bag) {
+        Some((_, n)) => *n += 1,
+        None => m.by_bag.push((item.bag.clone(), 1)),
+    }
+    let time = item.time.clone();
+    m.items.insert(0, item);
+    m.total += 1;
+    m.last_drop = Some(time);
 }
 
 #[cfg(test)]
@@ -1010,6 +1027,35 @@ mod tests {
         assert!(verdict(&trade, &plain).is_some_and(|v| !v.0 && v.1.unwrap().contains("standing guild run")));
         let missing = vec![("Pal".into(), vec![report(1_050_000, "gUPE", true, vec![(8, true)])])];
         assert!(verdict(&trade, &missing).is_some_and(|v| v.1.unwrap().contains("does not list an item you got (7)")));
+    }
+
+    /// Your drop stays on your wagon when the caravan is built again from the server's answers, until they have it;
+    /// the rest of your items stay too.
+    #[test]
+    fn your_drop_stays_until_the_server_has_it() {
+        let old = |k: i32| CaravanItem { item_id: k, time: format!("2026-01-01T00:00:{:02}", k % 60), ..Default::default() };
+        let from_server = |items: Vec<CaravanItem>| Caravan {
+            members: vec![CaravanMember { id: 1, ign: "Me".into(), total: items.len() as i64, items, ..Default::default() }],
+            ..Default::default()
+        };
+        let mut g = GuildState { caravan: Some(Ok(from_server((0..200).map(old).collect()))), ..Default::default() };
+        let find = crate::collection::Find::of("drop", 0, "Nest", "White", 5, "2026-11-27T18:30:00");
+        g.dropped(777, &find, 1, "Me");
+        let shown = |g: &GuildState| match &g.caravan {
+            Some(Ok(c)) => c.members[0].items.iter().map(|i| i.item_id).collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        assert_eq!((shown(&g)[0], shown(&g).len()), (777, 201), "on top, none of the others cut");
+        // built again from an answer without it: still there
+        let mut c = from_server((0..200).map(old).collect());
+        g.add_unsent(&mut c);
+        assert_eq!((c.members[0].items[0].item_id, c.members[0].total), (777, 201));
+        // the server has it: let go, not twice
+        let mut with = (0..200).map(old).collect::<Vec<_>>();
+        with.insert(0, CaravanItem { item_id: 777, time: find.time.clone(), r#where: "Nest".into(), ..Default::default() });
+        let mut c = from_server(with);
+        g.add_unsent(&mut c);
+        assert_eq!((c.members[0].items.iter().filter(|i| i.item_id == 777).count(), g.unsent.len()), (1, 0));
     }
 
     #[test]

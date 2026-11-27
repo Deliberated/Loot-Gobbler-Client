@@ -6,6 +6,14 @@ v0.0.7: Seasons
 - Nothing is lost: the earlier seasons' drops are kept for their own stage later
 - Needs the Loot Gobbler server updated to v0.9.6
 
+**Your drops reach the guild again:** 
+- New drops now go up to the server within seconds while you play, not only when Loot Gobbler starts
+- Your new drops stay on your wagon until the server has them, instead of disappearing when the caravan refreshes
+
+**Wagon and balloon:** 
+- The wagon shows your latest finds; once it is full, the whole load goes up onto the balloon and the wagon starts again
+- An item already up on the balloon that you find again shows on the wagon too, but is not added to the balloon twice
+
 **Faster caravan:** 
 - The guild's drops kept on your PC are really kept now: each start only fetches what is new, instead of all of them again
 - The drop log catches up at 120 drops every second

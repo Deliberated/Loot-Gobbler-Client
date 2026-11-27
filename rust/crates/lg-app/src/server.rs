@@ -1076,6 +1076,7 @@ impl Connection {
                 {
                     let mut c = raw.clone();
                     self.guild.log.fill(&mut c);
+                    self.guild.add_unsent(&mut c);
                     self.guild.caravan = Some(Ok(c));
                     self.guild.version += 1;
                 }
@@ -1216,6 +1217,7 @@ impl Connection {
         let raw = crate::guild::caravan_of(c);
         let mut shown = raw.clone();
         self.guild.log.fill(&mut shown);
+        self.guild.add_unsent(&mut shown);
         self.guild.caravan_raw = Some(raw);
         self.guild.caravan = Some(Ok(shown));
         self.guild.version += 1;
@@ -1270,6 +1272,7 @@ impl Connection {
         if let Ok(c) = &mut c {
             self.guild.caravan_raw = Some(c.clone());
             self.guild.log.fill(c);
+            self.guild.add_unsent(c);
         }
         self.guild.caravan = Some(c);
         self.guild.version += 1;

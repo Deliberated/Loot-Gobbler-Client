@@ -328,29 +328,50 @@ pub fn score(data: &GameData, w: &lg_app::server::ScoreWeights, m: &CaravanMembe
     (sum * 10.0 + 0.5).floor() / 10.0
 }
 
-/// A wagon's pile split for the balloon: the items on the balloon (the oldest found, in whole batches: the first
-/// full wagon, then each full wider one) and those on the wagon now, both rarest first; none on the balloon until the
-/// first wagon is full.
+/// A wagon's pile split for the balloon: the items on the balloon and those on the wagon now, both rarest first.
+/// The finds are gone through in the order they came: each item not on the wagon goes onto it (also one already up on
+/// the balloon: found again, it shows on the wagon); when the wagon is full (the first one, then the wider ones once
+/// the driver sits on the balloon), its whole load goes up to the balloon, where each item is only once, and the wagon
+/// starts again with the new find. So the wagon shows the latest finds; an item can be on both.
 fn balloon_split<'a>(m: &'a CaravanMember, once: Vec<&'a CaravanItem>) -> (Vec<&'a CaravanItem>, Vec<&'a CaravanItem>) {
+    let (up, wagon) = loads(&m.items);
+    let (up, wagon): (std::collections::HashSet<i32>, std::collections::HashSet<i32>) =
+        (up.into_iter().collect(), wagon.into_iter().collect());
+    let on_balloon = once.iter().copied().filter(|it| up.contains(&it.item_id)).collect();
+    let on_wagon = once.into_iter().filter(|it| wagon.contains(&it.item_id)).collect();
+    (on_balloon, on_wagon)
+}
+
+/// The items (by id) up on the balloon and those on the wagon now, from a member's finds (newest first, as listed):
+/// see `balloon_split`.
+fn loads(items: &[CaravanItem]) -> (Vec<i32>, Vec<i32>) {
     let rows = PILE_ROWS.load(std::sync::atomic::Ordering::Relaxed).max(1);
     let (first, later) = (PILE_COLS * rows, WIDE_COLS * rows);
-    if once.len() <= first {
-        return (Vec::new(), once);
-    }
-    let up_n = first + (once.len() - first - 1) / later * later;
-    // each item's first find
-    let mut first: HashMap<i32, &str> = HashMap::new();
-    for it in &m.items {
-        let t = first.entry(it.item_id).or_insert(it.time.as_str());
-        if it.time.as_str() < *t {
-            *t = it.time.as_str();
+    // oldest first (as listed for finds at the same moment, newest first: from the end)
+    let mut order: Vec<&CaravanItem> = items.iter().rev().collect();
+    order.sort_by(|a, b| when(a).cmp(when(b)));
+    let mut up: Vec<i32> = Vec::new();
+    let mut wagon: Vec<i32> = Vec::new();
+    for it in order {
+        if wagon.contains(&it.item_id) {
+            continue;
         }
+        let room = if up.is_empty() { first } else { later };
+        if wagon.len() >= room {
+            for id in wagon.drain(..) {
+                if !up.contains(&id) {
+                    up.push(id);
+                }
+            }
+        }
+        wagon.push(it.item_id);
     }
-    let first_find = |id: i32| first.get(&id).copied().unwrap_or("");
-    let mut by_age: Vec<i32> = once.iter().map(|it| it.item_id).collect();
-    by_age.sort_by(|a, b| first_find(*a).cmp(first_find(*b)));
-    let up: std::collections::HashSet<i32> = by_age.into_iter().take(up_n).collect();
-    once.into_iter().partition(|it| up.contains(&it.item_id))
+    (up, wagon)
+}
+
+/// When a find came, comparable: its time (the player's own clock, as recorded).
+fn when(it: &CaravanItem) -> &str {
+    it.time.as_str()
 }
 
 /// The rows of the heap on the balloon from the bottom up (how many items each holds): a pyramid, as wide as it must
@@ -1636,6 +1657,45 @@ fn self_card_height(painter: &egui::Painter) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    /// The wagon shows the latest finds; a full wagon goes up whole; an item found again shows on the wagon but is
+    /// on the balloon only once.
+    #[test]
+    fn the_wagon_holds_the_latest_finds() {
+        use super::*;
+        // finds of these items, oldest first, listed newest first (as the server sends them)
+        let finds = |ids: &[i32]| -> Vec<CaravanItem> {
+            let mut v: Vec<CaravanItem> = ids
+                .iter()
+                .enumerate()
+                .map(|(k, id)| CaravanItem {
+                    item_id: *id,
+                    time: format!("2026-01-01T{:02}:{:02}:{:02}", k / 3600, k / 60 % 60, k % 60),
+                    ..Default::default()
+                })
+                .collect();
+            v.reverse();
+            v
+        };
+        let (first, later) = (PILE_COLS * 15, WIDE_COLS * 15);
+        let mut ids: Vec<i32> = (1..=first as i32).collect();
+        // a full first wagon stays down
+        assert_eq!(loads(&finds(&ids)), (Vec::new(), ids.clone()));
+        // one more: the whole wagon goes up, the new one starts the next
+        ids.push(1000);
+        let (up, wagon) = loads(&finds(&ids));
+        assert_eq!((up.len(), wagon), (first, vec![1000]));
+        // found again: item 5 (on the balloon) shows on the wagon; a copy of 1000 (on the wagon) changes nothing
+        ids.extend([5, 1000]);
+        let (up, wagon) = loads(&finds(&ids));
+        assert_eq!((up.len(), wagon), (first, vec![1000, 5]));
+        // the wider wagon full, then one more: its load goes up, 5 not a second time
+        ids.extend(2000..2000 + (later - 2) as i32);
+        ids.push(3000);
+        let (up, wagon) = loads(&finds(&ids));
+        assert_eq!((up.len(), wagon), (first + later - 1, vec![3000]));
+        assert_eq!(up.iter().filter(|id| **id == 5).count(), 1);
+    }
+
     #[test]
     fn colours_as_java() {
         use super::*;

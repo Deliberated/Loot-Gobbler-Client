@@ -484,6 +484,21 @@ impl App {
     /// The kinds whose local data changed since the files were last written (their stores' `dirty`), for the
     /// sync's `local_changed`; and whether a change wants up soon (cleared).
     pub fn sync_changes(&mut self) -> (Vec<&'static str>, bool) {
+        let mut kinds = self.dirty_kinds();
+        for k in std::mem::take(&mut self.unsynced) {
+            if !kinds.contains(&k) {
+                kinds.push(k);
+            }
+        }
+        let soon = std::mem::take(&mut self.collection.soon)
+            | std::mem::take(&mut self.dps_history.soon)
+            | std::mem::take(&mut self.dungeon_visits.soon)
+            | std::mem::take(&mut self.upe.soon);
+        (kinds, soon)
+    }
+
+    /// The synced kinds whose stores changed since their files were last written.
+    pub(crate) fn dirty_kinds(&self) -> Vec<&'static str> {
         let dirty = [
             self.collection.dirty,
             self.characters.dirty,
@@ -497,12 +512,7 @@ impl App {
             self.upe.dirty,
             self.resources.dirty,
         ];
-        let kinds = KINDS.iter().zip(dirty).filter(|(_, d)| *d).map(|((k, _), _)| *k).collect();
-        let soon = std::mem::take(&mut self.collection.soon)
-            | std::mem::take(&mut self.dps_history.soon)
-            | std::mem::take(&mut self.dungeon_visits.soon)
-            | std::mem::take(&mut self.upe.soon);
-        (kinds, soon)
+        KINDS.iter().zip(dirty).filter(|(_, d)| *d).map(|((k, _), _)| *k).collect()
     }
 }
 
@@ -513,6 +523,24 @@ mod tests {
 
     fn app() -> App {
         App::new(lg_world::World::new(lg_gamedata::GameData::default()), 0)
+    }
+
+    /// A drop saved at once (the packet feeder writes the files right after each packet) still goes up: writing the
+    /// files must not hide the change from the sync.
+    #[test]
+    fn a_change_saved_before_the_sync_looks_still_goes_up() {
+        let mut a = app();
+        a.collection.dirty = true;
+        a.collection.soon = true;
+        let dir = std::env::temp_dir().join(format!("lg-sync-saved-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        a.save_changed(&dir).expect("save");
+        assert!(!a.collection.dirty, "written");
+        let (kinds, soon) = a.sync_changes();
+        assert!(kinds.contains(&"collection") && soon, "{kinds:?} {soon}");
+        // handed over once
+        assert_eq!(a.sync_changes(), (Vec::new(), false));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     const LINK: Link = Link { url: "http://x", token: "t", ign: "Me", owner: None };
