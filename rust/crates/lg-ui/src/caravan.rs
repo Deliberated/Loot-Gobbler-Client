@@ -42,6 +42,8 @@ const GROUND: Color32 = rgb(0x4A3522);
 pub static PILE_ROWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(15);
 /// A satellite high in the sky (where a season's loot will go one day).
 pub static SHOW_SATELLITE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+/// How high above the road the satellite is (in the scene's units, zoomed with it).
+const SATELLITE_HEIGHT: f32 = 1500.0;
 /// How a balloon is tied to its wagon (each player picks: 0 two ropes, 1 one thick rope to a ring, 2 two chains,
 /// 3 two slack ropes, 4 a rope ladder). Pictures: every balloon in this style (none: as picked).
 pub static TETHER_STYLE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(usize::MAX);
@@ -1173,7 +1175,13 @@ impl CaravanView {
                     let vp_h = (r.height() - 12.0 - 4.0 - 12.0).max(HEIGHT + 18.0);
                     let fit_h = vp_h - 18.0 - GROUND_ROOM - SKY_ROOM;
                     let f_scale = if has { scene.fit(&painter, view_w, fit_h) * zoom as f32 } else { 1.0 };
-                    let scene_h = if has { HEIGHT.max((scene.content_height() * f_scale).ceil() + 34.0 + 20.0 + SKY_ROOM) } else { HEIGHT };
+                    // the sky as high as the loads, and the satellite above them
+                    let tallest = if SHOW_SATELLITE.load(std::sync::atomic::Ordering::Relaxed) {
+                        scene.content_height().max(SATELLITE_HEIGHT + 60.0)
+                    } else {
+                        scene.content_height()
+                    };
+                    let scene_h = if has { HEIGHT.max((tallest * f_scale).ceil() + 34.0 + 20.0 + SKY_ROOM) } else { HEIGHT };
                     let content_w =
                         if has { 400f32.max(STREET + (scene.content_width(&painter) * f_scale).ceil() + STREET) } else { 400.0 };
                     let scene_h = scene_h.max(vp_h - 18.0 - GROUND_ROOM);
@@ -1230,10 +1238,10 @@ impl CaravanView {
                         let drawn = scene.content_width(&p2) * f_scale;
                         let start = if drawn + 2.0 * STREET > sw { STREET } else { (sw - drawn) / 2.0 };
                         let t = T { o: sr.min + vec2(0.0, extra), start, ground, f: f_scale, gy: sr.min.y + extra + ground };
-                        // the satellite: a place of its own in the scene (three quarters along the caravan, above the
-                        // highest load), zoomed and dragged with it
+                        // the satellite: a place of its own in the scene (three quarters along the caravan, high above
+                        // the road), zoomed and dragged with it
                         if SHOW_SATELLITE.load(std::sync::atomic::Ordering::Relaxed) {
-                            let at = t.p(PAD + scene.content_width(&p2) * 0.75, ground - scene.content_height() - 60.0);
+                            let at = t.p(PAD + scene.content_width(&p2) * 0.75, ground - SATELLITE_HEIGHT);
                             satellite(&p2, at, 3.0 * t.f, scene.phase);
                         }
                         let mut xx = PAD;
