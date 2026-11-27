@@ -550,7 +550,9 @@ impl Scene<'_> {
             None
         } else {
             let cx = pile_x + (pile_w / 2.0).floor();
-            let deck_y = bed_y - rows_h - TETHER - PLATFORM_H + loot_bob;
+            // the balloon floats on its own: slower than the loot bobs, smoothly (not in whole pixels), each its own way
+            let float = (5.0 * (self.phase * 0.035 + index as f64 * 1.7).sin()) as f32;
+            let deck_y = bed_y - rows_h - TETHER - PLATFORM_H + float;
             let deck = grid.get(bed_cols * bed_rows..).unwrap_or(&[]);
             Some(self.balloon(ui, icons, p, t, m, &up, deck, cx, deck_y, (x + 10.0, x + WAGON_W - 10.0, bed_y), mine, hits))
         };
