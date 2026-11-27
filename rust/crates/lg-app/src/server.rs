@@ -1044,7 +1044,13 @@ impl Connection {
                 }
                 self.guild_loaded();
             }
-            "caravan" => self.caravan_done(Ok(crate::guild::caravan_of(&j))),
+            "caravan" => {
+                // kept for the next start, with whose it is
+                let account = format!("{}|{}", self.url, self.user.as_ref().map_or(0, |u| u.id));
+                self.guild.caravan_saved = Some(format!("{{\"key\":{},\"caravan\":{}}}", crate::gson_out::string(&account), j.write()));
+                self.guild.caravan_dirty = true;
+                self.caravan_done(Ok(crate::guild::caravan_of(&j)))
+            }
             "droplog" => {
                 let account = format!("{}|{}", self.url, self.user.as_ref().map_or(0, |u| u.id));
                 if self.guild.log.take(&account, &j, now_ms())
@@ -1145,6 +1151,23 @@ impl Connection {
         self.call("GET", &path, None, "droplog");
     }
 
+    /// The caravan kept from last time (`guild_caravan.json`), if it is the same account's as the drop log: shown at
+    /// once, with the drop log's items, until the server's answer comes.
+    pub fn caravan_import(&mut self, dir: &std::path::Path) {
+        let Ok(t) = std::fs::read_to_string(dir.join(crate::drop_log::CARAVAN_FILE)) else { return };
+        let Ok(j) = lg_world::json::parse(&t) else { return };
+        if text(j.get("key")) != self.guild.log.account() || self.guild.log.key.is_empty() {
+            return;
+        }
+        let Some(c) = j.get("caravan") else { return };
+        let raw = crate::guild::caravan_of(c);
+        let mut shown = raw.clone();
+        self.guild.log.fill(&mut shown);
+        self.guild.caravan_raw = Some(raw);
+        self.guild.caravan = Some(Ok(shown));
+        self.guild.version += 1;
+    }
+
     /// Java `CaravanView.load`: the guild's loot caravan (all time); asked while loading: once more afterwards.
     pub fn caravan_load(&mut self) {
         if self.guild.caravan_loading {
@@ -1153,7 +1176,10 @@ impl Connection {
         }
         self.guild.caravan_stale = false;
         if self.user.is_none() || self.state != State::Online {
-            self.guild.caravan = None;
+            // the one kept from last time stays while connecting
+            if self.guild.caravan_raw.is_none() {
+                self.guild.caravan = None;
+            }
             self.guild.version += 1;
             return;
         }

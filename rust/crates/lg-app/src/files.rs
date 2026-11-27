@@ -117,6 +117,11 @@ impl App {
         if std::mem::take(&mut self.server.guild.log.dirty) {
             write(crate::drop_log::FILE, self.server.guild.log.json())?;
         }
+        if std::mem::take(&mut self.server.guild.caravan_dirty)
+            && let Some(c) = &self.server.guild.caravan_saved
+        {
+            write(crate::drop_log::CARAVAN_FILE, c.clone())?;
+        }
         if std::mem::take(&mut self.collection.dirty) {
             // the collection's Gson prints prettily
             write("collection.json", gson_out::pretty(&collection(&self.collection)))?;

@@ -135,6 +135,22 @@ pub const BALLOON_COLOURS: [Color32; 9] = [
 ];
 const BALLOON_CREAM: Color32 = rgb(0xEDE6DA);
 
+/// The shuffle sign in `r`: two arrows crossing to the right.
+fn shuffle_icon(p: &egui::Painter, r: Rect, col: Color32) {
+    let s = Stroke::new(1.8, col);
+    let (l, rt, t, b) = (r.left(), r.right() - 3.0, r.top() + 2.0, r.bottom() - 2.0);
+    // the lines crossing
+    p.line_segment([pos2(l, t), pos2(l + r.width() * 0.25, t)], s);
+    p.line_segment([pos2(l + r.width() * 0.25, t), pos2(rt - 4.0, b)], s);
+    p.line_segment([pos2(l, b), pos2(l + r.width() * 0.25, b)], s);
+    p.line_segment([pos2(l + r.width() * 0.25, b), pos2(rt - 4.0, t)], s);
+    // their arrow heads
+    for y in [t, b] {
+        p.add(egui::Shape::convex_polygon(vec![pos2(rt + 3.0, y), pos2(rt - 3.0, y - 3.5), pos2(rt - 3.0, y + 3.5)], col, Stroke::NONE));
+        p.line_segment([pos2(rt - 4.0, y), pos2(rt - 2.0, y)], s);
+    }
+}
+
 /// A small picture of a tether style in `r` (the palette's buttons).
 fn tether_icon(p: &egui::Painter, r: Rect, style: usize) {
     let rope = rgb(0xB89A6A);
@@ -1465,7 +1481,21 @@ impl CaravanView {
                     egui::Frame::new().fill(p.paper).stroke(Stroke::new(2.0, p.gold)).corner_radius(6.0).inner_margin(10.0).show(
                         ui,
                         |ui| {
-                            ui.label(egui::RichText::new("Your balloon").font(text(18.0)).color(p.ink));
+                            // the title, and at its right the shuffle: colour and tether both at random
+                            let title = ui.label(egui::RichText::new("Your balloon").font(text(18.0)).color(p.ink)).rect;
+                            let full_w = TETHER_STYLES as f32 * 34.0 - 6.0;
+                            let sr = Rect::from_center_size(pos2(title.left() + full_w - 12.0, title.center().y), vec2(24.0, 24.0));
+                            let resp = ui
+                                .interact(sr, ui.scope_id().with("balloon-shuffle"), Sense::click())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text("Shuffle: another colour and tether at random");
+                            if resp.hovered() {
+                                ui.painter().rect_filled(sr, 4.0, Color32::from_black_alpha(60));
+                            }
+                            shuffle_icon(ui.painter(), sr.shrink(4.0), if resp.hovered() { p.gold } else { p.ink });
+                            if resp.clicked() {
+                                scramble = true;
+                            }
                             ui.add_space(6.0);
                             // the colours spread over the box's width (that of the tethers' row)
                             let full = TETHER_STYLES as f32 * 34.0 - 6.0;
@@ -1518,12 +1548,6 @@ impl CaravanView {
                                 if resp.clicked() {
                                     picked_tether = Some(k as i32);
                                 }
-                            }
-                            // both at random (another colour and another tether than now)
-                            ui.add_space(8.0);
-                            let (br, _) = ui.allocate_exact_size(vec2(TETHER_STYLES as f32 * 34.0 - 6.0, 30.0), Sense::hover());
-                            if crate::inventory::button(ui, &p, br, "Scramble", false, "balloon-scramble") {
-                                scramble = true;
                             }
                         },
                     );

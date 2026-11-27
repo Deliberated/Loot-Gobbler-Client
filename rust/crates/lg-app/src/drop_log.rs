@@ -11,10 +11,12 @@ use std::path::Path;
 /// The most drops one answer brings.
 pub const PAGE: usize = 120;
 /// While more are waiting: the next page after this long (gentle on the server).
-pub const PAGE_EVERY_MS: i64 = 10_000;
+pub const PAGE_EVERY_MS: i64 = 5_000;
 /// Caught up: asked again after this long.
 pub const POLL_MS: i64 = 60_000;
 pub const FILE: &str = "guild_drops.json";
+/// The last caravan the server sent, kept so the next start shows it (balloons and all) right away.
+pub const CARAVAN_FILE: &str = "guild_caravan.json";
 
 /// One drop of the log: its number there (only goes up), whose it is, the item.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -86,6 +88,11 @@ impl DropLog {
             .bool("caughtUp", self.caught_up)
             .raw("drops", Some(gson_out::array(rows)))
             .end()
+    }
+
+    /// Whose copy it is ("<server>|<account id>"), from its key.
+    pub fn account(&self) -> String {
+        self.key.splitn(3, '|').take(2).collect::<Vec<_>>().join("|")
     }
 
     /// The call for the next page.

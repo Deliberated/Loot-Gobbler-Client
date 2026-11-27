@@ -816,6 +816,9 @@ pub struct GuildState {
     pub caravan: Option<Result<Caravan, crate::server::Error>>,
     /// The caravan as the server sent it (the drop log's items are added to a copy of it).
     pub(crate) caravan_raw: Option<Caravan>,
+    /// The server's last caravan to save (with whose it is), and whether it is new.
+    pub caravan_saved: Option<String>,
+    pub caravan_dirty: bool,
     pub(crate) caravan_loading: bool,
     pub(crate) caravan_again: bool,
     pub caravan_stale: bool,
