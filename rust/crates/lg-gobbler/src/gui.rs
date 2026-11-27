@@ -494,6 +494,9 @@ impl Gui {
         }
         self.app.server.tick();
         self.app.server.drop_log_tick(now);
+        if let Some(defs) = &self.app.missions.defs {
+            self.app.server.seasons_tick(defs, now);
+        }
         self.app.server.watch(now);
         self.app.server.mates_tick(now);
         // gUPE trades: checked against the partner's report; the verdicts go into the runs

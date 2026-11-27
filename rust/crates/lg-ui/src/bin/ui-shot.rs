@@ -415,6 +415,7 @@ fn main() {
                                 bag: lg_app::guild::bag_name(&f.bag),
                                 time: f.time.clone(),
                                 r#where: f.r#where.clone(),
+                                at: f.at,
                             },
                         )
                     })
@@ -476,6 +477,7 @@ fn main() {
                         bag: "White".into(),
                         time: format!("2026-01-01T{:02}:{:02}:{:02}", k / 3600, k / 60 % 60, k % 60),
                         r#where: "Lost Halls".into(),
+                        at: 0,
                     })
                     .collect();
                 first.total = first.items.len() as i64;
@@ -483,6 +485,7 @@ fn main() {
             app.server.guild.caravan = Some(Ok(Caravan {
                 guild: "Gilded Goblins".into(),
                 range: "all".into(),
+                season: Default::default(),
                 members: vec![
                     first,
                     member(2, "Valhirs", 30, 2, 90, 1),

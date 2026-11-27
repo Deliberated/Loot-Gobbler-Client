@@ -69,6 +69,32 @@ pub struct CaravanItem {
     pub bag: String,
     pub time: String,
     pub r#where: String,
+    /// The exact time (epoch ms), if the player's client sent it (0: only `time`, their local time, is known).
+    pub at: i64,
+}
+
+impl CaravanItem {
+    /// Whether it was found since `start` (epoch ms, 0: always): by its exact time when known, else by its time,
+    /// the player's local time read as UTC (a few hours off at most), as the server counts it.
+    pub fn since(&self, start: i64) -> bool {
+        if start <= 0 {
+            return true;
+        }
+        if self.at > 0 {
+            return self.at >= start;
+        }
+        let utc = crate::localtime::instant(start - start.rem_euclid(1000));
+        self.time.as_str() >= utc.trim_end_matches('Z')
+    }
+}
+
+/// The season running now, as the server knows it from the game: its names (the main one first), when it began
+/// (epoch ms; 0: no season before it is known, so everything so far is in it) and when it ends (0: not known yet).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CaravanSeason {
+    pub names: Vec<String>,
+    pub start: i64,
+    pub end: i64,
 }
 
 /// A caravan member's most played character in the range.
@@ -106,6 +132,8 @@ pub struct CaravanMember {
 pub struct Caravan {
     pub guild: String,
     pub range: String,
+    /// The season running now (servers from before seasons: none, so all of it).
+    pub season: CaravanSeason,
     pub members: Vec<CaravanMember>,
 }
 
@@ -204,6 +232,12 @@ pub fn caravan_of(j: &Json) -> Caravan {
     Caravan {
         guild: text(j.get("guild")),
         range: text(j.get("range")),
+        season: match j.get("season") {
+            Some(s @ Json::Object(_)) => {
+                CaravanSeason { names: list(s.get("names"), |n| text(Some(n))), start: long(s.get("start")), end: long(s.get("end")) }
+            }
+            _ => CaravanSeason::default(),
+        },
         members: list(j.get("members"), |m| CaravanMember {
             id: long(m.get("id")),
             ign: text(m.get("ign")),
@@ -219,6 +253,7 @@ pub fn caravan_of(j: &Json) -> Caravan {
                 bag: text(i.get("bag")),
                 time: text(i.get("time")),
                 r#where: text(i.get("where")),
+                at: long(i.get("at")),
             }),
             tally: list(m.get("tally"), tally_of),
             last_drop: opt_text(m.get("lastDrop")),
@@ -819,6 +854,8 @@ pub struct GuildState {
     /// The server's last caravan to save (with whose it is), and whether it is new.
     pub caravan_saved: Option<String>,
     pub caravan_dirty: bool,
+    /// The season end the caravan was asked again for (once it has passed: the new season's caravan).
+    pub(crate) season_reload: i64,
     pub(crate) caravan_loading: bool,
     pub(crate) caravan_again: bool,
     pub caravan_stale: bool,
@@ -914,6 +951,7 @@ impl GuildState {
             time: find.time.clone(),
             r#where: find.r#where.clone(),
             enchants: find.enchant_ids.as_ref().map_or(find.enchants, |e| e.len() as i32),
+            at: find.at,
         };
         if !m.tally.is_empty() || m.total == 0 {
             // older servers send no tally: the score comes from the items then

@@ -336,6 +336,8 @@ pub fn new_password_problem(password: &str, again: &str) -> Option<String> {
 }
 
 const KEY_URL: &str = "serverUrl";
+/// Telling the server the seasons failed: again after this long.
+const SEASONS_RETRY_MS: i64 = 300_000;
 const KEY_TOKEN: &str = "serverToken";
 
 /// Java `GobblerServer`: the server this client is connected to and the session on it. Calls go out as `jobs`,
@@ -373,6 +375,12 @@ pub struct Connection {
     pub loaded: u64,
     /// The Guild tab's leaderboard, drops and member profile.
     pub guild: crate::guild::GuildState,
+    /// The game's seasons last told to the server (with the server and account), and when to try again after a
+    /// failure.
+    seasons_sent: String,
+    seasons_next_at: i64,
+    /// The server knows no season caravan (from before seasons): the all-time one is asked.
+    caravan_all_time: bool,
     /// Your guildmates (Java `Guildmates`).
     pub mates: crate::guild::Mates,
     /// The Profile's guild card.
@@ -941,8 +949,18 @@ impl Connection {
                         self.guild.board = self.guild.board_wait.take().map(Ok);
                         self.guild_loaded();
                     }
+                    // servers from before seasons know no such range: the all-time caravan (until the next start)
+                    "caravan" if e.code() == "bad_request" && !self.caravan_all_time => {
+                        self.caravan_all_time = true;
+                        self.call("GET", "/guild/caravan?range=all", None, "caravan");
+                    }
                     "caravan" => self.caravan_done(Err(e)),
                     "droplog" => self.guild.log.failed(now_ms()),
+                    "seasons" => {
+                        // again in a while
+                        self.seasons_sent.clear();
+                        self.seasons_next_at = now_ms() + SEASONS_RETRY_MS;
+                    }
                     "upe" => self.upe_done(Err(e)),
                     t if t.starts_with("gupe:") => self.gupe_done(t[5..].parse().unwrap_or(0), None),
                     "pg-caravan" | "pg-maps" | "pg-facts" => self.profile_guild_done(tag, Err(e)),
@@ -1062,6 +1080,13 @@ impl Connection {
                     self.guild.version += 1;
                 }
             }
+            "seasons" => {
+                // a season the server had not known may have started: the caravan of the season again
+                let start = long(j.get("current").and_then(|c| c.get("start")));
+                if matches!(&self.guild.caravan_raw, Some(c) if c.season.start != start) {
+                    self.caravan_load();
+                }
+            }
             "upe" => self.upe_done(Ok(crate::guild::upe_board_of(&j))),
             t if t.starts_with("gupe:") => self.gupe_done(t[5..].parse().unwrap_or(0), Some(crate::guild::guild_upe_of(&j))),
             "pg-caravan" | "pg-maps" | "pg-facts" => self.profile_guild_done(tag, Ok(j)),
@@ -1140,7 +1165,35 @@ impl Connection {
 
     /// Once a frame: the guild's drop log brought up to date on this PC, a page at a time (every few seconds while
     /// more are waiting, else once a minute).
+    /// The game's seasons (from its missions) told to the server, whenever they or the account change: so it knows
+    /// when each season ends and the next begins.
+    pub fn seasons_tick(&mut self, seasons: &[crate::missions::Season], now: i64) {
+        if self.user.is_none() || self.state != State::Online || seasons.is_empty() || now < self.seasons_next_at {
+            return;
+        }
+        let rows = seasons.iter().filter(|s| s.end_date > 0 && s.available != 0).map(|s| {
+            crate::gson_out::Obj::new().int("id", s.id as i64).str("name", s.name.as_deref().unwrap_or("")).int("endDate", s.end_date).end()
+        });
+        let body = crate::gson_out::Obj::new().raw("seasons", Some(crate::gson_out::array(rows))).end();
+        let sent = format!("{}|{}|{body}", self.url, self.user.as_ref().map_or(0, |u| u.id));
+        if sent == self.seasons_sent {
+            return;
+        }
+        self.seasons_sent = sent;
+        self.call("POST", "/seasons", Some(body), "seasons");
+    }
+
     pub fn drop_log_tick(&mut self, now: i64) {
+        // the season over: the new one's caravan (starting at 0), once
+        if let Some(c) = &self.guild.caravan_raw
+            && c.season.end > 0
+            && now >= c.season.end
+            && self.guild.season_reload != c.season.end
+            && self.state == State::Online
+        {
+            self.guild.season_reload = c.season.end;
+            self.caravan_load();
+        }
         let log = &mut self.guild.log;
         if self.user.is_none() || self.state != State::Online || log.loading || now < log.next_at {
             return;
@@ -1184,7 +1237,8 @@ impl Connection {
             return;
         }
         self.guild.caravan_loading = true;
-        self.call("GET", "/guild/caravan?range=all", None, "caravan");
+        let range = if self.caravan_all_time { "all" } else { "season" };
+        self.call("GET", &format!("/guild/caravan?range={range}"), None, "caravan");
     }
 
     /// The guild's game mode runs, to compare them; asked while loading: once more afterwards.

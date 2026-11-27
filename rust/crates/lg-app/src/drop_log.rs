@@ -11,7 +11,7 @@ use std::path::Path;
 /// The most drops one answer brings.
 pub const PAGE: usize = 120;
 /// While more are waiting: the next page after this long (gentle on the server).
-pub const PAGE_EVERY_MS: i64 = 3_000;
+pub const PAGE_EVERY_MS: i64 = 1_000;
 /// Caught up: asked again after this long.
 pub const POLL_MS: i64 = 60_000;
 pub const FILE: &str = "guild_drops.json";
@@ -60,26 +60,28 @@ impl DropLog {
                 log.drops.push(LogDrop {
                     id: n(0),
                     user_id: n(1),
-                    item: CaravanItem { item_id: n(2) as i32, enchants: n(3) as i32, bag: s(4), time: s(5), r#where: s(6) },
+                    item: CaravanItem { item_id: n(2) as i32, enchants: n(3) as i32, bag: s(4), time: s(5), r#where: s(6), at: n(7) },
                 });
             }
         }
         log
     }
 
-    /// The copy as saved: compact rows of `[id, user, item, enchants, bag, time, where]`.
+    /// The copy as saved: compact rows of `[id, user, item, enchants, bag, time, where, at]` (`at`: the exact time,
+    /// 0 if not known; copies from before it have rows of seven).
     pub fn json(&self) -> String {
         let rows = self.drops.iter().map(|d| {
             let i = &d.item;
             format!(
-                "[{},{},{},{},{},{},{}]",
+                "[{},{},{},{},{},{},{},{}]",
                 d.id,
                 d.user_id,
                 i.item_id,
                 i.enchants,
                 gson_out::string(&i.bag),
                 gson_out::string(&i.time),
-                gson_out::string(&i.r#where)
+                gson_out::string(&i.r#where),
+                i.at
             )
         });
         gson_out::Obj::new()
@@ -136,6 +138,7 @@ impl DropLog {
                         bag: bag_name(&text(r.get("bag"))),
                         time: text(r.get("time")),
                         r#where: text(r.get("where")),
+                        at: long(r.get("at")),
                     },
                 });
                 self.after = id;
@@ -158,19 +161,20 @@ impl DropLog {
         self.next_at = now + POLL_MS;
     }
 
-    /// A member's items, newest first.
-    pub fn items(&self, user_id: i64) -> Vec<CaravanItem> {
-        let mut out: Vec<&LogDrop> = self.drops.iter().filter(|d| d.user_id == user_id).collect();
+    /// A member's items found since `start` (epoch ms, 0: all), newest first.
+    pub fn items(&self, user_id: i64, start: i64) -> Vec<CaravanItem> {
+        let mut out: Vec<&LogDrop> = self.drops.iter().filter(|d| d.user_id == user_id && d.item.since(start)).collect();
         out.sort_by(|a, b| b.item.time.cmp(&a.item.time).then(b.id.cmp(&a.id)));
         out.into_iter().map(|d| d.item.clone()).collect()
     }
 
-    /// The caravan's members (as the server sent them) with their items from the copy: all of them once it has
-    /// caught up; while it is still catching up (oldest first), the server's newest ones with the copy's older ones
-    /// before them, so what came already shows (also after a restart).
+    /// The caravan's members (as the server sent them) with their items of the season from the copy: all of them
+    /// once it has caught up; while it is still catching up (oldest first), the server's newest ones with the copy's
+    /// older ones before them, so what came already shows (also after a restart).
     pub fn fill(&self, caravan: &mut Caravan) {
+        let start = caravan.season.start;
         for m in &mut caravan.members {
-            let items = self.items(m.id);
+            let items = self.items(m.id, start);
             if self.caught_up {
                 // the server's list may already have a drop the copy has not yet
                 if items.len() >= m.items.len() {
@@ -224,6 +228,41 @@ mod tests {
     }
 
     #[test]
+    fn the_season_starts_the_caravan_over() {
+        use crate::guild::{CaravanMember, CaravanSeason};
+        let mut log = DropLog::default();
+        // drops 1..3 at 00:00:01..03; drop 3 also with its exact time, 2 s after the season began
+        let mut j = answer("Gob", "a", &[1, 2, 3], false);
+        let start = 1_798_761_600_000; // 2027-01-01T00:00:00Z
+        if let Json::Object(o) = &mut j
+            && let Some((_, Json::Array(drops))) = o.iter_mut().find(|(k, _)| k == "drops")
+            && let Some(Json::Object(d)) = drops.last_mut()
+        {
+            d.push(("at".into(), Json::Number((start + 2_000).to_string())));
+        }
+        log.take("s|1", &j, 0);
+        let member = || CaravanMember { id: 7, total: 3, ..Default::default() };
+        // the season began at 00:00:02 (by the times): drops 2 and 3
+        let mut c = Caravan {
+            members: vec![member()],
+            season: CaravanSeason { start: 1_767_225_602_000, ..Default::default() },
+            ..Default::default()
+        };
+        log.fill(&mut c);
+        assert_eq!(c.members[0].items.iter().map(|i| i.item_id).collect::<Vec<_>>(), vec![103, 102]);
+        // a season starting in 2027: only drop 3, by its exact time
+        let mut c = Caravan { members: vec![member()], season: CaravanSeason { start, ..Default::default() }, ..Default::default() };
+        log.fill(&mut c);
+        assert_eq!(c.members[0].items.iter().map(|i| i.item_id).collect::<Vec<_>>(), vec![103]);
+        // the exact time is kept in the copy
+        let dir = std::env::temp_dir().join(format!("lg-droplog-season-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(dir.join(FILE), log.json()).expect("write");
+        assert_eq!(DropLog::import(&dir).drops[2].item.at, start + 2_000);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn takes_pages_and_starts_over_for_another_log() {
         let mut log = DropLog::default();
         assert!(log.take("s|1", &answer("Gob", "a", &[1, 2], true), 0));
@@ -231,8 +270,8 @@ mod tests {
         log.asked = log.after;
         assert!(log.take("s|1", &answer("Gob", "a", &[3], false), 5));
         assert_eq!((log.after, log.caught_up, log.next_at, log.drops.len()), (3, true, 5 + POLL_MS, 3));
-        assert_eq!(log.items(7)[0].item_id, 103);
-        assert_eq!((log.items(7)[0].enchants, log.items(7)[0].bag.as_str()), (2, "White"));
+        assert_eq!(log.items(7, 0)[0].item_id, 103);
+        assert_eq!((log.items(7, 0)[0].enchants, log.items(7, 0)[0].bag.as_str()), (2, "White"));
         // saved and read back
         let dir = std::env::temp_dir().join(format!("lg-droplog-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dir");
