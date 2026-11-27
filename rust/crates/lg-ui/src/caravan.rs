@@ -1206,9 +1206,8 @@ impl CaravanView {
                         }
                         crate::guild::backdrop(&p2, Rect::from_min_size(sr.min + vec2(0.0, extra), vec2(sw, HEIGHT)), scene.phase, 1.0);
                         if SHOW_SATELLITE.load(std::sync::atomic::Ordering::Relaxed) {
-                            // drifting slowly along, high in the sky
-                            let drift = (scene.phase * 0.15) as f32 % 60.0;
-                            satellite(&p2, pos2(sr.left() + sw * 0.62 + drift, sr.top() + 48.0), 4.0, scene.phase);
+                            // still, high up in the sky towards the right
+                            satellite(&p2, pos2(sr.left() + (sw * 0.74).round(), sr.top() + 52.0), 3.0, scene.phase);
                         }
                         if !has {
                             return;
