@@ -12,6 +12,8 @@ pub struct Profile {
     pub st_sets_done: Option<Vec<i64>>,
     /// The exaltation changes of the last week (copied from the exalts record); None until copied.
     pub exalt_changes: Option<Vec<crate::exalt_store::Change>>,
+    /// The colour picked for your loot caravan balloon (0-8 of the palette); None: the first.
+    pub balloon: Option<i32>,
     /// Set when the file should be written.
     pub dirty: bool,
 }
@@ -45,6 +47,7 @@ impl Profile {
             if let Some(x) = gson::long(v.get("updatedAt")).ok()? {
                 p.updated_at = x;
             }
+            p.balloon = gson::int(v.get("balloon")).ok().flatten();
             p.st_sets_done = match v.get("stSetsDone") {
                 None | Some(Json::Null) => None,
                 Some(Json::Array(a)) => Some(a.iter().map(|x| gson::long(Some(x)).ok().flatten()).collect::<Option<Vec<_>>>()?),
@@ -67,6 +70,16 @@ impl Profile {
         }
         *self = Profile { dirty: true, ..theirs };
         Ok(true)
+    }
+
+    /// Your balloon's colour picked: synced to the server with the profile.
+    pub fn set_balloon(&mut self, colour: i32, now: i64) {
+        if self.balloon == Some(colour) {
+            return;
+        }
+        self.balloon = Some(colour);
+        self.updated_at = now;
+        self.dirty = true;
     }
 
     /// Java `update`: what the game shows of you; unknown parts stay as they were.

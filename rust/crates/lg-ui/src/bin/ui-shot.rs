@@ -443,6 +443,8 @@ fn main() {
                     items: items.into_iter().take(120).collect(),
                     tally: Vec::new(),
                     character: chars.get(ch % chars.len().max(1)).cloned(),
+                    // a few colours picked, one not
+                    balloon: (id % 4 != 1).then_some((id as i32 * 2) % 9),
                 }
             };
             // UI_SHOT_CARAVAN_ITEMS=<n>: the first wagon with n different collectibles, found one after the other

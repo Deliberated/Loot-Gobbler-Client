@@ -794,6 +794,7 @@ impl eframe::App for Gui {
                 lg_ui::window::Ask::ClearRuns => self.app.dps_history.clear(),
                 lg_ui::window::Ask::ClearCollection => self.app.collection.clear(),
                 lg_ui::window::Ask::ToggleChar(id, favorite) => self.app.characters.toggle(id, favorite, now_ms()),
+                lg_ui::window::Ask::BalloonColour(c) => self.app.profile.set_balloon(c, now_ms()),
                 lg_ui::window::Ask::UpeMark { char_id, on, mode, no_pet } => self.app.upe_mark(char_id, on, mode.as_deref(), no_pet),
                 lg_ui::window::Ask::UpeMode(char_id, mode) => self.app.upe_mode(char_id, &mode),
                 lg_ui::window::Ask::UpeNoPet(char_id, no_pet) => self.app.upe_no_pet(char_id, no_pet),

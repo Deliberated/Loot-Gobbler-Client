@@ -69,7 +69,29 @@ const HEAP_ROW: f32 = 5.5;
 const MOUTH_GAP: f32 = 26.0;
 const TETHER: f32 = 34.0;
 
-const GORES: [Color32; 5] = [rgb(0x9FB3AC), rgb(0xEDE6DA), rgb(0xC98A9A), rgb(0xEDE6DA), rgb(0x9FB3AC)];
+/// The balloon colours a player picks from (pastels): the middle gore's; the outer ones are a softer shade of it.
+pub const BALLOON_COLOURS: [Color32; 9] = [
+    rgb(0xC98A9A), // rose (the first)
+    rgb(0xE9B48F), // peach
+    rgb(0xE8D58A), // butter
+    rgb(0xA3D3AE), // mint
+    rgb(0x8FCFC6), // seafoam
+    rgb(0x95BEDD), // sky
+    rgb(0xB3A3D9), // lavender
+    rgb(0xD7A8CF), // lilac
+    rgb(0xE79F94), // coral
+];
+const BALLOON_CREAM: Color32 = rgb(0xEDE6DA);
+
+/// A balloon's five gores in a picked colour (None: the first, rose with sage sides).
+fn balloon_gores(colour: Option<i32>) -> [Color32; 5] {
+    let c = colour.and_then(|i| BALLOON_COLOURS.get(i as usize).copied());
+    let (middle, side) = match c {
+        None => (BALLOON_COLOURS[0], rgb(0x9FB3AC)),
+        Some(c) => (c, crate::theme::mix(c, rgb(0x8E9C98), 0.45)),
+    };
+    [side, BALLOON_CREAM, middle, BALLOON_CREAM, side]
+}
 
 /// Bag colours, rarest first: the order of the bag counts, and the pile order from the top down.
 const BAG_ORDER: [&str; 11] = ["White", "Orange", "Red", "Gold", "Teal", "Blue", "Purple", "Egg Basket", "Pink", "Brown", "Other"];
@@ -103,6 +125,8 @@ pub struct CaravanView {
     /// The scene's scroll offset and size last frame and its scale then; where in the view the pointer zoomed
     /// (while the zoom glides, that point stays under it).
     road: Option<(egui::Vec2, egui::Vec2, f32)>,
+    /// Your balloon clicked: the palette open there.
+    palette: Option<egui::Pos2>,
     zoom_anchor: Option<egui::Vec2>,
     asked_at: i64,
 }
@@ -264,6 +288,8 @@ fn block(painter: &egui::Painter, t: &T, x: f32, y: f32, w: f32, h: f32, fill: C
 #[derive(Default)]
 struct Hits {
     members: Vec<(Rect, i64)>,
+    /// The balloons' envelopes, by whose they are.
+    balloons: Vec<(Rect, i64)>,
     items: Vec<(Rect, i32, f64, bool)>,
 }
 
@@ -276,6 +302,8 @@ struct Scene<'a> {
     phase: f64,
     picked: i64,
     me: i64,
+    /// Your balloon's colour as picked here (before the server has it).
+    own_balloon: Option<i32>,
     gold: Color32,
     gold_hover: Color32,
     /// The Profile's own wagon: no score plate, the name in the middle.
@@ -633,10 +661,12 @@ impl Scene<'_> {
             .chain(ys.iter().rev().map(|dy| t.p(cx - half(*dy) - 3.0, ey + dy)))
             .collect();
         p.add(egui::Shape::convex_polygon(outline.clone(), INK, Stroke::NONE));
-        let n = GORES.len() as f32;
+        let colour = if m.id == self.me { self.own_balloon.or(m.balloon) } else { m.balloon };
+        let gores = balloon_gores(colour);
+        let n = gores.len() as f32;
         // a gore is bounded by meridians: x = cx + sin(k * pi/2) * half
         let at = |k: f32, dy: f32| cx + (k * std::f32::consts::FRAC_PI_2).sin() * half(dy);
-        for (g, col) in GORES.iter().enumerate() {
+        for (g, col) in gores.iter().enumerate() {
             let (a, b) = (-1.0 + 2.0 * g as f32 / n, -1.0 + 2.0 * (g as f32 + 1.0) / n);
             // one mesh down the gore (pieces side by side would show seams)
             let mut mesh = egui::Mesh::default();
@@ -651,11 +681,12 @@ impl Scene<'_> {
             }
             p.add(egui::Shape::mesh(mesh));
         }
-        for k in 1..GORES.len() {
+        for k in 1..gores.len() {
             let kk = -1.0 + 2.0 * k as f32 / n;
             let pts: Vec<Pos2> = ys.iter().map(|dy| t.p(at(kk, *dy), ey + dy)).collect();
             p.add(egui::Shape::line(pts, Stroke::new(1.5 * t.f, INK.gamma_multiply(0.7))));
         }
+        hits.balloons.push((Rect::from_points(&outline), m.id));
         p.add(egui::Shape::closed_line(outline, Stroke::new(t.f, INK)));
         block(p, t, cx - 12.0, ey - er - 6.0, 24.0, 9.0, WOOD_DARK);
         block(p, t, cx - 17.0, mouth - 3.0, 34.0, 8.0, WOOD_DARK);
@@ -745,8 +776,19 @@ pub fn small_wagon(
     const ZOOM: f32 = 0.5;
     const WAGON_SKY: f32 = 10.0;
     let painter = ui.painter();
-    let scene =
-        Scene { data, weights, riders: vec![m], walkers: Vec::new(), phase, picked: -1, me: m.id, gold, gold_hover: gold, small: true };
+    let scene = Scene {
+        data,
+        weights,
+        riders: vec![m],
+        walkers: Vec::new(),
+        phase,
+        picked: -1,
+        me: m.id,
+        own_balloon: None,
+        gold,
+        gold_hover: gold,
+        small: true,
+    };
     let scene_h = HEIGHT.max(scene.content_height() + 34.0 + 20.0);
     let width = (PAD + scene.content_width(painter) + PAD) * ZOOM;
     let content_top = ((scene_h - 34.0 - scene.content_height()) * ZOOM).floor();
@@ -832,6 +874,8 @@ impl CaravanView {
         let refresh = std::cell::Cell::new(false);
         let mut picked = self.picked;
         let mut new_zoom = None;
+        let own_colour = c.app.profile.balloon;
+        let mut palette_at: Option<egui::Pos2> = None;
         let (road_was, anchor) = (self.road, self.zoom_anchor);
         let mut road_now = None;
         let mut anchor_set: Option<egui::Vec2> = None;
@@ -877,6 +921,7 @@ impl CaravanView {
                         phase: phase(ui),
                         picked,
                         me,
+                        own_balloon: own_colour,
                         gold: p.gold,
                         gold_hover: p.gold_hover,
                         small: false,
@@ -988,6 +1033,12 @@ impl CaravanView {
                                     if resp.clicked() {
                                         open_item = Some(*id);
                                     }
+                                }
+                            } else if hits.balloons.iter().any(|h| h.1 == me && h.0.contains(pos)) {
+                                // your own balloon: click for its colours
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                if resp.clone().on_hover_text("Click: pick your balloon's colour").clicked() {
+                                    palette_at = Some(pos);
                                 }
                             } else if let Some((_, id)) = hits.members.iter().find(|h| h.0.contains(pos))
                                 && let Some(m) = members.iter().find(|m| m.id == *id)
@@ -1170,6 +1221,53 @@ impl CaravanView {
         if let Some(z) = new_zoom {
             self.zoom = Some(z);
             c.asks.push(Ask::Set("caravanZoom".into(), format!("{z:.3}")));
+        }
+        // the palette of balloon colours: one clicked is yours (synced with your profile); a click anywhere else
+        // closes it
+        if palette_at.is_some() {
+            self.palette = palette_at;
+        } else if let Some(at) = self.palette {
+            let mut picked_colour = None;
+            let shown = egui::Area::new(egui::Id::unique("lg-balloon-palette"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(at + vec2(12.0, -60.0))
+                .constrain(true)
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::new().fill(p.paper).stroke(Stroke::new(2.0, p.gold)).corner_radius(6.0).inner_margin(10.0).show(
+                        ui,
+                        |ui| {
+                            ui.label(egui::RichText::new("Your balloon").font(text(18.0)).color(p.ink));
+                            ui.add_space(6.0);
+                            let (area, _) = ui.allocate_exact_size(vec2(3.0 * 34.0 - 6.0, 3.0 * 34.0 - 6.0), Sense::hover());
+                            for (i, col) in BALLOON_COLOURS.iter().enumerate() {
+                                let r =
+                                    Rect::from_min_size(area.min + vec2((i % 3) as f32 * 34.0, (i / 3) as f32 * 34.0), vec2(28.0, 28.0));
+                                let resp = ui
+                                    .interact(r, ui.scope_id().with(("balloon-colour", i)), Sense::click())
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                let on = own_colour.unwrap_or(0) == i as i32;
+                                ui.painter().rect_filled(r, 4.0, *col);
+                                let ring = if on {
+                                    Stroke::new(3.0, p.gold)
+                                } else if resp.hovered() {
+                                    Stroke::new(2.0, p.ink)
+                                } else {
+                                    Stroke::new(1.0, Color32::from_black_alpha(140))
+                                };
+                                ui.painter().rect_stroke(r, 4.0, ring, StrokeKind::Outside);
+                                if resp.clicked() {
+                                    picked_colour = Some(i as i32);
+                                }
+                            }
+                        },
+                    );
+                });
+            if let Some(i) = picked_colour {
+                c.asks.push(Ask::BalloonColour(i));
+                self.palette = None;
+            } else if ui.input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|q| !shown.response.rect.contains(q))) {
+                self.palette = None;
+            }
         }
         if let Some(id) = open_item {
             crate::window::open_later(ui.ctx(), format!("Inventory:item:{id}"));

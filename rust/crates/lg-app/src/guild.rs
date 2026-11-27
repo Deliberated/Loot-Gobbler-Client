@@ -96,6 +96,8 @@ pub struct CaravanMember {
     pub tally: Vec<Tally>,
     pub last_drop: Option<String>,
     pub character: Option<CaravanCharacter>,
+    /// Their balloon's colour (0-8), if they picked one.
+    pub balloon: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -226,6 +228,10 @@ pub fn caravan_of(j: &Json) -> Caravan {
                 tex2: int(c.get("tex2"), 0),
                 fame: long(c.get("fame")),
             }),
+            balloon: match m.get("balloon") {
+                Some(Json::Number(_)) => Some(int(m.get("balloon"), 0)),
+                _ => None,
+            },
         }),
     }
 }
