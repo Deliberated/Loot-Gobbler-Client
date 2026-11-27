@@ -12,7 +12,8 @@ pub struct Profile {
     pub st_sets_done: Option<Vec<i64>>,
     /// The exaltation changes of the last week (copied from the exalts record); None until copied.
     pub exalt_changes: Option<Vec<crate::exalt_store::Change>>,
-    /// The colour picked for your loot caravan balloon (0-8 of the palette); None: the first.
+    /// The colours picked for your loot caravan balloon: the middle one (0-8 of the palette) and, from 9 up, the
+    /// sides' too (middle + 9 * (side + 1)); None: the first.
     pub balloon: Option<i32>,
     /// How your balloon is tied to your wagon (0-4); None: the first (two ropes).
     pub tether: Option<i32>,
@@ -76,11 +77,20 @@ impl Profile {
     }
 
     /// Your balloon's colour picked: synced to the server with the profile.
+    /// Every pick (the same colour again too) rolls the sides a new colour: never the middle one, nor the sides'
+    /// last.
     pub fn set_balloon(&mut self, colour: i32, now: i64) {
-        if self.balloon == Some(colour) {
-            return;
-        }
-        self.balloon = Some(colour);
+        const N: i64 = 9;
+        let colour = i64::from(colour).rem_euclid(N);
+        let last_side = self.balloon.filter(|b| *b >= N as i32).map(|b| i64::from(b) / N - 1);
+        let mut rnd = crate::java::JavaRandom::new(now);
+        let side = loop {
+            let s = (colour + 1 + i64::from(rnd.next_int(N as i32 - 1))) % N;
+            if Some(s) != last_side {
+                break s;
+            }
+        };
+        self.balloon = Some((colour + N * (side + 1)) as i32);
         self.updated_at = now;
         self.dirty = true;
     }
@@ -174,5 +184,25 @@ impl Profile {
             self.guild_rank,
             self.updated_at
         )
+    }
+}
+
+#[cfg(test)]
+mod balloon_tests {
+    use super::Profile;
+
+    #[test]
+    fn each_pick_rolls_new_sides() {
+        let mut p = Profile::default();
+        let mut last = None;
+        for t in 0..20 {
+            p.set_balloon(4, 1000 + t);
+            let b = p.balloon.expect("picked");
+            let (middle, side) = (b % 9, b / 9 - 1);
+            assert_eq!(middle, 4);
+            assert!(side != 4 && (0..9).contains(&side));
+            assert_ne!(Some(side), last, "the same sides twice");
+            last = Some(side);
+        }
     }
 }

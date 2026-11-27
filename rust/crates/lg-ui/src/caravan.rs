@@ -40,8 +40,8 @@ const GROUND: Color32 = rgb(0x4A3522);
 /// How many rows of items a wagon is piled up to: then they go up onto a hot air balloon tied to it (its driver
 /// riding up there with them), and the wagon fills up again below, wider now that its seat is free; and so on.
 pub static PILE_ROWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(15);
-/// Mockup: a satellite in the sky (where a season's loot will go). Off in the app.
-pub static SHOW_SATELLITE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// A satellite high in the sky (where a season's loot will go one day).
+pub static SHOW_SATELLITE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 /// How a balloon is tied to its wagon (each player picks: 0 two ropes, 1 one thick rope to a ring, 2 two chains,
 /// 3 two slack ropes, 4 a rope ladder). Pictures: every balloon in this style (none: as picked).
 pub static TETHER_STYLE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(usize::MAX);
@@ -186,12 +186,18 @@ fn tether_icon(p: &egui::Painter, r: Rect, style: usize) {
 /// picked in the middle, a second pastel on both sides, picked at random among the others but the same for that
 /// player and colour wherever it is drawn.
 fn balloon_gores(player: i64, colour: Option<i32>) -> [Color32; 5] {
-    let Some(i) = colour.filter(|i| (0..BALLOON_COLOURS.len() as i32).contains(i)) else {
+    let n = BALLOON_COLOURS.len() as i64;
+    let Some(v) = colour.map(i64::from).filter(|v| (0..n * (n + 1)).contains(v)) else {
         return [rgb(0x9FB3AC), BALLOON_CREAM, BALLOON_COLOURS[0], BALLOON_CREAM, rgb(0x9FB3AC)];
     };
-    let n = BALLOON_COLOURS.len() as i64;
-    let mut rnd = lg_app::java::JavaRandom::new(player.wrapping_mul(31).wrapping_add(i64::from(i)));
-    let other = (i64::from(i) + 1 + i64::from(rnd.next_int(n as i32 - 1))) % n;
+    // from 9 up the sides' colour comes with it (middle + 9 * (side + 1)); below, one picked for the player
+    let i = v % n;
+    let other = if v >= n {
+        v / n - 1
+    } else {
+        let mut rnd = lg_app::java::JavaRandom::new(player.wrapping_mul(31).wrapping_add(i));
+        (i + 1 + i64::from(rnd.next_int(n as i32 - 1))) % n
+    };
     let (middle, side) = (BALLOON_COLOURS[i as usize], BALLOON_COLOURS[other as usize]);
     [side, BALLOON_CREAM, middle, BALLOON_CREAM, side]
 }
@@ -1459,14 +1465,20 @@ impl CaravanView {
                         |ui| {
                             ui.label(egui::RichText::new("Your balloon").font(text(18.0)).color(p.ink));
                             ui.add_space(6.0);
-                            let (area, _) = ui.allocate_exact_size(vec2(3.0 * 34.0 - 6.0, 3.0 * 34.0 - 6.0), Sense::hover());
+                            // the colours spread over the box's width (that of the tethers' row)
+                            let full = TETHER_STYLES as f32 * 34.0 - 6.0;
+                            let tile_w = (full - 2.0 * 6.0) / 3.0;
+                            let (area, _) = ui.allocate_exact_size(vec2(full, 3.0 * 34.0 - 6.0), Sense::hover());
                             for (i, col) in BALLOON_COLOURS.iter().enumerate() {
-                                let r =
-                                    Rect::from_min_size(area.min + vec2((i % 3) as f32 * 34.0, (i / 3) as f32 * 34.0), vec2(28.0, 28.0));
+                                let r = Rect::from_min_size(
+                                    area.min + vec2((i % 3) as f32 * (tile_w + 6.0), (i / 3) as f32 * 34.0),
+                                    vec2(tile_w, 28.0),
+                                );
                                 let resp = ui
                                     .interact(r, ui.scope_id().with(("balloon-colour", i)), Sense::click())
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                let on = own_colour.unwrap_or(0) == i as i32;
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .on_hover_text("The middle in this colour; again: another colour for the sides");
+                                let on = own_colour.unwrap_or(0) % BALLOON_COLOURS.len() as i32 == i as i32;
                                 ui.painter().rect_filled(r, 4.0, *col);
                                 let ring = if on {
                                     Stroke::new(3.0, p.gold)
