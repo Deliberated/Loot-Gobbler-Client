@@ -374,6 +374,79 @@ impl Icons {
         Some(tex)
     }
 
+    /// A character wearing a piece of clothing (mockup): every pixel its mask marks as clothing takes the clothing's
+    /// pixel at the same place (the clothing area laid over the item's shape), shaded as a dye would be; the accessory
+    /// takes the item's second colour. The plain look where the character has no mask or the item no sprite.
+    pub fn dressed(&mut self, ctx: &egui::Context, data: &GameData, sprite: i32, armor: i32, size: u32) -> Option<TextureHandle> {
+        let key = format!("dressed-{sprite}-{armor}-{size}");
+        if let Some(t) = self.skins.get(&key) {
+            return Some(t.clone());
+        }
+        let colours = self.armor_look(data, armor);
+        let (Some(src), Some(mask), Some(item), Some((_, second))) =
+            (self.sprites.object(data, sprite), self.sprites.mask(data, sprite), self.sprites.object(data, armor), colours)
+        else {
+            return self.object(ctx, data, sprite, size);
+        };
+        let px = |im: &Image, x: u32, y: u32| -> [u8; 4] {
+            let i = ((y * im.w + x) * 4) as usize;
+            [im.rgba[i], im.rgba[i + 1], im.rgba[i + 2], im.rgba[i + 3]]
+        };
+        // the clothing area on the character, and the item's own shape (its coloured pixels, the outline aside)
+        let bounds = |w: u32, h: u32, on: &dyn Fn(u32, u32) -> bool| {
+            let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+            for y in 0..h {
+                for x in 0..w {
+                    if on(x, y) {
+                        (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+                    }
+                }
+            }
+            (x0 <= x1).then_some((x0, y0, x1, y1))
+        };
+        let coloured = |p: [u8; 4]| p[3] >= 128 && u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]) >= 90;
+        let cloth = |x: u32, y: u32| x < mask.w && y < mask.h && px(&mask, x, y)[0] > 0;
+        let (Some(cb), Some(ib)) = (bounds(src.w, src.h, &cloth), bounds(item.w, item.h, &|x, y| coloured(px(&item, x, y)))) else {
+            return self.object(ctx, data, sprite, size);
+        };
+        let main = |code: i32| [(code >> 16) as u8, (code >> 8) as u8, code as u8, 255];
+        let fill = main(colours.map_or(0, |c| c.0));
+        let shade = |t: [u8; 4], a: u8, k: u8| {
+            let f = |c: u8| (u32::from(c) * u32::from(k) / 255) as u8;
+            [f(t[0]), f(t[1]), f(t[2]), a]
+        };
+        let span = |a: u32, b: u32| (b - a + 1) as f32;
+        let mut rgba = Vec::with_capacity((src.w * src.h * 4) as usize);
+        for y in 0..src.h {
+            for x in 0..src.w {
+                let p = px(&src, x, y);
+                let m = if x < mask.w && y < mask.h { px(&mask, x, y) } else { [0; 4] };
+                let out = if m[0] > 0 {
+                    // the same place on the item
+                    let ix = ib.0 + (((x - cb.0) as f32 + 0.5) / span(cb.0, cb.2) * span(ib.0, ib.2)) as u32;
+                    let iy = ib.1 + (((y - cb.1) as f32 + 0.5) / span(cb.1, cb.3) * span(ib.1, ib.3)) as u32;
+                    let ip = px(&item, ix.min(ib.2), iy.min(ib.3));
+                    // lit as the item is (the dye mask's shading kept light)
+                    let t = if coloured(ip) { ip } else { fill };
+                    shade(t, p[3], m[0].max(200))
+                } else if m[1] > 0 {
+                    shade(main(second), p[3], m[1])
+                } else {
+                    p
+                };
+                rgba.extend_from_slice(&out);
+            }
+        }
+        let out = outlined(&Image { w: src.w, h: src.h, rgba }, size);
+        let tex = ctx.load_texture(
+            key.clone(),
+            ColorImage::from_rgba_unmultiplied([out.w as usize, out.h as usize], &out.rgba),
+            TextureOptions::NEAREST,
+        );
+        self.skins.insert(key, tex.clone());
+        Some(tex)
+    }
+
     /// The two colours a piece of clothing is mostly made of, as dye codes (solid colours): its most common colour (for
     /// the clothing, most of a character) and the next one clearly different from it (the accessory). The black
     /// outline and near-black shading left out; None for a sprite without colour.

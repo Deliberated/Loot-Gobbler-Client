@@ -2347,13 +2347,11 @@ impl InventoryView {
                             piece_pick = Some(None);
                         }
                         // a themed set with a look of its own: its character dyed so; else the skin (or class) as it is
-                        // (the look: the colours of the set's robe or armor)
-                        let look = (themed && THEMED_LOOKS.load(std::sync::atomic::Ordering::Relaxed))
-                            .then(|| icons.armor_look(data, s.pieces[2]))
-                            .flatten();
-                        let figure = match look {
-                            Some((t1, t2)) => icons.skin(ui.ctx(), data, s.skin, t1, t2, 64),
-                            None => icons.object(ui.ctx(), data, s.skin, 64),
+                        // (the look: the set's robe or armor put on the character)
+                        let figure = if themed && THEMED_LOOKS.load(std::sync::atomic::Ordering::Relaxed) {
+                            icons.dressed(ui.ctx(), data, s.skin, s.pieces[2], 64)
+                        } else {
+                            icons.object(ui.ctx(), data, s.skin, 64)
                         };
                         if s.skin != 0
                             && let Some(t) = figure
