@@ -681,7 +681,7 @@ impl InventoryView {
         {
             c.asks.push(crate::window::Ask::Set("collectionUpeColumn".into(), (!column_on).to_string()));
         }
-        const PAGES: [&str; 4] = ["Items", "ST Sets", "Keys", "Log"];
+        const PAGES: [&str; 5] = ["Items", "ST Sets", "Themed Sets", "Keys", "Log"];
         // ST Sets from Items: the two melt into one page; ST Sets again: the plain sets; Items: back to the items
         if let Some(i) = widgets::segmented(ui, &p, pos2(pages_x, all.top()), 36.0, &PAGES, self.page, false, &[]) {
             match (self.melt, i) {
@@ -694,7 +694,7 @@ impl InventoryView {
                     self.melt_exit = 1;
                     self.page = 1;
                 }
-                // on from the two melted to Keys or Log: the melted box pours into it, the melt simply gone
+                // on from the two melted to another page: the melted box pours into it, the melt simply gone
                 (true, _) if i >= 2 => {
                     self.melt = false;
                     self.melt_exit = 0;
@@ -817,7 +817,7 @@ impl InventoryView {
                 if whole {
                     self.reveal = Some(if sets { r.left() } else { r.right() });
                     if sets {
-                        self.st_sets(&mut child, c, rarity, body, false);
+                        self.st_sets(&mut child, c, rarity, body, false, false);
                     } else {
                         self.items(&mut child, c, rarity, body, false);
                     }
@@ -827,7 +827,7 @@ impl InventoryView {
                 if sets {
                     // a gap from the collection, as between the sections elsewhere
                     let r = Rect::from_min_max(pos2(r.left() + 8.0, r.top()), r.max);
-                    self.st_sets(&mut child, c, rarity, r, true);
+                    self.st_sets(&mut child, c, rarity, r, true, false);
                 } else {
                     self.items(&mut child, c, rarity, r, true);
                 }
@@ -839,9 +839,10 @@ impl InventoryView {
         }
         self.beat = None;
         match self.page {
-            1 => self.st_sets(ui, c, rarity, body, false),
-            2 => self.keys(ui, c, body),
-            3 => self.log(ui, c, body),
+            1 => self.st_sets(ui, c, rarity, body, false, false),
+            2 => self.st_sets(ui, c, rarity, body, false, true),
+            3 => self.keys(ui, c, body),
+            4 => self.log(ui, c, body),
             _ => self.items(ui, c, rarity, body, false),
         }
     }
@@ -2005,7 +2006,8 @@ impl InventoryView {
 
     /// The ST Sets page (Java `StSetsView`): a card per set with its four pieces, beside the progress, the sets one
     /// piece away and the sets per class.
-    fn st_sets(&mut self, ui: &mut Ui, c: &mut Ctx, rarity: &Rarity, body: Rect, grid_only: bool) {
+    /// `themed`: the Themed Sets page instead, built the same (no forge: the pieces are untiered items).
+    fn st_sets(&mut self, ui: &mut Ui, c: &mut Ctx, rarity: &Rarity, body: Rect, grid_only: bool, themed: bool) {
         const CARD_MIN_WIDTH: f32 = 330.0;
         const GAP: f32 = 8.0;
         const TILE: f32 = 44.0;
@@ -2014,7 +2016,7 @@ impl InventoryView {
         let data = app.world.data();
         let o = owned(app, self.upe_char);
         let has = |id: i32| o.set.contains(&id);
-        let sets = &data.st_sets;
+        let sets = if themed { &data.themed_sets } else { &data.st_sets };
         let n_of = |s: &lg_gamedata::st_sets::StSet| s.owned(&has);
         let token_of =
             |s: &lg_gamedata::st_sets::StSet| s.pieces.iter().find_map(|id| data.set_tokens.get(id).map(|t| t.token)).unwrap_or(0);
@@ -2025,7 +2027,7 @@ impl InventoryView {
         let run_focus = crate::focus::current(app, c.props).is_some();
         // the forge suggestions: off, as a collector (the best copy of each ST item kept), or with a backup kept too
         use lg_app::st_forge::{FREED_KEY, Mode};
-        let mode = Mode::of(c.props.get(Mode::KEY));
+        let mode = if themed { Mode::Off } else { Mode::of(c.props.get(Mode::KEY)) };
         let allowed = lg_app::st_forge::rarities(c.props.get(lg_app::st_forge::RARITIES_KEY));
         let mut next_rarities: Option<[bool; 5]> = None;
         let freed: std::collections::HashSet<i32> =
@@ -2050,7 +2052,7 @@ impl InventoryView {
             .iter()
             .filter(|s| {
                 // Tokens: only the sets the forge crafts from a token
-                let ok = self.st_filter != 1 || token_of(s) != 0;
+                let ok = themed || self.st_filter != 1 || token_of(s) != 0;
                 // a character in focus or picked in the column: its class's sets only
                 let focus_ok = class_only.as_deref().is_none_or(|k| s.class_name == k);
                 ok && focus_ok && self.st_class.as_ref().is_none_or(|k| *k == s.class_name)
@@ -2058,7 +2060,7 @@ impl InventoryView {
             .collect();
         shown.sort_by(|a, b| n_of(b).cmp(&n_of(a)).then(a.title.cmp(&b.title)));
         // a tour's set: picked from what this page counts and shows
-        if std::mem::take(&mut self.tour_pick) {
+        if !themed && std::mem::take(&mut self.tour_pick) {
             let pick = shown
                 .iter()
                 .find(|s| s.pieces.iter().any(|p| craftable.contains(p)))
@@ -2135,12 +2137,18 @@ impl InventoryView {
             ui,
             &p,
             main,
-            &match focus {
-                Some(ch) => format!("ST Sets · {}", ch.class_name),
-                None => "Collection · ST Sets".to_string(),
+            &match (focus, themed) {
+                (Some(ch), false) => format!("ST Sets · {}", ch.class_name),
+                (Some(ch), true) => format!("Themed Sets · {}", ch.class_name),
+                (None, false) => "Collection · ST Sets".to_string(),
+                (None, true) => "Collection · Themed Sets".to_string(),
             },
             fixed::GOLD,
             |ui, head| {
+                // themed sets: no tokens to filter by, nothing to forge
+                if themed {
+                    return;
+                }
                 let painter = ui.painter().clone();
                 let h = head.height();
                 let fw = widgets::segmented_width(&painter, &filters, true);
@@ -2158,7 +2166,7 @@ impl InventoryView {
                 }
             },
             |ui, r| {
-                egui::ScrollArea::vertical().id_salt("st-sets").show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt(if themed { "themed-sets" } else { "st-sets" }).show(ui, |ui| {
                     let top = ui.cursor().min;
                     let painter = ui.painter().clone();
                     let cw = ((r.width() - 12.0 - 20.0 - (cols - 1.0) * GAP) / cols).floor();
@@ -2405,7 +2413,9 @@ impl InventoryView {
                 });
             },
         );
-        self.st_filter = filter;
+        if !themed {
+            self.st_filter = filter;
+        }
         // a craft planned, or no longer
         match plan_click {
             Some(Ok(pl)) => self.st_planned.push(pl),
@@ -2514,7 +2524,7 @@ impl InventoryView {
         // the set clicked: what forging its missing pieces takes, and where those things are
         let chosen = self.st_selected.as_deref().and_then(|n| sets.iter().find(|s| s.name == n));
         let mut below = prog.bottom();
-        if let Some(set) = chosen {
+        if let Some(set) = chosen.filter(|_| !themed) {
             let plan = stock.plan(data, set, &has);
             let w = side.width() - 20.0 - 12.0;
             let content = forge_rows(ui, &p, &mut *c.icons, app, rarity, set, &plan, n_of(set), pos2(0.0, 0.0), w, false);

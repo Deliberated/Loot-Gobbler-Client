@@ -21,6 +21,7 @@ pub mod extract;
 pub mod items;
 pub mod sprites;
 pub mod st_sets;
+pub mod themed_sets;
 pub mod xml;
 
 use std::collections::{BTreeMap, HashMap};
@@ -130,6 +131,8 @@ pub struct GameData {
     pub dungeons: dungeons::Dungeons,
     /// The ST sets (Java: `StSets`).
     pub st_sets: Vec<st_sets::StSet>,
+    /// The themed sets (four untiered items around one look and class), shown as the ST sets are.
+    pub themed_sets: Vec<st_sets::StSet>,
     /// How hard each dungeon is, as the game rates it.
     pub difficulty: HashMap<String, f64>,
     /// Dungeon key (item id) -> the dungeon its portal leads to.
@@ -182,6 +185,8 @@ impl GameData {
         if let Some(s) = read("xml/equipmentsets.xml") {
             d.st_sets = st_sets::load(&s, &d.items);
         }
+        let themed = themed_sets::load(&d.items, |name| d.classes.iter().find(|c| c.name == name).map(|c| c.id));
+        d.themed_sets = themed;
         d.difficulty = difficulty::load(&assets.join("xml"));
         d.key_dungeons = difficulty::key_dungeons(&assets.join("xml"))
             .into_iter()

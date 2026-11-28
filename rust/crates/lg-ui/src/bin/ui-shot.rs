@@ -731,6 +731,13 @@ fn main() {
                             });
                         }
                     }
+                    // "Inventory:themed:set:<title>": Themed Sets with that set's bar open
+                    if let Some(title) = tab.strip_prefix("Inventory:themed:set:") {
+                        win.open("Inventory:themed");
+                        if let Some(s) = app.world.data().themed_sets.iter().find(|s| s.title == title) {
+                            win.inventory.st_selected = Some(s.name.clone());
+                        }
+                    }
                     // "Inventory:keys:<item id>": the Keys page with that key clicked
                     if let Some(k) = tab.strip_prefix("Inventory:keys:").and_then(|k| k.parse::<i32>().ok()) {
                         win.open("Inventory:keys");
