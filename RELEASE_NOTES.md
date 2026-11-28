@@ -1,7 +1,4 @@
-v0.0.8: 
-
-**Loot Caravan:** 
-- Drops you just uploaded show on your wagon right away, instead of up to a minute later
+v0.0.8: Themed Sets
 
 **Themed Sets:** 
 - ST Sets is now Sets: a toggle in its header switches between the ST sets and the 17 themed sets (four untiered items around one look and class each)
@@ -13,6 +10,9 @@ v0.0.8:
 - In a set's bar the shiny copies stand to the right of the regular ones
 - A click on a piece of a themed set picks its plain or its shiny version: that row framed, the other version's copies greyed out in the bar
 - Collector Mode covers the themed sets' pieces too, plain and shiny: the best copy is kept (gold lock), in Backup mode a second one (green lock, click to let it go), and only the rest is offered for feeding and the forge
+
+**Loot Caravan:** 
+- Drops you just uploaded show on your wagon right away, instead of up to a minute later
 
 **ST Sets:** 
 - Sets that change their skin by the ring worn (like the Shaman Necromancer) show their character again; a set without a skin shows its class
