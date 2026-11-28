@@ -708,10 +708,18 @@ fn main() {
                         win.inventory.melt = true;
                     }
                     // "Inventory:melt[:<set title>]": Items and ST Sets melted (that set clicked)
+                    // "Inventory:melt-themed[:<set title>]": the same with the themed sets
                     if let Some(rest) = tab.strip_prefix("Inventory:melt") {
                         win.open("Inventory");
                         win.inventory.melt = true;
-                        if let Some(s) = rest.strip_prefix(':').and_then(|t| app.world.data().st_sets.iter().find(|s| s.title == t)) {
+                        let (themed, rest) = match rest.strip_prefix("-themed") {
+                            Some(r) => (true, r),
+                            None => (false, rest),
+                        };
+                        win.inventory.melt_themed = themed;
+                        let data = app.world.data();
+                        let sets = if themed { &data.themed_sets } else { &data.st_sets };
+                        if let Some(s) = rest.strip_prefix(':').and_then(|t| sets.iter().find(|s| s.title == t)) {
                             win.inventory.st_selected = Some(s.name.clone());
                         }
                     }

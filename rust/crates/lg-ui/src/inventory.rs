@@ -52,8 +52,10 @@ pub struct InventoryView {
     st_bar_t: HashMap<String, f32>,
     /// Items and ST Sets melted into one page: the collection left, the sets right.
     pub melt: bool,
-    /// Where the melt goes when it ends: 0 back to Items, 1 on to ST Sets (the items slide out left).
+    /// Where the melt goes when it ends: 0 back to Items, 1 on to the sets (the items slide out left).
     pub melt_exit: usize,
+    /// The melt's sets: the themed ones (else the ST sets); its switch flips them.
+    pub melt_themed: bool,
     /// How far melted (0 apart, 1 one), moving towards `melt`.
     melt_t: f32,
     /// Parting from the melt: the moving edge the page it goes to is shown up to (its layout as it will stand).
@@ -507,45 +509,50 @@ fn heartbeat(elapsed: f64) -> Vec<f32> {
 /// Items and ST Sets melting into one tab (`t` 0 apart, 1 one; parting plays it backwards), drawn over the tabs: gold
 /// pours from Items over the gap into ST Sets, which fills from its left, then the gap closes into the one box with
 /// "ITEMS AND ST SETS".
-fn melt_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, t: f32, from_sets: bool) {
+fn melt_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, t: f32, from_sets: bool, themed: bool) {
     let painter = ui.painter().clone();
     let font = small();
     let w0 = jtext::width(&painter, "ITEMS", &font) + 30.0;
     let w1 = jtext::width(&painter, "ST SETS", &font) + 30.0;
+    let w2 = jtext::width(&painter, "THEMED SETS", &font) + 30.0;
     let r0 = Rect::from_min_size(at, vec2(w0, h));
     let r1 = Rect::from_min_size(pos2(at.x + w0 + 8.0, at.y), vec2(w1, h));
+    let r2 = Rect::from_min_size(pos2(r1.right() + 8.0, at.y), vec2(w2, h));
     let gold = p.gold;
     let ease = |v: f32| {
         let v = v.clamp(0.0, 1.0);
         v * v * (3.0 - 2.0 * v)
     };
-    // the two tabs drawn under it covered
-    painter.rect_filled(r0.union(r1).expand(1.0), 0.0, p.sand);
     let box_ = |r: Rect, fill: Color32, label: &str, ink: Color32| {
         painter.rect(r, 0.0, fill, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
         jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, label, &font, ink);
     };
     if t >= 0.9 {
-        let one = r0.union(r1);
+        let one = r0.union(r2);
+        painter.rect_filled(one.expand(1.0), 0.0, p.sand);
         painter.rect(one, 0.0, gold, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
         jtext::draw(
             &painter,
             one.center(),
             Align2::CENTER_CENTER,
-            "ITEMS AND ST SETS",
+            "ITEMS AND SETS",
             &font,
             p.on_accent.gamma_multiply(ease((t - 0.9) / 0.1)),
         );
         return;
     }
-    // from Items: Items gold, pouring right into ST Sets; from (or to) ST Sets: the other way
-    let (src, dst, src_l, dst_l) = if from_sets { (r1, r0, "ST SETS", "ITEMS") } else { (r0, r1, "ITEMS", "ST SETS") };
+    // the tabs drawn under it covered: Items and the sets' one (the other one shown plain)
+    let (sets, sets_l, other, other_l) = if themed { (r2, "THEMED SETS", r1, "ST SETS") } else { (r1, "ST SETS", r2, "THEMED SETS") };
+    painter.rect_filled(r0.union(r2).expand(1.0), 0.0, p.sand);
+    box_(other, p.paper, other_l, p.ink_soft);
+    // from Items: Items gold, pouring right into the sets; from (or to) the sets: the other way
+    let (src, dst, src_l, dst_l) = if from_sets { (sets, r0, sets_l, "ITEMS") } else { (r0, sets, "ITEMS", sets_l) };
     box_(src, gold, src_l, p.on_accent);
     box_(dst, p.paper, dst_l, p.ink_soft);
-    // the stream over the gap, thickening at the end until it closes it
+    // the stream over the gap from the side it comes from, thickening at the end until it closes it
     let stream = ease(t / 0.25);
     let sh = 6.0 + 24.0 * ease((t - 0.55) / 0.35);
-    let (a, b) = if from_sets { (r1.left() - 10.0 * stream, r1.left() + 1.5) } else { (r0.right() - 1.5, r0.right() + 10.0 * stream) };
+    let (a, b) = if from_sets { (sets.left() - 10.0 * stream, sets.left() + 1.5) } else { (r0.right() - 1.5, r0.right() + 10.0 * stream) };
     painter.rect_filled(Rect::from_min_max(pos2(a, r0.center().y - sh / 2.0), pos2(b, r0.center().y + sh / 2.0)), 3.0, gold);
     // the other filling from the side it is poured into, its front rounded
     let fill = ease((t - 0.2) / 0.5);
@@ -684,26 +691,29 @@ impl InventoryView {
             c.asks.push(crate::window::Ask::Set("collectionUpeColumn".into(), (!column_on).to_string()));
         }
         const PAGES: [&str; 5] = ["Items", "ST Sets", "Themed Sets", "Keys", "Log"];
-        // ST Sets from Items: the two melt into one page; ST Sets again: the plain sets; Items: back to the items
+        // ST Sets or Themed Sets from Items: they melt into one page (its switch flips the sets); a set page again: those
+        // sets plain; Items: back to the items
         if let Some(i) = widgets::segmented(ui, &p, pos2(pages_x, all.top()), 36.0, &PAGES, self.page, false, &[]) {
             match (self.melt, i) {
-                (false, 1) if self.page == 0 => {
+                (false, 1 | 2) if self.page == 0 => {
                     self.melt = true;
                     self.melt_exit = 0;
+                    self.melt_themed = i == 2;
                 }
-                (true, 1) => {
+                (true, 1 | 2) => {
                     self.melt = false;
                     self.melt_exit = 1;
-                    self.page = 1;
+                    self.melt_themed = i == 2;
+                    self.page = i;
                 }
-                // on from the two melted to another page: the melted box pours into it, the melt simply gone
-                (true, _) if i >= 2 => {
+                // on from the melt to Keys or Log: the melted box pours into it, the melt simply gone
+                (true, _) if i >= 3 => {
                     self.melt = false;
                     self.melt_exit = 0;
                     self.melt_t = 0.0;
                     self.reveal = None;
                     self.page = i;
-                    widgets::segmented_pour_merged(ui, pos2(pages_x, all.top()), &PAGES, 0, 1, "Items and ST Sets", i);
+                    widgets::segmented_pour_merged(ui, pos2(pages_x, all.top()), &PAGES, 0, 2, "Items and Sets", i);
                 }
                 (true, _) => {
                     self.melt = false;
@@ -712,9 +722,10 @@ impl InventoryView {
                 }
                 // from the plain ST Sets, Items: first the two melted (the items slide in from the left); Items again
                 // then the items alone
-                (false, 0) if self.page == 1 => {
+                (false, 0) if self.page == 1 || self.page == 2 => {
                     self.melt = true;
                     self.melt_exit = 1;
+                    self.melt_themed = self.page == 2;
                     self.page = 0;
                 }
                 _ => self.page = i,
@@ -729,15 +740,16 @@ impl InventoryView {
         let speed = widgets::POUR_S;
         self.melt_t = if self.melt_t < goal { (self.melt_t + dt / speed).min(goal) } else { (self.melt_t - dt / speed).max(goal) };
         let mt = self.melt_t * self.melt_t * (3.0 - 2.0 * self.melt_t);
-        if mt > 0.0 && self.page <= 1 {
+        if mt > 0.0 && self.page <= 2 {
             if self.melt && self.melt_t < 1.0 {
-                // melting in: gold flows on from the tab left into the other, the first staying filled; the two
+                // melting in: gold flows on from the tab left into the other, the first staying filled; the three
                 // show as one once it is there
-                let (from, to) = if self.melt_exit == 0 { (0, 1) } else { (1, 0) };
+                let sets_tab = if self.melt_themed { 2 } else { 1 };
+                let (from, to) = if self.melt_exit == 0 { (0, sets_tab) } else { (sets_tab, 0) };
                 widgets::pour_spread(ui, &p, pos2(pages_x, all.top()), 36.0, &PAGES, false, from, to, self.melt_t);
             } else {
                 // parting: the two run apart again from the side the sets are on
-                melt_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, mt, self.melt_exit == 1);
+                melt_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, mt, self.melt_exit == 1, self.melt_themed);
             }
         }
         // the forge resources, right-aligned on the same row: the regular side at the right, the seasonal one before it
@@ -782,8 +794,8 @@ impl InventoryView {
             }
         }
         // melted (or melting, or parting): the collection squeezed to the left, the sets coming in from the right;
-        // parting to ST Sets the collection slides out to the left
-        if mt > 0.0 && self.page <= 1 {
+        // parting to the sets the collection slides out to the left
+        if mt > 0.0 && self.page <= 2 {
             let mid = body.left() + (body.width() * 0.5).round();
             // from or to the plain ST Sets the items slide at the left; from or to Items the sets come and go at the right
             let (items_r, sets_r) = if self.melt_exit == 0 {
@@ -819,7 +831,8 @@ impl InventoryView {
                 if whole {
                     self.reveal = Some(if sets { r.left() } else { r.right() });
                     if sets {
-                        self.st_sets(&mut child, c, rarity, body, false, false);
+                        let themed = self.melt_themed;
+                        self.st_sets(&mut child, c, rarity, body, false, themed);
                     } else {
                         self.items(&mut child, c, rarity, body, false);
                     }
@@ -829,7 +842,8 @@ impl InventoryView {
                 if sets {
                     // a gap from the collection, as between the sections elsewhere
                     let r = Rect::from_min_max(pos2(r.left() + 8.0, r.top()), r.max);
-                    self.st_sets(&mut child, c, rarity, r, true, false);
+                    let themed = self.melt_themed;
+                    self.st_sets(&mut child, c, rarity, r, true, themed);
                 } else {
                     self.items(&mut child, c, rarity, r, true);
                 }
@@ -1146,7 +1160,7 @@ impl InventoryView {
             .beat
             .as_ref()
             .filter(|_| grid_only)
-            .and_then(|(n, _)| data.st_sets.iter().find(|s| s.name == *n))
+            .and_then(|(n, _)| data.st_sets.iter().chain(&data.themed_sets).find(|s| s.name == *n))
             .map(|s| s.pieces.to_vec())
             .unwrap_or_default();
         let beat_since = self.beat.as_ref().map_or(0.0, |b| b.1);
@@ -1449,6 +1463,7 @@ impl InventoryView {
         let mut side = side;
         // the Optimization section, always on top of the side; a click on it shows or hides the spare copies
         {
+            let was_melt = self.melt;
             let or = Self::opt_section(
                 ui,
                 &p,
@@ -1461,6 +1476,10 @@ impl InventoryView {
                 rarity,
                 &mut self.opt,
             );
+            // crafting melts in the ST sets
+            if self.melt && !was_melt {
+                self.melt_themed = false;
+            }
             side = Rect::from_min_max(pos2(side.left(), or.bottom() + 8.0), side.max);
         }
         let prog = Rect::from_min_size(
@@ -2149,6 +2168,7 @@ impl InventoryView {
         let filters = ["All", "Tokens"];
         let mut filter = self.st_filter.min(1);
         let mut next_mode: Option<Mode> = None;
+        let mut switch_to: Option<bool> = None;
         let mut freed_click: Option<i32> = None;
         let mut piece_pick: Option<Option<i32>> = None;
         let st_piece = self.st_piece;
@@ -2193,6 +2213,16 @@ impl InventoryView {
             },
             fixed::GOLD,
             |ui, head| {
+                // melted with the items: the switch between the ST and the themed sets, at the right
+                if grid_only {
+                    let names = ["ST", "Themed"];
+                    let sw = widgets::segmented_width(ui.painter(), &names, true);
+                    let at = pos2(head.right() - sw, head.top());
+                    if let Some(i) = widgets::segmented(ui, &p, at, head.height(), &names, usize::from(themed), true, &[]) {
+                        switch_to = Some(i == 1);
+                    }
+                    return;
+                }
                 // themed sets: no tokens to filter by, nothing to forge
                 if themed {
                     return;
@@ -2463,6 +2493,13 @@ impl InventoryView {
         );
         if !themed {
             self.st_filter = filter;
+        }
+        if let Some(t) = switch_to
+            && t != self.melt_themed
+        {
+            self.melt_themed = t;
+            self.st_selected = None;
+            self.st_piece = None;
         }
         // a craft planned, or no longer
         match plan_click {
