@@ -7,6 +7,11 @@ v0.0.8:
 - ST Sets is now Sets: a toggle in its header switches between the ST sets and the 17 themed sets (four untiered items around one look and class each)
 - The themed sets work like the ST sets: your progress per set, Collector Mode, and a click opens a bar with every copy of each piece and where it is
 - Items and Sets still melt into one page, with the same toggle; a clicked set's pieces beat in the collection
+- Each themed set shows its shiny version in a second row; pieces without a shiny version are left empty
+- A fully shiny set sparkles around its character, and its part of the By Class bar turns silver and sparkles
+
+**ST Sets:** 
+- Sets that change their skin by the ring worn (like the Shaman Necromancer) show their character again; a set without a skin shows its class
 
 **Keys:** 
 - Clicking a mystery key opens a bar below it with every key it can give, the ones you hold highlighted

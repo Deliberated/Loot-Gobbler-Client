@@ -55,9 +55,9 @@ fn main() {
     if std::env::var("UI_SHOT_BURN").is_ok() {
         lg_ui::caravan::ALWAYS_BURN.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    // UI_SHOT_SHINY=<n>: the themed sets with their shiny versions (mockups: 1 twin cards, 2 a second row)
-    if let Some(n) = std::env::var("UI_SHOT_SHINY").ok().and_then(|v| v.trim().parse::<usize>().ok()) {
-        lg_ui::inventory::SHINY_MOCKUP.store(n, std::sync::atomic::Ordering::Relaxed);
+    // UI_SHOT_SHINY=1: the themed sets with 3+ shiny pieces held count as fully shiny (their sparkles)
+    if std::env::var("UI_SHOT_SHINY").is_ok_and(|v| v.trim() == "1") {
+        lg_ui::inventory::SHINY_PREVIEW.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     // UI_SHOT_TETHER=<n>: the loot caravan balloons tied to their wagons in that style (mockups)
     if let Some(n) = std::env::var("UI_SHOT_TETHER").ok().and_then(|v| v.trim().parse::<usize>().ok()) {

@@ -98,6 +98,15 @@ fn parse(s: &Element, items: &Items) -> Result<Option<StSet>, Thrown> {
             skin = decode(e.attr_or_empty("skinType")).ok_or(Thrown)?;
         }
     }
+    // newer sets change the skin by which pieces are worn (`ActivateOnEquipCustom`, e.g. one per ring): the first
+    if skin == 0
+        && let Some(e) = s
+            .descendants("ActivateOnEquipCustom")
+            .into_iter()
+            .find(|e| e.text_content().trim() == "ChangeSkin" && !e.attr_or_empty("skinType").is_empty())
+    {
+        skin = decode(e.attr_or_empty("skinType")).unwrap_or(0);
+    }
     let mut bonus = String::new();
     for tag in ["ActivateOnEquip2", "ActivateOnEquip3", "ActivateOnEquipAll"] {
         let mut part = String::new();

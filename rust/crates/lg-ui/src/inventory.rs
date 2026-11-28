@@ -2127,24 +2127,24 @@ impl InventoryView {
             })
             .collect();
         shown.sort_by(|a, b| n_of(b).cmp(&n_of(a)).then(a.title.cmp(&b.title)));
-        let mock = if themed { SHINY_MOCKUP.load(std::sync::atomic::Ordering::Relaxed) } else { 0 };
+        // themed sets: their shiny versions in a second row (a piece without one: an empty slot)
+        let two_rows = themed;
         let shiny_pieces = |s: &lg_gamedata::st_sets::StSet| s.pieces.map(|id| data.shiny_of.get(&id).copied().unwrap_or(0));
-        let twins: Vec<lg_gamedata::st_sets::StSet> = if mock == 1 {
-            shown
-                .iter()
-                .map(|s| lg_gamedata::st_sets::StSet {
-                    name: format!("{} shiny", s.name),
-                    title: format!("{} · Shiny", s.title),
-                    pieces: shiny_pieces(s),
-                    ..(*s).clone()
-                })
+        let preview: std::collections::HashSet<i32> = if SHINY_PREVIEW.load(std::sync::atomic::Ordering::Relaxed) {
+            sets.iter()
+                .map(shiny_pieces)
+                .filter(|sh| sh.iter().filter(|id| **id != 0 && has(**id)).count() >= 3)
+                .flat_map(|sh| sh.into_iter().filter(|id| *id != 0))
                 .collect()
         } else {
-            Vec::new()
+            std::collections::HashSet::new()
         };
-        if mock == 1 {
-            shown = shown.iter().zip(&twins).flat_map(|(s, t)| [*s, t]).collect();
-        }
+        let shiny_have = |id: i32| id != 0 && (has(id) || preview.contains(&id));
+        // fully shiny: every piece that has a shiny version held as one (and there is at least one)
+        let shiny_done = |s: &lg_gamedata::st_sets::StSet| {
+            let sh = shiny_pieces(s);
+            sh.iter().any(|id| *id != 0) && sh.iter().all(|id| *id == 0 || shiny_have(*id))
+        };
         // a tour's set: picked from what this page counts and shows
         if !themed && std::mem::take(&mut self.tour_pick) {
             let pick = shown
@@ -2277,8 +2277,8 @@ impl InventoryView {
                     let painter = ui.painter().clone();
                     let cw = ((r.width() - 12.0 - 20.0 - (cols - 1.0) * GAP) / cols).floor();
                     let lh = jtext::height(&painter, &text(18.0));
-                    // the second row (mockup 2): the shiny pieces under the plain ones
-                    let figure_h = if mock == 2 { 2.0 * TILE + 6.0 } else { 72.0 };
+                    // the second row: the shiny pieces under the plain ones
+                    let figure_h = if two_rows { 2.0 * TILE + 6.0 } else { 72.0 };
                     let ch = 6.0 + figure_h + 2.0 + lh + 2.0 + 6.0;
                     if shown.is_empty() {
                         jtext::draw(
@@ -2329,16 +2329,13 @@ impl InventoryView {
                         }
                         let n = n_of(s);
                         let done = n == 4;
-                        // a shiny twin (mockup 1): silver, its pieces with no shiny version left empty
-                        let twin = mock == 1 && s.name.ends_with(" shiny");
-                        let (fill, edge) = match (twin, done) {
-                            (true, true) => (mix(SHINY, p.paper, 0.45), SHINY),
-                            (true, false) => (mix(SHINY, p.header, 0.88), mix(SHINY, Color32::BLACK, 0.4)),
-                            (false, true) => (mix(p.gold, p.paper, 0.45), p.gold),
-                            (false, false) => (p.header, Color32::BLACK),
-                        };
-                        painter.rect_filled(cr, 0.0, fill);
-                        painter.rect_stroke(cr, 0.0, Stroke::new(if done || twin { 2.0 } else { 1.0 }, edge), StrokeKind::Inside);
+                        painter.rect_filled(cr, 0.0, if done { mix(p.gold, p.paper, 0.45) } else { p.header });
+                        painter.rect_stroke(
+                            cr,
+                            0.0,
+                            Stroke::new(if done { 2.0 } else { 1.0 }, if done { p.gold } else { Color32::BLACK }),
+                            StrokeKind::Inside,
+                        );
                         // a click on the card: the side shows what forging its missing pieces takes (again: hidden)
                         let selected = selected_name.as_deref() == Some(s.name.as_str());
                         if ui
@@ -2361,7 +2358,7 @@ impl InventoryView {
                         }
                         // the four pieces beside the skin
                         let tx = cr.left() + 6.0 + 72.0 + 10.0;
-                        let ty = if mock == 2 { cr.top() + 6.0 } else { cr.top() + 6.0 + (72.0 - TILE) / 2.0 };
+                        let ty = if two_rows { cr.top() + 6.0 } else { cr.top() + 6.0 + (72.0 - TILE) / 2.0 };
                         for (k, id) in s.pieces.iter().enumerate() {
                             let tr = Rect::from_min_size(pos2(tx + k as f32 * (TILE + 6.0), ty), vec2(TILE, TILE));
                             // no shiny version of it: an empty dashed slot
@@ -2454,9 +2451,30 @@ impl InventoryView {
                                 piece_pick = Some(if selected && st_piece == Some(*id) { None } else { Some(*id) });
                             }
                         }
-                        // mockup 2: the shiny pieces in a second row, silver-framed
-                        if mock == 2 {
-                            for (k, id) in shiny_pieces(s).iter().enumerate() {
+                        // the shiny pieces in a second row, silver-framed; each row's count at its end; a set fully
+                        // shiny: sparkles around its figure
+                        if two_rows {
+                            let sh = shiny_pieces(s);
+                            let exist = sh.iter().filter(|id| **id != 0).count();
+                            let held = sh.iter().filter(|id| shiny_have(**id)).count();
+                            let cx = tx + 4.0 * (TILE + 6.0) + 2.0;
+                            if cr.right() - 8.0 - cx >= jtext::width(&painter, "4/4", &text(16.0)) {
+                                let f = text(16.0);
+                                jtext::draw(&painter, pos2(cx, ty + TILE / 2.0), Align2::LEFT_CENTER, &format!("{n}/4"), &f, p.ink);
+                                let (txt, col) = if exist == 0 {
+                                    ("-".to_string(), fixed::MUTED)
+                                } else {
+                                    (format!("{held}/{exist}"), mix(SHINY, p.ink, 0.25))
+                                };
+                                jtext::draw(&painter, pos2(cx, ty + TILE + 6.0 + TILE / 2.0), Align2::LEFT_CENTER, &txt, &f, col);
+                            }
+                            if shiny_done(s) {
+                                let fig =
+                                    Rect::from_center_size(pos2(cr.left() + 6.0 + 36.0, cr.top() + 6.0 + figure_h / 2.0), vec2(76.0, 86.0));
+                                sparkles(&painter, fig, 7, time, SHINY);
+                                ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+                            }
+                            for (k, id) in sh.iter().enumerate() {
                                 let tr = Rect::from_min_size(pos2(tx + k as f32 * (TILE + 6.0), ty + TILE + 6.0), vec2(TILE, TILE));
                                 if *id == 0 {
                                     no_shiny(&painter, tr);
@@ -2464,7 +2482,7 @@ impl InventoryView {
                                         .on_hover_text("No shiny version of this piece");
                                     continue;
                                 }
-                                let have = has(*id);
+                                let have = shiny_have(*id);
                                 painter.rect_filled(
                                     tr,
                                     0.0,
@@ -2503,11 +2521,8 @@ impl InventoryView {
                         }
                         // along the bottom: the name (underlined, smaller to fit), the class and count
                         let by = cr.bottom() - 6.0 - lh / 2.0 - 1.0;
-                        let cls = if mock == 2 {
-                            let sh = shiny_pieces(s);
-                            let have_sh = sh.iter().filter(|id| **id != 0 && has(**id)).count();
-                            let exist = sh.iter().filter(|id| **id != 0).count();
-                            format!("{}   {n} / 4  ·  shiny {have_sh} / {exist}", s.class_name)
+                        let cls = if two_rows {
+                            s.class_name.clone()
                         } else {
                             format!("{}{}", s.class_name, if done { String::new() } else { format!("   {n} / 4") })
                         };
@@ -2734,24 +2749,30 @@ impl InventoryView {
             |_, _| {},
             |ui, r| {
                 let painter = ui.painter();
-                let mut per: std::collections::BTreeMap<&str, (usize, usize)> = std::collections::BTreeMap::new();
+                let time = ui.input(|i| i.time);
+                // per class: complete, all, fully shiny (themed sets)
+                let mut per: std::collections::BTreeMap<&str, (usize, usize, usize)> = std::collections::BTreeMap::new();
                 for s in sets {
                     let v = per.entry(s.class_name.as_str()).or_default();
                     v.1 += 1;
                     if n_of(s) == 4 {
                         v.0 += 1;
                     }
+                    if themed && shiny_done(s) {
+                        v.2 += 1;
+                    }
                 }
                 let (x, w) = (r.left() + 10.0, r.width() - 20.0 - 12.0);
                 let mut y = r.top() + 8.0;
-                for (cls, (done, total)) in per {
+                for (cls, (done, total, shiny)) in per {
                     painter.rect_filled(
                         Rect::from_min_size(pos2(x, y + lh / 2.0 - 4.0), vec2(8.0, 8.0)),
                         0.0,
                         crate::classes::class_color(cls),
                     );
                     jtext::draw(painter, pos2(x + 16.0, y + lh / 2.0), Align2::LEFT_CENTER, cls, &text(18.0), p.ink);
-                    jtext::draw(painter, pos2(x + w, y + lh / 2.0), Align2::RIGHT_CENTER, &format!("{done} / {total}"), &text(18.0), p.ink);
+                    let count = if shiny > 0 { format!("{done} / {total}  ·  shiny {shiny}") } else { format!("{done} / {total}") };
+                    jtext::draw(painter, pos2(x + w, y + lh / 2.0), Align2::RIGHT_CENTER, &count, &text(18.0), p.ink);
                     y += lh + 2.0;
                     painter.rect_filled(Rect::from_min_size(pos2(x, y), vec2(w, 5.0)), 0.0, p.line);
                     painter.rect_filled(
@@ -2759,11 +2780,55 @@ impl InventoryView {
                         0.0,
                         p.gold,
                     );
+                    // the fully shiny sets' part: silver, sparkling
+                    if shiny > 0 && total > 0 {
+                        let sw = w * shiny as f32 / total as f32;
+                        let seg = Rect::from_min_size(pos2(x, y), vec2(sw, 5.0));
+                        painter.rect_filled(seg, 0.0, SHINY);
+                        // a few, each twinkling up now and then (not all at once)
+                        let n = ((sw / 90.0).round() as usize).clamp(1, 5);
+                        for k in 0..n {
+                            let t = ((time * 0.45 + k as f64 * 0.61) % 1.0) as f32;
+                            // lit only the first half of its cycle
+                            if t > 0.5 {
+                                continue;
+                            }
+                            let a = (t * 2.0 * std::f32::consts::PI).sin().max(0.0);
+                            let at = pos2(x + sw * (k as f32 + 0.5) / n as f32, y + 2.5);
+                            star(painter, at, 2.0 + 5.0 * a, Color32::WHITE.gamma_multiply(a));
+                        }
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+                    }
                     y += 5.0 + 5.0;
                 }
             },
         );
     }
+}
+
+/// Twinkling four-pointed sparkles around `r` (on the ellipse it spans), `n` of them, each growing and fading in its own
+/// time.
+fn sparkles(painter: &egui::Painter, r: Rect, n: usize, time: f64, color: Color32) {
+    for k in 0..n {
+        let a = k as f32 / n as f32 * std::f32::consts::TAU + 0.5;
+        let t = ((time * 0.8 + k as f64 * 0.37) % 1.0) as f32;
+        let grow = (t * std::f32::consts::PI).sin();
+        if grow < 0.05 {
+            continue;
+        }
+        let at = pos2(r.center().x + a.cos() * r.width() / 2.0, r.center().y + a.sin() * r.height() / 2.0);
+        star(painter, at, 2.0 + 5.0 * grow, color.gamma_multiply(0.4 + 0.6 * grow));
+    }
+}
+
+/// A four-pointed sparkle at `c`, its arms `size` long, a white heart.
+fn star(painter: &egui::Painter, c: egui::Pos2, size: f32, color: Color32) {
+    painter.line_segment([c - vec2(size, 0.0), c + vec2(size, 0.0)], Stroke::new(1.5, color));
+    painter.line_segment([c - vec2(0.0, size), c + vec2(0.0, size)], Stroke::new(1.5, color));
+    let d = size * 0.35;
+    painter.line_segment([c - vec2(d, d), c + vec2(d, d)], Stroke::new(1.0, color));
+    painter.line_segment([c - vec2(d, -d), c + vec2(d, -d)], Stroke::new(1.0, color));
+    painter.rect_filled(Rect::from_center_size(c, vec2(2.0, 2.0)), 0.0, Color32::WHITE.gamma_multiply(color.a() as f32 / 255.0));
 }
 
 /// A set's slot for a piece that has no shiny version: empty, a dashed edge.
@@ -3603,9 +3668,8 @@ struct BarLook {
     card_fill: Color32,
 }
 
-/// Mockups of the themed sets with their shiny versions: 0 off, 1 a shiny twin card beside each set, 2 the shiny pieces
-/// in a second row of the card.
-pub static SHINY_MOCKUP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Pictures: the themed sets of which 3 or more shiny pieces are held count as fully shiny (to show the sparkles).
+pub static SHINY_PREVIEW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// A shiny's silver.
 const SHINY: Color32 = Color32::from_rgb(0xC9, 0xD8, 0xE8);
 

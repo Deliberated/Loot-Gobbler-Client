@@ -186,6 +186,12 @@ impl GameData {
         d.problems.extend(problems);
         if let Some(s) = read("xml/equipmentsets.xml") {
             d.st_sets = st_sets::load(&s, &d.items);
+            // a set without a skin of its own (or one the data lacks): its class as it starts out
+            for set in &mut d.st_sets {
+                if set.skin == 0 || !d.objects.contains_key(&set.skin) {
+                    set.skin = d.classes.iter().find(|c| c.name == set.class_name).map_or(0, |c| c.id);
+                }
+            }
         }
         let themed = themed_sets::load(&d.items, |name| d.classes.iter().find(|c| c.name == name).map(|c| c.id));
         d.themed_sets = themed;
