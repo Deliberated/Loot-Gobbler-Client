@@ -4210,11 +4210,18 @@ fn st_bar(
         }
         let painter = if focus { painter.with_clip_rect(view.intersect(painter.clip_rect())) } else { painter.clone() };
         let cy = cy - off;
-        let mut dimmed: Vec<Rect> = Vec::new();
         for seasonal in [true, false] {
             let sx = x0;
             let top_s = if seasonal { cy } else { cy + seasonal_h + SIDE_GAP };
-            jtext::draw(&painter, pos2(sx, top_s), Align2::LEFT_TOP, if seasonal { "SEASONAL" } else { "REGULAR" }, &f16, fixed::MUTED);
+            // the side's caption in the middle of the column
+            jtext::draw(
+                &painter,
+                pos2((sx + col_right) / 2.0, top_s),
+                Align2::CENTER_TOP,
+                if seasonal { "SEASONAL" } else { "REGULAR" },
+                &f16,
+                fixed::MUTED,
+            );
             // the token count close under its caption; copies a little further down
             let mut y = top_s + lh16 + if forge.is_some() { 4.0 } else { 12.0 };
             let on_side = |h: &lg_app::loadout::Held| h.seasonal.is_none() || h.seasonal == Some(seasonal);
@@ -4309,17 +4316,16 @@ fn st_bar(
                 jtext::draw(&painter, pos2(sx, y), Align2::LEFT_TOP, "none", &f16, fixed::MUTED);
                 continue;
             }
-            // a version picked: the other one's copies dimmed
-            let rows_h = list.len().max(shinies.len()).min(max_rows) as f32 * (ICON_B + BAR_ROW_GAP);
+            // at the column's right edge (left of the next divider), at least a little away from the plain ones
             let shx = (col_right - 6.0 - (2.0 * ICON_B + 6.0)).max(sx + 2.0 * ICON_B + 10.0);
-            if let Some(shiny) = row {
-                let dim = if shiny {
-                    Rect::from_min_size(pos2(sx - 2.0, y - 2.0), vec2(2.0 * ICON_B + 10.0, rows_h + 2.0))
-                } else {
-                    Rect::from_min_size(pos2(shx - 3.0, y - 3.0), vec2(2.0 * ICON_B + 12.0, rows_h + 3.0))
-                };
-                dimmed.push(dim);
-            }
+            // a version picked: the other one's copies greyed out (drawn faint)
+            let mut faded = painter.clone();
+            faded.multiply_opacity(0.28);
+            let (plain_p, shiny_p) = match row {
+                Some(true) => (&faded, &painter),
+                Some(false) => (&painter, &faded),
+                None => (&painter, &painter),
+            };
             if let Some(sid) = shiny_id {
                 let mut sy = y;
                 for (n, h) in shinies.iter().enumerate() {
@@ -4335,10 +4341,9 @@ fn st_bar(
                         break;
                     }
                     let ir = Rect::from_min_size(pos2(shx, sy), vec2(ICON_B, ICON_B));
-                    item_icon(&painter, icons, ui, app, rarity, sid, h, ir);
-                    painter.rect_stroke(ir.expand(1.0), 2.0, Stroke::new(1.5, SHINY), StrokeKind::Outside);
+                    item_icon(shiny_p, icons, ui, app, rarity, sid, h, ir);
                     let pr = Rect::from_min_size(pos2(ir.right() + 6.0, sy), vec2(ICON_B, ICON_B));
-                    place_look(ui, &painter, icons, app, h, sid, pr, ("st-shiny-copy", sid, h.char_id, &h.slot, n));
+                    place_look(ui, shiny_p, icons, app, h, sid, pr, ("st-shiny-copy", sid, h.char_id, &h.slot, n));
                     sy += ICON_B + BAR_ROW_GAP;
                 }
             }
@@ -4351,9 +4356,9 @@ fn st_bar(
                     break;
                 }
                 let ir = Rect::from_min_size(pos2(sx, y), vec2(ICON_B, ICON_B));
-                item_icon(&painter, icons, ui, app, rarity, *id, h, ir);
+                item_icon(plain_p, icons, ui, app, rarity, *id, h, ir);
                 let pr = Rect::from_min_size(pos2(ir.right() + 6.0, y), vec2(ICON_B, ICON_B));
-                place_look(ui, &painter, icons, app, h, *id, pr, ("st-copy", *id, h.char_id, &h.slot, n));
+                place_look(ui, plain_p, icons, app, h, *id, pr, ("st-copy", *id, h.char_id, &h.slot, n));
                 y += ICON_B + BAR_ROW_GAP;
                 if mode == Mode::Off {
                     continue;
@@ -4382,9 +4387,6 @@ fn st_bar(
                     }
                 }
             }
-        }
-        for d in dimmed {
-            painter.rect_filled(d, 2.0, Color32::from_black_alpha(140));
         }
         // a piece clicked: the other columns a little darker; an item shown: all but its own column
         let dim = match show {
