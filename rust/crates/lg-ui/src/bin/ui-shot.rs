@@ -747,11 +747,17 @@ fn main() {
                             });
                         }
                     }
-                    // "Inventory:themed:set:<title>": Themed Sets with that set's bar open
-                    if let Some(title) = tab.strip_prefix("Inventory:themed:set:") {
+                    // "Inventory:themed:set:<title>[:shiny|:plain]": Themed Sets with that set's bar open (that version picked)
+                    if let Some(rest) = tab.strip_prefix("Inventory:themed:set:") {
                         win.open("Inventory:themed");
+                        let (title, row) = match rest.rsplit_once(':') {
+                            Some((t, "shiny")) => (t, Some(true)),
+                            Some((t, "plain")) => (t, Some(false)),
+                            _ => (rest, None),
+                        };
                         if let Some(s) = app.world.data().themed_sets.iter().find(|s| s.title == title) {
                             win.inventory.st_selected = Some(s.name.clone());
+                            win.inventory.st_row = row;
                         }
                     }
                     // "Inventory:keys:<item id>": the Keys page with that key clicked

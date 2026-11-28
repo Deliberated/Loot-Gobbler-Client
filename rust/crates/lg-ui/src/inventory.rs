@@ -39,6 +39,9 @@ pub struct InventoryView {
     pub st_selected: Option<String>,
     /// The piece of the set clicked whose copies its bar shows alone (None: all four).
     pub st_piece: Option<i32>,
+    /// A themed set's version picked by a click on one of its pieces: the shiny one (true) or the plain one (false);
+    /// its pieces framed, the other version's copies dimmed in the bar.
+    pub st_row: Option<bool>,
     /// An item in a set's bar clicked that is not of the set: it, the column it was in, its copy; shown in the next
     /// column (how far, fading in and out); the last one, for fading out.
     pub st_show: Option<(i32, usize, lg_app::loadout::Held)>,
@@ -1162,7 +1165,11 @@ impl InventoryView {
             .as_ref()
             .filter(|_| grid_only)
             .and_then(|(n, _)| data.st_sets.iter().chain(&data.themed_sets).find(|s| s.name == *n))
-            .map(|s| s.pieces.to_vec())
+            .map(|s| match self.st_row {
+                // the shiny version picked: its pieces (those there are)
+                Some(true) => s.pieces.iter().filter_map(|id| data.shiny_of.get(id).copied()).collect(),
+                _ => s.pieces.to_vec(),
+            })
             .unwrap_or_default();
         let beat_since = self.beat.as_ref().map_or(0.0, |b| b.1);
         // the optimization: the items you hold spare copies of
@@ -2190,7 +2197,9 @@ impl InventoryView {
         let mut switch_to: Option<bool> = None;
         let mut freed_click: Option<i32> = None;
         let mut piece_pick: Option<Option<i32>> = None;
+        let mut row_pick: Option<Option<bool>> = None;
         let st_piece = self.st_piece;
+        let st_row = self.st_row;
         // the bars: the set clicked opening, any other closing
         let dt = ui.input(|i| i.stable_dt).min(0.1);
         if let Some(n) = &self.st_selected {
@@ -2355,7 +2364,7 @@ impl InventoryView {
                         } else if shiny_done(s) {
                             let sh = shiny_pieces(s);
                             Some(std::array::from_fn(|k| if sh[k] != 0 { sh[k] } else { s.pieces[k] }))
-                        } else if done || all_looks {
+                        } else if two_rows || done || all_looks {
                             Some(s.pieces)
                         } else {
                             None
@@ -2463,10 +2472,16 @@ impl InventoryView {
                             if selected && st_piece == Some(*id) {
                                 painter.rect_stroke(tr.expand(2.0), 0.0, Stroke::new(3.0, p.gold_hover), StrokeKind::Inside);
                             }
-                            // click: the set's bar with this piece alone (again: all four)
+                            // click: the set's bar with this piece alone (again: all four); a themed set: its plain
+                            // version picked (again: neither)
                             if resp.clicked() {
                                 pick = Some(Some(s.name.clone()));
-                                piece_pick = Some(if selected && st_piece == Some(*id) { None } else { Some(*id) });
+                                if two_rows {
+                                    piece_pick = Some(None);
+                                    row_pick = Some(if selected && st_row == Some(false) { None } else { Some(false) });
+                                } else {
+                                    piece_pick = Some(if selected && st_piece == Some(*id) { None } else { Some(*id) });
+                                }
                             }
                         }
                         // the shiny pieces in a second row, silver-framed; each row's count at its end; a set fully
@@ -2525,9 +2540,27 @@ impl InventoryView {
                                 }
                                 painter.rect_stroke(tr, 0.0, Stroke::new(1.5, mix(SHINY, Color32::BLACK, 0.3)), StrokeKind::Inside);
                                 let name = data.items.item(*id).map_or(String::new(), |i| i.name.clone());
-                                ui.interact(tr, ui.scope_id().with(("shiny-piece", *id, k)), Sense::hover())
-                                    .on_hover_text(format!("{name} (shiny){}", if have { "" } else { " - missing" }));
+                                // a click: the shiny version picked (again: neither)
+                                if ui
+                                    .interact(tr, ui.scope_id().with(("shiny-piece", *id, k)), Sense::click())
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .on_hover_text(format!("{name} (shiny){}", if have { "" } else { " - missing" }))
+                                    .clicked()
+                                {
+                                    pick = Some(Some(s.name.clone()));
+                                    piece_pick = Some(None);
+                                    row_pick = Some(if selected && st_row == Some(true) { None } else { Some(true) });
+                                }
                             }
+                        }
+                        // the version picked: its four pieces framed (gold the plain, silver the shiny)
+                        if two_rows
+                            && selected
+                            && let Some(shiny) = st_row
+                        {
+                            let ry = if shiny { ty + TILE + 6.0 } else { ty };
+                            let row = Rect::from_min_size(pos2(tx, ry), vec2(4.0 * TILE + 3.0 * 6.0, TILE)).expand(3.0);
+                            painter.rect_stroke(row, 3.0, Stroke::new(2.5, if shiny { SHINY } else { p.gold_hover }), StrokeKind::Outside);
                         }
                         let token = token_of(s);
                         // the set: its name, its bonus, and the token the forge crafts its pieces from
@@ -2588,7 +2621,7 @@ impl InventoryView {
                         );
                         let done = n_of(shown[i]) == 4;
                         let card_fill = if done { mix(p.gold, p.paper, 0.45) } else { p.header };
-                        let look = BarLook { piece: st_piece, card, joint_x: jx, bar, full_h, t, mode, card_fill };
+                        let look = BarLook { piece: st_piece, card, joint_x: jx, bar, full_h, t, mode, card_fill, row: st_row };
                         let show = show_now.as_ref().map(|s| (s, show_t, show_off));
                         let out = st_bar(ui, &p, icons, app, rarity, shown[i], &stock, &has, look, show, &planned_now);
                         if out.plan.is_some() {
@@ -2681,7 +2714,14 @@ impl InventoryView {
             if sel.is_none() {
                 self.st_piece = None;
             }
+            // another set: no version picked (unless the click picked one)
+            if sel != self.st_selected {
+                self.st_row = None;
+            }
             self.st_selected = sel;
+        }
+        if let Some(r) = row_pick {
+            self.st_row = r;
         }
 
         if grid_only {
@@ -3599,14 +3639,19 @@ fn bar_body_h(
 ) -> f32 {
     let lh16 = jtext::height(painter, &text(16.0));
     let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
-    let copies = app.holdings.copies_of(&living, |id| set.pieces.contains(&id));
+    let shiny = |id: i32| app.world.data().shiny_of.get(&id).copied();
+    let copies = app.holdings.copies_of(&living, |id| set.pieces.contains(&id) || set.pieces.iter().any(|p| shiny(*p) == Some(id)));
     // a piece clicked scrolls in its column: the bar keeps its height
     let _ = one;
     let max = BAR_ROWS;
     let mut sides_h: f32 = 0.0;
     for id in set.pieces.iter() {
         let forge = plan.iter().any(|f| f.piece == *id);
-        let n = |seasonal: bool| copies.get(id).map_or(0, |c| c.iter().filter(|h| (h.seasonal == Some(true)) == seasonal).count());
+        // the plain copies beside the shiny ones: as many rows as the longer list
+        let count = |item: i32, seasonal: bool| {
+            copies.get(&item).map_or(0, |c| c.iter().filter(|h| (h.seasonal == Some(true)) == seasonal).count())
+        };
+        let n = |seasonal: bool| count(*id, seasonal).max(shiny(*id).map_or(0, |s| count(s, seasonal)));
         sides_h = sides_h.max(side_h(forge, n(true), max, lh16) + SIDE_GAP + side_h(forge, n(false), max, lh16));
     }
     BAR_TOP + 32.0 + BAR_GAP + sides_h + 26.0
@@ -3692,6 +3737,8 @@ struct BarLook {
     mode: lg_app::st_forge::Mode,
     /// The card's own colour, fading down into the bar.
     card_fill: Color32,
+    /// A version picked (shiny or plain): the other one's copies dimmed.
+    row: Option<bool>,
 }
 
 /// Pictures: every themed set's character wearing its set (else only the completed sets' do).
@@ -4017,7 +4064,7 @@ fn st_bar(
     planned: &[Planned],
 ) -> BarOut {
     use lg_app::st_forge::Mode;
-    let BarLook { piece, card, joint_x, bar, full_h, t, mode, card_fill } = look;
+    let BarLook { piece, card, joint_x, bar, full_h, t, mode, card_fill, row } = look;
     // the card gets its gold frame; the joint (and the fade) stand where the joint is
     let real_card = card;
     if t >= 1.0 {
@@ -4090,7 +4137,8 @@ fn st_bar(
     let painter = full.with_clip_rect(bar.shrink(2.0).intersect(full.clip_rect()));
     let data = app.world.data();
     let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
-    let copies = app.holdings.copies_of(&living, |id| set.pieces.contains(&id));
+    let shiny_of = |id: i32| data.shiny_of.get(&id).copied();
+    let copies = app.holdings.copies_of(&living, |id| set.pieces.contains(&id) || set.pieces.iter().any(|p| shiny_of(*p) == Some(id)));
     let plan = if mode == Mode::Off { Vec::new() } else { stock.plan(data, set, &|i| has(i)) };
     // a piece clicked: its column shows every copy with where it is in words (scrolled when they do not fit), the
     // others darkened
@@ -4134,7 +4182,10 @@ fn st_bar(
         // the seasonal side, then the regular one below it, each the column's width
         let focus = one == Some(*id);
         let max_rows = if focus { usize::MAX } else { BAR_ROWS };
-        let n_side = |seasonal: bool| copies.get(id).map_or(0, |c| c.iter().filter(|h| (h.seasonal == Some(true)) == seasonal).count());
+        let count = |item: i32, seasonal: bool| {
+            copies.get(&item).map_or(0, |c| c.iter().filter(|h| (h.seasonal == Some(true)) == seasonal).count())
+        };
+        let n_side = |seasonal: bool| count(*id, seasonal).max(shiny_of(*id).map_or(0, |s| count(s, seasonal)));
         let n_seasonal = n_side(true);
         let seasonal_h = side_h(forge.is_some(), n_seasonal, max_rows, lh16);
         // the column clicked: as tall as it needs, scrolled within the bar by the wheel (no scrollbar)
@@ -4159,6 +4210,7 @@ fn st_bar(
         }
         let painter = if focus { painter.with_clip_rect(view.intersect(painter.clip_rect())) } else { painter.clone() };
         let cy = cy - off;
+        let mut dimmed: Vec<Rect> = Vec::new();
         for seasonal in [true, false] {
             let sx = x0;
             let top_s = if seasonal { cy } else { cy + seasonal_h + SIDE_GAP };
@@ -4249,9 +4301,46 @@ fn st_bar(
             }
             let list: Vec<&lg_app::loadout::Held> =
                 copies.get(id).into_iter().flatten().filter(|h| (h.seasonal == Some(true)) == seasonal).collect();
-            if list.is_empty() {
+            // the shiny copies in a column of their own to the right, framed in silver
+            let shiny_id = shiny_of(*id);
+            let shinies: Vec<&lg_app::loadout::Held> =
+                shiny_id.and_then(|s| copies.get(&s)).into_iter().flatten().filter(|h| (h.seasonal == Some(true)) == seasonal).collect();
+            if list.is_empty() && shinies.is_empty() {
                 jtext::draw(&painter, pos2(sx, y), Align2::LEFT_TOP, "none", &f16, fixed::MUTED);
                 continue;
+            }
+            // a version picked: the other one's copies dimmed
+            let rows_h = list.len().max(shinies.len()).min(max_rows) as f32 * (ICON_B + BAR_ROW_GAP);
+            let shx = (col_right - 6.0 - (2.0 * ICON_B + 6.0)).max(sx + 2.0 * ICON_B + 10.0);
+            if let Some(shiny) = row {
+                let dim = if shiny {
+                    Rect::from_min_size(pos2(sx - 2.0, y - 2.0), vec2(2.0 * ICON_B + 10.0, rows_h + 2.0))
+                } else {
+                    Rect::from_min_size(pos2(shx - 3.0, y - 3.0), vec2(2.0 * ICON_B + 12.0, rows_h + 3.0))
+                };
+                dimmed.push(dim);
+            }
+            if let Some(sid) = shiny_id {
+                let mut sy = y;
+                for (n, h) in shinies.iter().enumerate() {
+                    if n == max_rows {
+                        jtext::draw(
+                            &painter,
+                            pos2(shx, sy),
+                            Align2::LEFT_TOP,
+                            &format!("+{} more", shinies.len() - max_rows),
+                            &fs,
+                            fixed::MUTED,
+                        );
+                        break;
+                    }
+                    let ir = Rect::from_min_size(pos2(shx, sy), vec2(ICON_B, ICON_B));
+                    item_icon(&painter, icons, ui, app, rarity, sid, h, ir);
+                    painter.rect_stroke(ir.expand(1.0), 2.0, Stroke::new(1.5, SHINY), StrokeKind::Outside);
+                    let pr = Rect::from_min_size(pos2(ir.right() + 6.0, sy), vec2(ICON_B, ICON_B));
+                    place_look(ui, &painter, icons, app, h, sid, pr, ("st-shiny-copy", sid, h.char_id, &h.slot, n));
+                    sy += ICON_B + BAR_ROW_GAP;
+                }
             }
             // a row per copy: the item with its enchantments, beside it where it is (one piece: also in words)
             let max = max_rows;
@@ -4265,10 +4354,6 @@ fn st_bar(
                 item_icon(&painter, icons, ui, app, rarity, *id, h, ir);
                 let pr = Rect::from_min_size(pos2(ir.right() + 6.0, y), vec2(ICON_B, ICON_B));
                 place_look(ui, &painter, icons, app, h, *id, pr, ("st-copy", *id, h.char_id, &h.slot, n));
-                if focus {
-                    let tt = widgets::fit(&painter, &place_of(app, h), &fs, half - 2.0 * ICON_B - 18.0);
-                    jtext::draw(&painter, pos2(pr.right() + 6.0, pr.center().y), Align2::LEFT_CENTER, &tt, &fs, p.ink_soft);
-                }
                 y += ICON_B + BAR_ROW_GAP;
                 if mode == Mode::Off {
                     continue;
@@ -4297,6 +4382,9 @@ fn st_bar(
                     }
                 }
             }
+        }
+        for d in dimmed {
+            painter.rect_filled(d, 2.0, Color32::from_black_alpha(140));
         }
         // a piece clicked: the other columns a little darker; an item shown: all but its own column
         let dim = match show {
