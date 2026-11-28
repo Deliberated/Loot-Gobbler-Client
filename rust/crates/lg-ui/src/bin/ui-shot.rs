@@ -55,6 +55,10 @@ fn main() {
     if std::env::var("UI_SHOT_BURN").is_ok() {
         lg_ui::caravan::ALWAYS_BURN.store(true, std::sync::atomic::Ordering::Relaxed);
     }
+    // UI_SHOT_LOOKS=1: the themed sets' characters in their looks (mockups)
+    if std::env::var("UI_SHOT_LOOKS").is_ok_and(|v| v.trim() == "1") {
+        lg_ui::inventory::THEMED_LOOKS.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     // UI_SHOT_SHINY=1: the themed sets with 3+ shiny pieces held count as fully shiny (their sparkles)
     if std::env::var("UI_SHOT_SHINY").is_ok_and(|v| v.trim() == "1") {
         lg_ui::inventory::SHINY_PREVIEW.store(true, std::sync::atomic::Ordering::Relaxed);

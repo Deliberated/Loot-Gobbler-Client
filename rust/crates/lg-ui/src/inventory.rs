@@ -2346,8 +2346,16 @@ impl InventoryView {
                             pick = Some(if selected { None } else { Some(s.name.clone()) });
                             piece_pick = Some(None);
                         }
+                        // a themed set with a look of its own: its character dyed so; else the skin (or class) as it is
+                        let look = (themed && THEMED_LOOKS.load(std::sync::atomic::Ordering::Relaxed))
+                            .then(|| data.themed_looks.get(&s.name))
+                            .flatten();
+                        let figure = match look {
+                            Some((t1, t2)) => icons.skin(ui.ctx(), data, s.skin, *t1, *t2, 64),
+                            None => icons.object(ui.ctx(), data, s.skin, 64),
+                        };
                         if s.skin != 0
-                            && let Some(t) = icons.object(ui.ctx(), data, s.skin, 64)
+                            && let Some(t) = figure
                         {
                             painter.image(
                                 t.id(),
@@ -2771,8 +2779,7 @@ impl InventoryView {
                         crate::classes::class_color(cls),
                     );
                     jtext::draw(painter, pos2(x + 16.0, y + lh / 2.0), Align2::LEFT_CENTER, cls, &text(18.0), p.ink);
-                    let count = if shiny > 0 { format!("{done} / {total}  ·  shiny {shiny}") } else { format!("{done} / {total}") };
-                    jtext::draw(painter, pos2(x + w, y + lh / 2.0), Align2::RIGHT_CENTER, &count, &text(18.0), p.ink);
+                    jtext::draw(painter, pos2(x + w, y + lh / 2.0), Align2::RIGHT_CENTER, &format!("{done} / {total}"), &text(18.0), p.ink);
                     y += lh + 2.0;
                     painter.rect_filled(Rect::from_min_size(pos2(x, y), vec2(w, 5.0)), 0.0, p.line);
                     painter.rect_filled(
@@ -3668,6 +3675,8 @@ struct BarLook {
     card_fill: Color32,
 }
 
+/// Mockups: the themed sets' characters in their looks (their class dyed in the set's colours), else the plain class.
+pub static THEMED_LOOKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Pictures: the themed sets of which 3 or more shiny pieces are held count as fully shiny (to show the sparkles).
 pub static SHINY_PREVIEW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// A shiny's silver.

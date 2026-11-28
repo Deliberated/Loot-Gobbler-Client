@@ -128,6 +128,34 @@ pub const THEMED: [(&str, &str, &str, [&str; 4], &str); 17] = [
     ),
 ];
 
+/// How a themed set's character could look (mockups, rough): its class dyed in two colours, the clothing's and the
+/// accessory's (RGB), taken from the set's items.
+pub const LOOKS: [(&str, u32, u32); 17] = [
+    ("Coral Huntress", 0xE8_6A5C, 0x2B_B3A3),
+    ("Crystal Necromancer", 0x6F_E0D8, 0xE8_E0C8),
+    ("Purified Priest", 0xF2_F0EA, 0xE8_C25A),
+    ("Ghostly Trickster", 0x9E_D8F0, 0x5A_6A7A),
+    ("Mad Scientist Sorcerer", 0x7A_E05A, 0x6A_3A9A),
+    ("Marble Paladin", 0xE6_E2DA, 0xD9_B44A),
+    ("Cultist Necromancer", 0xA0_202A, 0x2A_1A22),
+    ("Void Archer", 0x4A_2A8A, 0x1A_1428),
+    ("Spirit Mystic", 0x4A_9A4A, 0xF0_A0D0),
+    ("Esben Necromancer", 0x9A_CBE8, 0x3A_4A6A),
+    ("Chancellor Wizard", 0x6A_3AA0, 0xE0_B848),
+    ("Treasurer Trickster", 0xE8_C040, 0x2E_5A3A),
+    ("Archbishop Priest", 0xF0_ECE4, 0xB8_282E),
+    ("Chief Ninja", 0xC8_3A2A, 0xE8_B030),
+    ("Exalted Knight", 0xE8_C860, 0x3A_5AA8),
+    ("Esben Wizard", 0xB8_E0F0, 0x2A_4A7A),
+    ("Summer Solstice (Wizard)", 0xF0_9A2A, 0xF8_D848),
+];
+
+/// The looks by the themed set's name (`StSet::name`): its two dye codes (solid colours).
+pub fn looks() -> std::collections::HashMap<String, (i32, i32)> {
+    let solid = |rgb: u32| (0x0100_0000 | rgb) as i32;
+    LOOKS.iter().map(|(n, a, b)| (format!("{n} (themed)"), (solid(*a), solid(*b)))).collect()
+}
+
 /// Each item's shiny copy (the item showing the same name, labelled shiny), by the plain item.
 pub fn shiny_twins(items: &Items) -> std::collections::HashMap<i32, i32> {
     let mut plain: std::collections::HashMap<&str, i32> = std::collections::HashMap::new();
