@@ -205,7 +205,7 @@ impl CharactersView {
         self.stats_windows(ui, c);
     }
 
-    /// The stats windows: a click on a character opens its stats by the characters column for a few
+    /// The stats windows: a click on a character's portrait (or on the picked character) opens its stats by the characters column for a few
     /// seconds (counting down around the pin); the pin keeps it open (and lets it be dragged) until clicked again.
     fn stats_windows(&mut self, ui: &Ui, c: &mut Ctx) {
         const OPEN_FOR: f64 = 1.7;
@@ -407,14 +407,17 @@ impl CharactersView {
                         list.add_space(4.0);
                         for x in chars.iter() {
                             let y0 = list.cursor().top();
-                            if self.card(&mut list, &p, c.icons, app, x, gain(x), now) {
-                                // a click picks it (golden) and pops its stats up (not when the view is opened on it
-                                // from elsewhere: that only picks it)
+                            let (clicked, on_portrait) = self.card(&mut list, &p, c.icons, app, x, gain(x), now);
+                            if clicked {
+                                // a click picks it (golden); on its portrait, or on the picked one again, its stats pop
+                                // up (not when the view is opened on it from elsewhere: that only picks it)
+                                if on_portrait || self.selected == x.char_id {
+                                    let at = list.input(|i| i.pointer.interact_pos()).unwrap_or(list.cursor().min);
+                                    let col_right = list.max_rect().right();
+                                    let t = list.input(|i| i.time);
+                                    self.tips.open = Some((x.char_id, at, col_right, Rect::NOTHING, t));
+                                }
                                 self.selected = x.char_id;
-                                let at = list.input(|i| i.pointer.interact_pos()).unwrap_or(list.cursor().min);
-                                let col_right = list.max_rect().right();
-                                let t = list.input(|i| i.time);
-                                self.tips.open = Some((x.char_id, at, col_right, Rect::NOTHING, t));
                             }
                             if x.char_id == self.selected {
                                 let m = list.max_rect();
@@ -562,7 +565,8 @@ impl CharactersView {
     }
 
     /// One character's card (Java `card`); true when clicked.
-    fn card(&self, ui: &mut Ui, p: &Palette, icons: &mut Icons, app: &lg_app::App, c: &Char, gain: i64, now: i64) -> bool {
+    /// Gives whether it was clicked, and whether on the portrait.
+    fn card(&self, ui: &mut Ui, p: &Palette, icons: &mut Icons, app: &lg_app::App, c: &Char, gain: i64, now: i64) -> (bool, bool) {
         let painter = ui.painter().clone();
         let data = app.world.data();
         let w = ui.available_width();
@@ -799,7 +803,8 @@ impl CharactersView {
             let pet = c.pet_name.as_deref().filter(|n| !n.trim().is_empty()).map_or("Pet".to_string(), |n| format!("Pet: {n}"));
             widgets::tip(ui, Rect::from_min_size(pos2(x, mid - 18.0), vec2(36.0, 36.0)), ("pet", c.char_id), &pet);
         }
-        resp.clicked()
+        let on_portrait = resp.clicked() && ui.input(|i| i.pointer.interact_pos()).is_some_and(|q| pr.contains(q));
+        (resp.clicked(), on_portrait)
     }
 
     /// Java `EnchantBadge.draw`: the rarity sprite for the count, its bottom right at `at`, at `size` / 5 scale.

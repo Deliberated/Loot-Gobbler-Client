@@ -23,7 +23,7 @@ v0.0.8:
 - An x at the right of the search fields clears the search
 
 **Character stats:** 
-- A single click on a character opens its stats window (opening the Characters view on a character from elsewhere does not)
+- A single click on a character's portrait opens its stats window (opening the Characters view on a character from elsewhere does not)
 - Stats with exaltations read "32 | 8" instead of "32|8"
 
 **Item scores:** 
