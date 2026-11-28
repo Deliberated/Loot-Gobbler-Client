@@ -313,6 +313,37 @@ impl DungeonVisits {
         self.dirty = true;
     }
 
+    /// One run recorded twice (see [`crate::same_run`]): the copy that joined late, or was in for less time, or holds
+    /// less, goes (on a tie one of them); its being removed by you stays with the one kept. Whether any went.
+    pub fn without_copies(&mut self) -> bool {
+        let gone = crate::same_run::copies(
+            &self.visits,
+            |v| (v.dungeon.as_str(), v.start + v.duration_ms),
+            |v| (!v.late, v.duration_ms, detail(v)),
+        );
+        if !gone.contains(&true) {
+            return false;
+        }
+        // a removed copy keeps the run removed
+        for (i, g) in gone.iter().enumerate() {
+            if *g && self.visits[i].hidden {
+                let (dungeon, end) = (self.visits[i].dungeon.clone(), self.visits[i].start + self.visits[i].duration_ms);
+                if let Some(k) = self.visits.iter().enumerate().position(|(j, v)| {
+                    !gone[j] && v.dungeon == dungeon && (v.start + v.duration_ms - end).abs() <= crate::same_run::WINDOW_MS
+                }) {
+                    self.visits[k].hidden = true;
+                }
+            }
+        }
+        let mut k = 0;
+        self.visits.retain(|_| {
+            k += 1;
+            !gone[k - 1]
+        });
+        self.dirty = true;
+        true
+    }
+
     /// What the Java app kept (`dungeon_visits.json`), read only, then Java's checks at loading: late visits linked to
     /// their runs, late exaltations recovered. Without the file (Java's first start): a visit for every run kept.
     pub fn import(dir: &std::path::Path, dps: &DpsHistory, exalts: &crate::exalt_store::ExaltStore) -> DungeonVisits {
@@ -322,6 +353,7 @@ impl DungeonVisits {
                 d.visits = crate::gson::root_list(&text, read_visit).unwrap_or_default();
                 d.link_late_runs(dps);
                 d.late_exalts(exalts);
+                d.without_copies();
             }
             Err(_) => d.first_start(dps),
         }
@@ -709,6 +741,8 @@ impl DungeonVisits {
                 }
             }
         }
+        // the other PC's record of a run this one recorded too: one of them kept
+        changed |= self.without_copies();
         if changed {
             self.visits.sort_by_key(|v| std::cmp::Reverse(v.start));
             self.visits.truncate(MAX_VISITS);

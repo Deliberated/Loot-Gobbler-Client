@@ -28,3 +28,7 @@ v0.0.8:
 
 **Item scores:** 
 - White bag items that can never be enchanted now count as rarity 2.5 (between Rare and Legendary), instead of Common
+
+**No more doubled dungeons:** 
+- A dungeon run recorded twice (for example by two Loot Gobblers on your account) is kept only once: the same dungeon ending within 5 seconds counts as one run
+- The copy kept is the one that was not joined late, then the one with more time in the dungeon; duplicates already saved are cleaned up at start

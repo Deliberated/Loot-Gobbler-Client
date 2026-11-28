@@ -294,6 +294,7 @@ impl DpsHistory {
             h.runs.sort_by_key(|r| std::cmp::Reverse(r.start));
             h.dirty = true;
         }
+        h.without_copies();
         h
     }
 
@@ -322,12 +323,44 @@ impl DpsHistory {
                 }
             }
         }
+        // the other PC's record of a run this one recorded too: one of them kept
+        changed |= self.without_copies();
         if changed {
             self.runs.sort_by_key(|r| std::cmp::Reverse(r.start));
             self.runs.truncate(MAX_RUNS);
             self.dirty = true;
         }
         Ok(changed)
+    }
+
+    /// One run recorded twice (see [`crate::same_run`]): the shorter copy, or the one with fewer bosses, goes (on a tie
+    /// one of them); its being removed by you stays with the one kept. Whether any went.
+    pub fn without_copies(&mut self) -> bool {
+        let gone = crate::same_run::copies(
+            &self.runs,
+            |r| (r.dungeon.as_str(), r.start + r.duration_ms),
+            |r| (!r.guild_hall, r.duration_ms, r.bosses.len()),
+        );
+        if !gone.contains(&true) {
+            return false;
+        }
+        for (i, g) in gone.iter().enumerate() {
+            if *g && self.runs[i].hidden {
+                let (dungeon, end) = (self.runs[i].dungeon.clone(), self.runs[i].start + self.runs[i].duration_ms);
+                if let Some(k) = self.runs.iter().enumerate().position(|(j, r)| {
+                    !gone[j] && r.dungeon == dungeon && (r.start + r.duration_ms - end).abs() <= crate::same_run::WINDOW_MS
+                }) {
+                    self.runs[k].hidden = true;
+                }
+            }
+        }
+        let mut k = 0;
+        self.runs.retain(|_| {
+            k += 1;
+            !gone[k - 1]
+        });
+        self.dirty = true;
+        true
     }
 
     /// The newest saved run.

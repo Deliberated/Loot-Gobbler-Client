@@ -38,6 +38,7 @@ pub mod profile;
 pub mod properties;
 pub mod realm_character;
 pub mod resources;
+pub mod same_run;
 pub mod server;
 pub mod st_forge;
 pub mod sync;
