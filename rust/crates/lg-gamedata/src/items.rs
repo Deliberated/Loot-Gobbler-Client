@@ -83,6 +83,8 @@ pub struct Item {
     pub collection_icon: i32,
     /// Has a display name (unnamed items are unused test or event leftovers).
     pub named: bool,
+    /// The bag it drops in (`BagType`: 6 white); -1 not said.
+    pub bag_type: i32,
 }
 
 const LOOT_ACCELERATORS: [&str; 4] = ["DROPLOOTBOOST", "TIEREDLOOTBOOST", "ITEMSLOTCHANCE", "DROPDUSTVOLUMEBOOST"];
@@ -113,6 +115,7 @@ impl Item {
             second_chance: false,
             collection_icon: i32::MAX,
             named: false,
+            bag_type: -1,
         }
     }
 
@@ -511,6 +514,7 @@ impl Items {
                 }
             }
             "EnchantmentSlots" => item.enchant_slots = Some(enchant_slots(e)),
+            "BagType" => item.bag_type = e.text_content().trim().parse().unwrap_or(-1),
             "OnPlayerHitActivate" => {
                 // a proc that needs another item worn too (a set bonus, `mustWear`, e.g. Hallowed Hide's heal with
                 // Ruthven's Rosary) is no second chance on its own

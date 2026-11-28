@@ -389,12 +389,23 @@ fn tenths(x: f64) -> f64 {
     (x * 10.0 + 0.5).floor() / 10.0
 }
 
+/// The rarity a white bag item that can never be enchanted counts as: between Rare (2) and Legendary (3).
+pub const UNENCHANTABLE_RARITY: f64 = 2.5;
+
+/// An item's rarity for the score: its enchantments (0 common to 4 divine; -1 unknown counts as 0), or for a white
+/// bag item that cannot be enchanted at all, [`UNENCHANTABLE_RARITY`].
+fn rarity_of(data: &lg_gamedata::GameData, item: i32, enchants: i32) -> f64 {
+    match data.items.item(item) {
+        Some(i) if i.bag_type == 6 && i.enchant_slots.is_none() => UNENCHANTABLE_RARITY,
+        _ => f64::from(enchants.clamp(0, 4)),
+    }
+}
+
 /// The item's points when found in that place with that many enchantments (-1 = unknown, counts as 0).
 pub fn score(data: &lg_gamedata::GameData, w: &crate::server::ScoreWeights, item: i32, r#where: &str, enchants: i32) -> f64 {
     let feed = data.items.item(item).map_or(0, |i| i.feed_power.max(0));
     let difficulty = data.difficulty.get(r#where).copied().unwrap_or(0.0);
-    let rarity = enchants.clamp(0, 4);
-    tenths(w.feed_power * (f64::from(feed) / 100.0) + w.difficulty * difficulty + w.rarity * f64::from(rarity))
+    tenths(w.feed_power * (f64::from(feed) / 100.0) + w.difficulty * difficulty + w.rarity * rarity_of(data, item, enchants))
 }
 
 /// The points of everything in a tally (each item rounded first, so the total matches the items shown).
@@ -436,10 +447,20 @@ pub fn breakdown(data: &lg_gamedata::GameData, item: i32, r#where: &str, enchant
     const RARITY: [&str; 5] = ["Common", "Uncommon", "Rare", "Legendary", "Divine"];
     let fp = data.items.item(item).map_or(-1, |i| i.feed_power);
     let rarity = enchants.clamp(0, 4);
+    let unenchantable = rarity_of(data, item, enchants) == UNENCHANTABLE_RARITY;
     vec![
         ("FP:".into(), if fp < 0 { "0".into() } else { grouped(i64::from(fp)) }),
         ("Difficulty:".into(), data.difficulty.get(r#where).map_or("Unknown (0)".into(), |d| format(*d))),
-        ("Rarity:".into(), if enchants < 0 { "Unknown (0)".into() } else { format!("{} ({rarity})", RARITY[rarity as usize]) }),
+        (
+            "Rarity:".into(),
+            if unenchantable {
+                format!("Cannot be enchanted ({})", format(UNENCHANTABLE_RARITY))
+            } else if enchants < 0 {
+                "Unknown (0)".into()
+            } else {
+                format!("{} ({rarity})", RARITY[rarity as usize])
+            },
+        ),
     ]
 }
 
@@ -1056,6 +1077,34 @@ mod tests {
         let mut c = from_server(with);
         g.add_unsent(&mut c);
         assert_eq!((c.members[0].items.iter().filter(|i| i.item_id == 777).count(), g.unsent.len()), (1, 0));
+    }
+
+    /// A white bag item that can never be enchanted counts as rarity 2.5; one that can, as its enchantments.
+    #[test]
+    fn unenchantable_white_bag_items_count_as_rarity_two_and_a_half() {
+        let mut data = lg_gamedata::GameData::default();
+        let item = |id: i32, slots: bool| {
+            let mut i = lg_gamedata::items::Item::new(id);
+            i.bag_type = 6;
+            i.feed_power = 0;
+            if slots {
+                i.enchant_slots = Some(lg_gamedata::items::EnchantSlots {
+                    pool: String::new(),
+                    slot_chance: vec![1.0],
+                    seasonal_mod: 0.0,
+                    forge_mod: 0.0,
+                    dust: None,
+                    dust_amounts: Vec::new(),
+                });
+            }
+            i
+        };
+        data.items.insert(item(1, false));
+        data.items.insert(item(2, true));
+        let w = crate::server::ScoreWeights { feed_power: 0.0, difficulty: 0.0, rarity: 2.0 };
+        assert_eq!((score(&data, &w, 1, "", 0), score(&data, &w, 1, "", -1)), (5.0, 5.0));
+        assert_eq!((score(&data, &w, 2, "", 0), score(&data, &w, 2, "", 3)), (0.0, 6.0));
+        assert_eq!(breakdown(&data, 1, "", 0)[2].1, "Cannot be enchanted (2.5)");
     }
 
     #[test]

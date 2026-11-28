@@ -25,3 +25,6 @@ v0.0.8:
 **Character stats:** 
 - A single click on a character opens its stats window (opening the Characters view on a character from elsewhere does not)
 - Stats with exaltations read "32 | 8" instead of "32|8"
+
+**Item scores:** 
+- White bag items that can never be enchanted now count as rarity 2.5 (between Rare and Legendary), instead of Common
