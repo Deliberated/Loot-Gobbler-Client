@@ -120,13 +120,18 @@ impl Mode {
 pub const FREED_KEY: &str = "stBackupFreed";
 
 impl Stock {
-    /// Every copy of the set tokens and the ST items on your living characters and in your vaults; with `only_char`
-    /// (a game mode run's character) only that character's.
+    /// Every copy of the set tokens, the ST items and the themed sets' pieces (plain and shiny) on your living
+    /// characters and in your vaults (Collector Mode keeps the best of each, and a backup); with `only_char` (a game
+    /// mode run's character) only that character's.
     pub fn of(app: &crate::App, only_char: i32) -> Stock {
         let data = app.world.data();
         let tokens: std::collections::HashSet<i32> = data.set_tokens.values().map(|t| t.token).collect();
+        let themed: std::collections::HashSet<i32> =
+            data.themed_sets.iter().flat_map(|s| s.pieces).flat_map(|p| [Some(p), data.shiny_of.get(&p).copied()]).flatten().collect();
         let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();
-        let mut copies = app.holdings.copies_of(&living, |id| tokens.contains(&id) || data.items.item(id).is_some_and(|i| i.is_st()));
+        let mut copies = app
+            .holdings
+            .copies_of(&living, |id| tokens.contains(&id) || themed.contains(&id) || data.items.item(id).is_some_and(|i| i.is_st()));
         if only_char != 0 {
             for c in copies.values_mut() {
                 c.retain(|h| h.char_id == only_char);

@@ -4328,6 +4328,10 @@ fn st_bar(
             };
             if let Some(sid) = shiny_id {
                 let mut sy = y;
+                // Collector Mode's locks on the shiny copies too
+                let ranked_s = stock.ranked(sid);
+                let kept_s = stock.kept(sid);
+                let mut used_s = vec![false; ranked_s.len()];
                 for (n, h) in shinies.iter().enumerate() {
                     if n == max_rows {
                         jtext::draw(
@@ -4345,6 +4349,30 @@ fn st_bar(
                     let pr = Rect::from_min_size(pos2(ir.right() + 6.0, sy), vec2(ICON_B, ICON_B));
                     place_look(ui, shiny_p, icons, app, h, sid, pr, ("st-shiny-copy", sid, h.char_id, &h.slot, n));
                     sy += ICON_B + BAR_ROW_GAP;
+                    if mode == Mode::Off {
+                        continue;
+                    }
+                    let Some(rank) = ranked_s.iter().enumerate().position(|(i, c)| !used_s[i] && same(&c.held, h)) else { continue };
+                    used_s[rank] = true;
+                    let lock_at = ir.left_top() + vec2(6.0, 7.0);
+                    if rank == 0 {
+                        lock(shiny_p, lock_at, 12.0, p.gold, false);
+                    } else if rank == 1 && mode == Mode::Backup {
+                        let held = kept_s >= 2;
+                        lock(shiny_p, lock_at, 12.0, if held { fixed::GREEN } else { fixed::MUTED }, !held);
+                        let lr = Rect::from_center_size(lock_at, vec2(14.0, 16.0));
+                        let resp = ui
+                            .interact(lr, ui.scope_id().with(("st-backup-shiny", sid, n)), Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(if held {
+                                "Backup kept: click to let it go (it can be fed or dismantled)"
+                            } else {
+                                "Backup let go: click to keep it"
+                            });
+                        if resp.clicked() {
+                            toggled = Some(sid);
+                        }
+                    }
                 }
             }
             // a row per copy: the item with its enchantments, beside it where it is (one piece: also in words)
