@@ -432,41 +432,34 @@ impl Icons {
             let f = |c: u8| (u32::from(c) * u32::from(k) / 255) as u8;
             [f(t[0]), f(t[1]), f(t[2]), a]
         };
-        // the face's colours (unmasked pixels of the head's middle rows): the hand holding the weapon has them too
-        let mut face: Vec<[u8; 3]> = Vec::new();
-        for y in 2..4.min(src.h) {
-            for x in 1..6.min(src.w) {
-                let p = px(&src, x, y);
-                if mask_at(x, y)[0] == 0 && mask_at(x, y)[1] == 0 && coloured(p) && !face.contains(&[p[0], p[1], p[2]]) {
-                    face.push([p[0], p[1], p[2]]);
-                }
-            }
-        }
-        // the weapon: the right two columns' other pixels, their colours darkest to brightest
+        // the weapon: the right two columns' pixels outside the mask, but for the hand holding it (at the end of the
+        // arm, the row whose clothing reaches the second last column)
         let is_weapon = |x: u32, y: u32| {
             let p = px(&src, x, y);
-            x + 2 >= src.w && p[3] >= 128 && mask_at(x, y)[0] == 0 && mask_at(x, y)[1] == 0 && !face.contains(&[p[0], p[1], p[2]])
+            let hand = x + 1 == src.w && src.w >= 2 && mask_at(src.w - 2, y)[0] > 0;
+            x + 2 >= src.w && p[3] >= 128 && mask_at(x, y)[0] == 0 && mask_at(x, y)[1] == 0 && !hand
         };
-        let lum = |c: [u8; 3]| u32::from(c[0]) * 3 + u32::from(c[1]) * 6 + u32::from(c[2]);
-        let mut held: Vec<[u8; 3]> = Vec::new();
+        // its colours by how much of each it has: the most (the blade) takes the weapon's main colour, and so on
+        let mut held: Vec<([u8; 3], u32)> = Vec::new();
         for y in 0..src.h {
             for x in 0..src.w {
                 let p = px(&src, x, y);
-                if is_weapon(x, y) && !held.contains(&[p[0], p[1], p[2]]) {
-                    held.push([p[0], p[1], p[2]]);
+                if is_weapon(x, y) {
+                    match held.iter_mut().find(|(c, _)| *c == [p[0], p[1], p[2]]) {
+                        Some((_, n)) => *n += 1,
+                        None => held.push(([p[0], p[1], p[2]], 1)),
+                    }
                 }
             }
         }
-        held.sort_by_key(|c| lum(*c));
+        held.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        // the weapon's colours, the colourful ones (not white, grey or black) first
+        let colourful = |c: [u8; 3]| c.iter().max().copied().unwrap_or(0) - c.iter().min().copied().unwrap_or(0) >= 50;
         let mut theirs = weapon_colours.clone();
-        theirs.sort_by_key(|c| lum(*c));
+        theirs.sort_by_key(|c| !colourful(*c));
         let weapon_colour = |c: [u8; 3]| -> Option<[u8; 3]> {
-            if theirs.is_empty() {
-                return None;
-            }
-            let i = held.iter().position(|h| *h == c)?;
-            let k = if held.len() < 2 { theirs.len() / 2 } else { i * (theirs.len() - 1) / (held.len() - 1) };
-            Some(theirs[k])
+            let i = held.iter().position(|(h, _)| *h == c)?;
+            theirs.get(i.min(theirs.len().saturating_sub(1))).copied()
         };
         let shield_b = shield.as_ref().and_then(item_shape);
         let mut rgba = Vec::with_capacity((src.w * src.h * 4) as usize);

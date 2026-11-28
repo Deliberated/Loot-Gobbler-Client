@@ -9,6 +9,7 @@ v0.0.8:
 - Items and Sets still melt into one page, with the same toggle; a clicked set's pieces beat in the collection
 - Each themed set shows its shiny version in a second row; pieces without a shiny version are left empty
 - A fully shiny set sparkles around its character, and its part of the By Class bar turns silver and sparkles
+- A completed themed set's character wears it: its robe or armor on the body, its weapon's colours on the weapon (a Knight's shield drawn as the set's); a fully shiny set shows the shiny look instead
 
 **ST Sets:** 
 - Sets that change their skin by the ring worn (like the Shaman Necromancer) show their character again; a set without a skin shows its class

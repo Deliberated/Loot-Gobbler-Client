@@ -2347,25 +2347,23 @@ impl InventoryView {
                             piece_pick = Some(None);
                         }
                         // a themed set with a look of its own: its character dyed so; else the skin (or class) as it is
-                        // the looks (mockup): the character wearing the set, beside each row (the plain pieces, the
-                        // shiny ones; a piece without a shiny version as it is)
-                        let dressed = two_rows && THEMED_LOOKS.load(std::sync::atomic::Ordering::Relaxed);
-                        if dressed && s.skin != 0 {
-                            let shiny = shiny_pieces(s);
-                            let shiny = std::array::from_fn(|k| if shiny[k] != 0 { shiny[k] } else { s.pieces[k] });
-                            for (row, pieces) in [s.pieces, shiny].into_iter().enumerate() {
-                                if let Some(t) = icons.dressed(ui.ctx(), data, s.skin, pieces, 48) {
-                                    let y = cr.top() + 6.0 + row as f32 * (TILE + 6.0) + TILE / 2.0;
-                                    painter.image(
-                                        t.id(),
-                                        Rect::from_center_size(pos2(cr.left() + 6.0 + 36.0, y), vec2(48.0, 48.0)),
-                                        uv(),
-                                        Color32::WHITE,
-                                    );
-                                }
-                            }
-                        }
-                        let figure = if dressed { None } else { icons.object(ui.ctx(), data, s.skin, 64) };
+                        // a themed set completed: its character wearing it (fully shiny: the shiny pieces, a piece
+                        // without a shiny version as it is; that before the plain set); else the class as it is
+                        let all_looks = THEMED_LOOKS.load(std::sync::atomic::Ordering::Relaxed);
+                        let wearing = if !two_rows {
+                            None
+                        } else if shiny_done(s) {
+                            let sh = shiny_pieces(s);
+                            Some(std::array::from_fn(|k| if sh[k] != 0 { sh[k] } else { s.pieces[k] }))
+                        } else if done || all_looks {
+                            Some(s.pieces)
+                        } else {
+                            None
+                        };
+                        let figure = match wearing {
+                            Some(pieces) => icons.dressed(ui.ctx(), data, s.skin, pieces, 64),
+                            None => icons.object(ui.ctx(), data, s.skin, 64),
+                        };
                         if s.skin != 0
                             && let Some(t) = figure
                         {
@@ -3696,13 +3694,12 @@ struct BarLook {
     card_fill: Color32,
 }
 
-/// Mockups: the themed sets' characters in their looks (their class dyed in the colours of the set's robe or armor),
-/// else the plain class.
+/// Pictures: every themed set's character wearing its set (else only the completed sets' do).
 pub static THEMED_LOOKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Pictures: the themed sets of which 3 or more shiny pieces are held count as fully shiny (to show the sparkles).
 pub static SHINY_PREVIEW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// The rarity badges on the sets' pieces: half again their own size.
-const SET_BADGE: f32 = 7.5;
+/// The rarity badges on the sets' pieces: a little bigger than their own size.
+const SET_BADGE: f32 = 6.0;
 /// A shiny's silver.
 const SHINY: Color32 = Color32::from_rgb(0xC9, 0xD8, 0xE8);
 
