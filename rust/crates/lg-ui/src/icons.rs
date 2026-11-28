@@ -374,6 +374,34 @@ impl Icons {
         Some(tex)
     }
 
+    /// The two colours a piece of clothing is mostly made of, as dye codes (solid colours): its most common colour (for
+    /// the clothing, most of a character) and the next one clearly different from it (the accessory). The black
+    /// outline and near-black shading left out; None for a sprite without colour.
+    pub fn armor_look(&mut self, data: &GameData, item: i32) -> Option<(i32, i32)> {
+        let im = self.sprites.object(data, item)?;
+        // colours in steps of 16, counted
+        let mut counts: HashMap<[u8; 3], (u32, [u32; 3])> = HashMap::new();
+        for px in im.rgba.chunks(4) {
+            let (r, g, b, a) = (px[0], px[1], px[2], px[3]);
+            if a < 128 || u32::from(r) + u32::from(g) + u32::from(b) < 90 {
+                continue;
+            }
+            let e = counts.entry([r / 16, g / 16, b / 16]).or_insert((0, [0; 3]));
+            e.0 += 1;
+            e.1[0] += u32::from(r);
+            e.1[1] += u32::from(g);
+            e.1[2] += u32::from(b);
+        }
+        let mut ranked: Vec<(u32, [u8; 3])> =
+            counts.values().map(|(n, sum)| (*n, [(sum[0] / n) as u8, (sum[1] / n) as u8, (sum[2] / n) as u8])).collect();
+        ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        let main = ranked.first()?.1;
+        let far = |a: [u8; 3], b: [u8; 3]| a.iter().zip(b).map(|(x, y)| (i32::from(*x) - i32::from(y)).abs()).sum::<i32>() > 90;
+        let second = ranked.iter().map(|(_, c)| *c).find(|c| far(*c, main)).unwrap_or(main);
+        let code = |c: [u8; 3]| 0x0100_0000 | (i32::from(c[0]) << 16) | (i32::from(c[1]) << 8) | i32::from(c[2]);
+        Some((code(main), code(second)))
+    }
+
     /// A character's look greyed out as Java shows a disabled picture (FlatLaf's dark theme `Component.grayFilter`:
     /// grey, contrast down 70 %, brightness down 20 %, the transparency kept), e.g. a lost game mode run.
     pub fn skin_faded(

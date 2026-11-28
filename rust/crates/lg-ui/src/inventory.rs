@@ -2347,11 +2347,12 @@ impl InventoryView {
                             piece_pick = Some(None);
                         }
                         // a themed set with a look of its own: its character dyed so; else the skin (or class) as it is
+                        // (the look: the colours of the set's robe or armor)
                         let look = (themed && THEMED_LOOKS.load(std::sync::atomic::Ordering::Relaxed))
-                            .then(|| data.themed_looks.get(&s.name))
+                            .then(|| icons.armor_look(data, s.pieces[2]))
                             .flatten();
                         let figure = match look {
-                            Some((t1, t2)) => icons.skin(ui.ctx(), data, s.skin, *t1, *t2, 64),
+                            Some((t1, t2)) => icons.skin(ui.ctx(), data, s.skin, t1, t2, 64),
                             None => icons.object(ui.ctx(), data, s.skin, 64),
                         };
                         if s.skin != 0
@@ -3675,7 +3676,8 @@ struct BarLook {
     card_fill: Color32,
 }
 
-/// Mockups: the themed sets' characters in their looks (their class dyed in the set's colours), else the plain class.
+/// Mockups: the themed sets' characters in their looks (their class dyed in the colours of the set's robe or armor),
+/// else the plain class.
 pub static THEMED_LOOKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Pictures: the themed sets of which 3 or more shiny pieces are held count as fully shiny (to show the sparkles).
 pub static SHINY_PREVIEW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

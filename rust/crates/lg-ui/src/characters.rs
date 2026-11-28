@@ -205,7 +205,7 @@ impl CharactersView {
         self.stats_windows(ui, c);
     }
 
-    /// The stats windows: a click on the picked character opens its stats by the characters column for a few
+    /// The stats windows: a click on a character opens its stats by the characters column for a few
     /// seconds (counting down around the pin); the pin keeps it open (and lets it be dragged) until clicked again.
     fn stats_windows(&mut self, ui: &Ui, c: &mut Ctx) {
         const OPEN_FOR: f64 = 1.7;
@@ -408,15 +408,13 @@ impl CharactersView {
                         for x in chars.iter() {
                             let y0 = list.cursor().top();
                             if self.card(&mut list, &p, c.icons, app, x, gain(x), now) {
-                                // the first click picks it (golden); on the picked one its stats pop up
-                                if self.selected == x.char_id {
-                                    let at = list.input(|i| i.pointer.interact_pos()).unwrap_or(list.cursor().min);
-                                    let col_right = list.max_rect().right();
-                                    let t = list.input(|i| i.time);
-                                    self.tips.open = Some((x.char_id, at, col_right, Rect::NOTHING, t));
-                                } else {
-                                    self.selected = x.char_id;
-                                }
+                                // a click picks it (golden) and pops its stats up (not when the view is opened on it
+                                // from elsewhere: that only picks it)
+                                self.selected = x.char_id;
+                                let at = list.input(|i| i.pointer.interact_pos()).unwrap_or(list.cursor().min);
+                                let col_right = list.max_rect().right();
+                                let t = list.input(|i| i.time);
+                                self.tips.open = Some((x.char_id, at, col_right, Rect::NOTHING, t));
                             }
                             if x.char_id == self.selected {
                                 let m = list.max_rect();
@@ -1337,7 +1335,7 @@ fn stats_grid(ui: &mut Ui, c: &Char, app: &lg_app::App, face: Option<egui::Textu
                 18.0,
                 Color32::from_gray(170),
             );
-            let value = if pots[i] == 0 { base[i].to_string() } else { format!("{}|{}", base[i], pots[i]) };
+            let value = if pots[i] == 0 { base[i].to_string() } else { format!("{} | {}", base[i], pots[i]) };
             let bonus =
                 exalts.as_ref().and_then(|e| e.get(EXALT_AT[i])).map_or(0, |&v| lg_app::exalt_store::level(v) * if i < 2 { 5 } else { 1 });
             // the game's boost holds the exaltations too
