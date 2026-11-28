@@ -2347,12 +2347,25 @@ impl InventoryView {
                             piece_pick = Some(None);
                         }
                         // a themed set with a look of its own: its character dyed so; else the skin (or class) as it is
-                        // (the look: the set's robe or armor put on the character)
-                        let figure = if themed && THEMED_LOOKS.load(std::sync::atomic::Ordering::Relaxed) {
-                            icons.dressed(ui.ctx(), data, s.skin, s.pieces[2], 64)
-                        } else {
-                            icons.object(ui.ctx(), data, s.skin, 64)
-                        };
+                        // the looks (mockup): the character wearing the set, beside each row (the plain pieces, the
+                        // shiny ones; a piece without a shiny version as it is)
+                        let dressed = two_rows && THEMED_LOOKS.load(std::sync::atomic::Ordering::Relaxed);
+                        if dressed && s.skin != 0 {
+                            let shiny = shiny_pieces(s);
+                            let shiny = std::array::from_fn(|k| if shiny[k] != 0 { shiny[k] } else { s.pieces[k] });
+                            for (row, pieces) in [s.pieces, shiny].into_iter().enumerate() {
+                                if let Some(t) = icons.dressed(ui.ctx(), data, s.skin, pieces, 48) {
+                                    let y = cr.top() + 6.0 + row as f32 * (TILE + 6.0) + TILE / 2.0;
+                                    painter.image(
+                                        t.id(),
+                                        Rect::from_center_size(pos2(cr.left() + 6.0 + 36.0, y), vec2(48.0, 48.0)),
+                                        uv(),
+                                        Color32::WHITE,
+                                    );
+                                }
+                            }
+                        }
+                        let figure = if dressed { None } else { icons.object(ui.ctx(), data, s.skin, 64) };
                         if s.skin != 0
                             && let Some(t) = figure
                         {

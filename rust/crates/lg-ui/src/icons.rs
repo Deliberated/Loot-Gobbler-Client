@@ -374,25 +374,33 @@ impl Icons {
         Some(tex)
     }
 
-    /// A character wearing a piece of clothing (mockup): every pixel its mask marks as clothing takes the clothing's
-    /// pixel at the same place (the clothing area laid over the item's shape), shaded as a dye would be; the accessory
-    /// takes the item's second colour. The plain look where the character has no mask or the item no sprite.
-    pub fn dressed(&mut self, ctx: &egui::Context, data: &GameData, sprite: i32, armor: i32, size: u32) -> Option<TextureHandle> {
-        let key = format!("dressed-{sprite}-{armor}-{size}");
+    /// A character wearing a set (mockup), `pieces` its weapon, ability, armor and ring:
+    /// - every pixel its mask marks as clothing takes the armor's pixel at the same place (the clothing area laid over
+    ///   the armor's shape), shaded as a dye would be;
+    /// - the accessory takes the armor's second colour; a Knight's accessory is its shield: the ability's (the
+    ///   shield's) pixels laid over it the same way;
+    /// - the weapon it holds (its right edge, outside the mask, the face's colours aside) takes the weapon's colours,
+    ///   darkest to brightest as its own.
+    ///
+    /// The plain look where the character has no mask or the armor no sprite.
+    pub fn dressed(&mut self, ctx: &egui::Context, data: &GameData, sprite: i32, pieces: [i32; 4], size: u32) -> Option<TextureHandle> {
+        let key = format!("dressed-{sprite}-{pieces:?}-{size}");
         if let Some(t) = self.skins.get(&key) {
             return Some(t.clone());
         }
+        let [weapon, ability, armor, _] = pieces;
         let colours = self.armor_look(data, armor);
         let (Some(src), Some(mask), Some(item), Some((_, second))) =
             (self.sprites.object(data, sprite), self.sprites.mask(data, sprite), self.sprites.object(data, armor), colours)
         else {
             return self.object(ctx, data, sprite, size);
         };
+        let shield = data.class(sprite).is_some_and(|c| c.name == "Knight").then(|| self.sprites.object(data, ability)).flatten();
+        let weapon_colours = self.colours(data, weapon);
         let px = |im: &Image, x: u32, y: u32| -> [u8; 4] {
             let i = ((y * im.w + x) * 4) as usize;
             [im.rgba[i], im.rgba[i + 1], im.rgba[i + 2], im.rgba[i + 3]]
         };
-        // the clothing area on the character, and the item's own shape (its coloured pixels, the outline aside)
         let bounds = |w: u32, h: u32, on: &dyn Fn(u32, u32) -> bool| {
             let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
             for y in 0..h {
@@ -405,32 +413,80 @@ impl Icons {
             (x0 <= x1).then_some((x0, y0, x1, y1))
         };
         let coloured = |p: [u8; 4]| p[3] >= 128 && u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]) >= 90;
-        let cloth = |x: u32, y: u32| x < mask.w && y < mask.h && px(&mask, x, y)[0] > 0;
-        let (Some(cb), Some(ib)) = (bounds(src.w, src.h, &cloth), bounds(item.w, item.h, &|x, y| coloured(px(&item, x, y)))) else {
+        let mask_at = |x: u32, y: u32| if x < mask.w && y < mask.h { px(&mask, x, y) } else { [0; 4] };
+        let item_shape = |im: &Image| bounds(im.w, im.h, &|x, y| coloured(px(im, x, y)));
+        let (Some(cloth_b), Some(armor_b)) = (bounds(src.w, src.h, &|x, y| mask_at(x, y)[0] > 0), item_shape(&item)) else {
             return self.object(ctx, data, sprite, size);
         };
-        let main = |code: i32| [(code >> 16) as u8, (code >> 8) as u8, code as u8, 255];
-        let fill = main(colours.map_or(0, |c| c.0));
+        let acc_b = bounds(src.w, src.h, &|x, y| mask_at(x, y)[0] == 0 && mask_at(x, y)[1] > 0);
+        let span = |a: u32, b: u32| (b - a + 1) as f32;
+        // a pixel's place in `from` laid over `onto`: the pixel of `im` there
+        let laid = |im: &Image, from: (u32, u32, u32, u32), onto: (u32, u32, u32, u32), x: u32, y: u32| {
+            let ix = onto.0 + (((x - from.0) as f32 + 0.5) / span(from.0, from.2) * span(onto.0, onto.2)) as u32;
+            let iy = onto.1 + (((y - from.1) as f32 + 0.5) / span(from.1, from.3) * span(onto.1, onto.3)) as u32;
+            px(im, ix.min(onto.2), iy.min(onto.3))
+        };
+        let rgb = |code: i32| [(code >> 16) as u8, (code >> 8) as u8, code as u8, 255];
+        let fill = rgb(colours.map_or(0, |c| c.0));
         let shade = |t: [u8; 4], a: u8, k: u8| {
             let f = |c: u8| (u32::from(c) * u32::from(k) / 255) as u8;
             [f(t[0]), f(t[1]), f(t[2]), a]
         };
-        let span = |a: u32, b: u32| (b - a + 1) as f32;
+        // the face's colours (unmasked pixels of the head's middle rows): the hand holding the weapon has them too
+        let mut face: Vec<[u8; 3]> = Vec::new();
+        for y in 2..4.min(src.h) {
+            for x in 1..6.min(src.w) {
+                let p = px(&src, x, y);
+                if mask_at(x, y)[0] == 0 && mask_at(x, y)[1] == 0 && coloured(p) && !face.contains(&[p[0], p[1], p[2]]) {
+                    face.push([p[0], p[1], p[2]]);
+                }
+            }
+        }
+        // the weapon: the right two columns' other pixels, their colours darkest to brightest
+        let is_weapon = |x: u32, y: u32| {
+            let p = px(&src, x, y);
+            x + 2 >= src.w && p[3] >= 128 && mask_at(x, y)[0] == 0 && mask_at(x, y)[1] == 0 && !face.contains(&[p[0], p[1], p[2]])
+        };
+        let lum = |c: [u8; 3]| u32::from(c[0]) * 3 + u32::from(c[1]) * 6 + u32::from(c[2]);
+        let mut held: Vec<[u8; 3]> = Vec::new();
+        for y in 0..src.h {
+            for x in 0..src.w {
+                let p = px(&src, x, y);
+                if is_weapon(x, y) && !held.contains(&[p[0], p[1], p[2]]) {
+                    held.push([p[0], p[1], p[2]]);
+                }
+            }
+        }
+        held.sort_by_key(|c| lum(*c));
+        let mut theirs = weapon_colours.clone();
+        theirs.sort_by_key(|c| lum(*c));
+        let weapon_colour = |c: [u8; 3]| -> Option<[u8; 3]> {
+            if theirs.is_empty() {
+                return None;
+            }
+            let i = held.iter().position(|h| *h == c)?;
+            let k = if held.len() < 2 { theirs.len() / 2 } else { i * (theirs.len() - 1) / (held.len() - 1) };
+            Some(theirs[k])
+        };
+        let shield_b = shield.as_ref().and_then(item_shape);
         let mut rgba = Vec::with_capacity((src.w * src.h * 4) as usize);
         for y in 0..src.h {
             for x in 0..src.w {
                 let p = px(&src, x, y);
-                let m = if x < mask.w && y < mask.h { px(&mask, x, y) } else { [0; 4] };
+                let m = mask_at(x, y);
                 let out = if m[0] > 0 {
-                    // the same place on the item
-                    let ix = ib.0 + (((x - cb.0) as f32 + 0.5) / span(cb.0, cb.2) * span(ib.0, ib.2)) as u32;
-                    let iy = ib.1 + (((y - cb.1) as f32 + 0.5) / span(cb.1, cb.3) * span(ib.1, ib.3)) as u32;
-                    let ip = px(&item, ix.min(ib.2), iy.min(ib.3));
-                    // lit as the item is (the dye mask's shading kept light)
-                    let t = if coloured(ip) { ip } else { fill };
-                    shade(t, p[3], m[0].max(200))
+                    let ip = laid(&item, cloth_b, armor_b, x, y);
+                    shade(if coloured(ip) { ip } else { fill }, p[3], m[0].max(200))
                 } else if m[1] > 0 {
-                    shade(main(second), p[3], m[1])
+                    match (&shield, shield_b, acc_b) {
+                        (Some(sh), Some(sb), Some(ab)) => {
+                            let sp = laid(sh, ab, sb, x, y);
+                            if coloured(sp) { [sp[0], sp[1], sp[2], p[3]] } else { shade(rgb(second), p[3], m[1]) }
+                        }
+                        _ => shade(rgb(second), p[3], m[1]),
+                    }
+                } else if is_weapon(x, y) {
+                    weapon_colour([p[0], p[1], p[2]]).map_or(p, |c| [c[0], c[1], c[2], p[3]])
                 } else {
                     p
                 };
@@ -445,6 +501,35 @@ impl Icons {
         );
         self.skins.insert(key, tex.clone());
         Some(tex)
+    }
+
+    /// An item's colours, most common first, each clearly different from those before (the outline and near-black
+    /// shading left out).
+    pub fn colours(&mut self, data: &GameData, item: i32) -> Vec<[u8; 3]> {
+        let Some(im) = self.sprites.object(data, item) else { return Vec::new() };
+        let mut counts: HashMap<[u8; 3], (u32, [u32; 3])> = HashMap::new();
+        for px in im.rgba.chunks(4) {
+            let (r, g, b, a) = (px[0], px[1], px[2], px[3]);
+            if a < 128 || u32::from(r) + u32::from(g) + u32::from(b) < 90 {
+                continue;
+            }
+            let e = counts.entry([r / 16, g / 16, b / 16]).or_insert((0, [0; 3]));
+            e.0 += 1;
+            e.1[0] += u32::from(r);
+            e.1[1] += u32::from(g);
+            e.1[2] += u32::from(b);
+        }
+        let mut ranked: Vec<(u32, [u8; 3])> =
+            counts.values().map(|(n, sum)| (*n, [(sum[0] / n) as u8, (sum[1] / n) as u8, (sum[2] / n) as u8])).collect();
+        ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        let far = |a: [u8; 3], b: [u8; 3]| a.iter().zip(b).map(|(x, y)| (i32::from(*x) - i32::from(y)).abs()).sum::<i32>() > 60;
+        let mut out: Vec<[u8; 3]> = Vec::new();
+        for (_, c) in ranked {
+            if out.iter().all(|o| far(*o, c)) {
+                out.push(c);
+            }
+        }
+        out
     }
 
     /// The two colours a piece of clothing is mostly made of, as dye codes (solid colours): its most common colour (for
