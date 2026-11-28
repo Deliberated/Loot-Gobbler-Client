@@ -1747,7 +1747,7 @@ impl InventoryView {
             keys.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(name(a.0).cmp(&name(b.0))));
             keys
         };
-        let groups = [("Regular", side_of(false)), ("Seasonal", side_of(true))];
+        let groups = [("Seasonal", side_of(true)), ("Regular", side_of(false))];
         let selected = self.key_selected;
         let selected_seasonal = self.key_seasonal;
         let mut pick: Option<Option<i32>> = None;
@@ -1899,18 +1899,12 @@ impl InventoryView {
                                 let full_h =
                                     key_bar(ui, &p, icons, app, &held_n, id, Rect::from_min_size(pos2(x, y), vec2(full, 0.0)), false);
                                 let br = Rect::from_min_size(pos2(x, y), vec2(full, (full_h * t).round()));
-                                // the joint up to its card, then the bar framed in gold
+                                // joined to its card as a set's bar is: gold around both, the card's colour flowing down
                                 let card = Rect::from_min_size(pos2(x + k as f32 * (cw + GAP), y - GAP - ch), vec2(cw, ch));
-                                painter.rect_filled(
-                                    Rect::from_min_max(pos2(card.left(), card.bottom()), pos2(card.right(), br.top() + 2.0)),
-                                    0.0,
-                                    p.gold,
-                                );
-                                painter.rect_filled(br, 0.0, p.header);
+                                bar_frame(&painter, &p, card, card, br, t, p.header);
                                 let mut clipped = ui.new_child(egui::UiBuilder::new().max_rect(br));
-                                clipped.set_clip_rect(br.intersect(ui.clip_rect()));
+                                clipped.set_clip_rect(br.shrink(2.0).intersect(ui.clip_rect()));
                                 key_bar(&clipped, &p, icons, app, &held_n, id, br, true);
-                                painter.rect_stroke(br, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
                                 y += br.height() + GAP * t;
                                 if t < 1.0 {
                                     ui.ctx().request_repaint();
@@ -3447,16 +3441,15 @@ fn key_bar(
     y += lhs + 8.0;
     let cols = (((w + GAP) / (TILE_W + GAP)).floor() as usize).max(1);
     let tile_w = ((w - (cols as f32 - 1.0) * GAP) / cols as f32).floor();
-    let held = |k: i32| held_n.get(&k).copied().unwrap_or(0);
+    let _ = held_n;
     for (i, (k, dungeon)) in keys.iter().enumerate() {
         let tr =
             Rect::from_min_size(pos2(x + (i % cols) as f32 * (tile_w + GAP), y + (i / cols) as f32 * (TILE_H + GAP)), vec2(tile_w, TILE_H));
         if !draw {
             continue;
         }
-        let n = held(*k);
-        painter.rect_filled(tr, 0.0, if n > 0 { mix(p.gold, p.paper, 0.7) } else { p.paper });
-        painter.rect_stroke(tr, 0.0, Stroke::new(1.0, if n > 0 { p.gold } else { Color32::BLACK }), StrokeKind::Inside);
+        painter.rect_filled(tr, 0.0, p.paper);
+        painter.rect_stroke(tr, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
         if let Some(t) = icons.object(ui.ctx(), data, *k, 32) {
             painter.image(t.id(), Rect::from_min_size(pos2(tr.left() + 6.0, tr.center().y - 16.0), vec2(32.0, 32.0)), uv(), Color32::WHITE);
         }
@@ -3465,15 +3458,8 @@ fn key_bar(
         let top = tr.center().y - lh16;
         jtext::draw(&painter, pos2(tx, top), Align2::LEFT_TOP, &widgets::fit(&painter, dungeon, &f16, room), &f16, p.ink);
         let diff = data.difficulty.get(dungeon.as_str()).map_or("?".to_string(), |v| format!("{v}"));
-        let sub = if n > 0 { format!("{n} held  ·  difficulty {diff}") } else { format!("difficulty {diff}") };
-        jtext::draw(
-            &painter,
-            pos2(tx, top + lh16),
-            Align2::LEFT_TOP,
-            &widgets::fit(&painter, &sub, &f16, room),
-            &f16,
-            if n > 0 { p.gold } else { fixed::MUTED },
-        );
+        let sub = format!("difficulty {diff}");
+        jtext::draw(&painter, pos2(tx, top + lh16), Align2::LEFT_TOP, &widgets::fit(&painter, &sub, &f16, room), &f16, fixed::MUTED);
     }
     let rows = keys.len().div_ceil(cols) as f32;
     y += rows * (TILE_H + GAP) - GAP + 12.0;
@@ -3719,6 +3705,74 @@ fn place_look(
     }
     let name = data.items.item(item).map_or(format!("Item {item}"), |i| i.name.clone());
     widgets::tip(ui, r, id, &format!("{name}\n{}", place_of(app, h)));
+}
+
+/// A bar opened under a card (a set's, a key's) drawn as one with it: the bar, gold frames around both (3 px), a joint
+/// as wide as the card (`card`, where the joint is; `real_card` the card itself) down to the bar, and the card's colour
+/// running down through the joint and fading out softly in the bar. `t`: how far open (the gold fades in with it).
+fn bar_frame(full: &egui::Painter, p: &Palette, real_card: Rect, card: Rect, bar: Rect, t: f32, card_fill: Color32) {
+    let gold = p.gold.gamma_multiply(t);
+    // the card and the bar as one: the bar, a joint as wide as the card down to it, gold around both
+    full.rect_filled(bar, 0.0, p.paper);
+    // the bar framed as the card is (3 px), so the lines meet without a step
+    full.rect_stroke(bar, 0.0, Stroke::new(3.0, gold), StrokeKind::Inside);
+    // the card's frame as wide as the selected one's (3 px), so the joint's sides run on from it
+    full.rect_stroke(real_card, 0.0, Stroke::new(3.0, gold), StrokeKind::Inside);
+    // the card's colour running down through the joint and fading out in the bar
+    // a set complete fades its gold into the bar; one not complete its card's brown
+    let glow = card_fill;
+    crate::overlays::gradient_round_rect(
+        full,
+        // over the card's bottom border too (the selected one's is 3 px)
+        Rect::from_min_max(pos2(card.left() + 3.0, card.bottom() - 4.0), pos2(card.right() - 3.0, bar.top() + 3.0)),
+        0.0,
+        card_fill,
+        glow,
+    );
+    let fade_end = (bar.top() + 110.0).min(bar.bottom() - 2.0);
+    if fade_end > bar.top() + 3.0 {
+        // softly out, rounded: each point of a fine grid a mix of the two colours by its distance from the card
+        // (an ellipse: as far down as `fade_end`, `spread` out to either side)
+        let spread = 110.0;
+        let (l, r) = (card.left() + 3.0, card.right() - 3.0);
+        let (x0, x1) = ((l - spread).max(bar.left() + 3.0), (r + spread).min(bar.right() - 3.0));
+        let depth = fade_end - bar.top() - 2.0;
+        let weight = |x: f32, y: f32| {
+            let dx = if x < l {
+                (l - x) / spread
+            } else if x > r {
+                (x - r) / spread
+            } else {
+                0.0
+            };
+            let dy = (y - bar.top() - 2.0) / depth;
+            let d = (dx * dx + dy * dy).sqrt().min(1.0);
+            // eased twice: a long, soft tail
+            let e = 1.0 - d;
+            e * e * (3.0 - 2.0 * e) * e
+        };
+        let (cols_n, rows_n) = (28usize, 14usize);
+        let mut mesh = egui::Mesh::default();
+        for k in 0..=rows_n {
+            let y = bar.top() + 3.0 + depth * k as f32 / rows_n as f32;
+            for i in 0..=cols_n {
+                let x = x0 + (x1 - x0) * i as f32 / cols_n as f32;
+                mesh.colored_vertex(pos2(x, y), mix(glow, p.paper, f64::from(weight(x, y))));
+            }
+        }
+        let n = cols_n as u32 + 1;
+        for k in 0..rows_n as u32 {
+            for i in 0..n - 1 {
+                let (a, b) = (k * n + i, k * n + i + 1);
+                mesh.add_triangle(a, b, a + n);
+                mesh.add_triangle(b, b + n, a + n);
+            }
+        }
+        full.add(egui::Shape::mesh(mesh));
+    }
+    for x in [card.left() + 1.5, card.right() - 1.5] {
+        full.line_segment([pos2(x, card.bottom() - 4.0), pos2(x, bar.top() + 3.0)], Stroke::new(3.0, gold));
+    }
 }
 
 /// How tall the bar's token flow is.
@@ -4072,68 +4126,7 @@ fn st_bar(
     }
     let card = card.translate(vec2(joint_x - card.left(), 0.0));
     let full = ui.painter().clone();
-    let gold = p.gold.gamma_multiply(t);
-    // the card and the bar as one: the bar, a joint as wide as the card down to it, gold around both
-    full.rect_filled(bar, 0.0, p.paper);
-    // the bar framed as the card is (3 px), so the lines meet without a step
-    full.rect_stroke(bar, 0.0, Stroke::new(3.0, gold), StrokeKind::Inside);
-    // the card's frame as wide as the selected one's (3 px), so the joint's sides run on from it
-    full.rect_stroke(real_card, 0.0, Stroke::new(3.0, gold), StrokeKind::Inside);
-    // the card's colour running down through the joint and fading out in the bar
-    // a set complete fades its gold into the bar; one not complete its card's brown
-    let glow = card_fill;
-    crate::overlays::gradient_round_rect(
-        &full,
-        // over the card's bottom border too (the selected one's is 3 px)
-        Rect::from_min_max(pos2(card.left() + 3.0, card.bottom() - 4.0), pos2(card.right() - 3.0, bar.top() + 3.0)),
-        0.0,
-        card_fill,
-        glow,
-    );
-    let fade_end = (bar.top() + 110.0).min(bar.bottom() - 2.0);
-    if fade_end > bar.top() + 3.0 {
-        // softly out, rounded: each point of a fine grid a mix of the two colours by its distance from the card
-        // (an ellipse: as far down as `fade_end`, `spread` out to either side)
-        let spread = 110.0;
-        let (l, r) = (card.left() + 3.0, card.right() - 3.0);
-        let (x0, x1) = ((l - spread).max(bar.left() + 3.0), (r + spread).min(bar.right() - 3.0));
-        let depth = fade_end - bar.top() - 2.0;
-        let weight = |x: f32, y: f32| {
-            let dx = if x < l {
-                (l - x) / spread
-            } else if x > r {
-                (x - r) / spread
-            } else {
-                0.0
-            };
-            let dy = (y - bar.top() - 2.0) / depth;
-            let d = (dx * dx + dy * dy).sqrt().min(1.0);
-            // eased twice: a long, soft tail
-            let e = 1.0 - d;
-            e * e * (3.0 - 2.0 * e) * e
-        };
-        let (cols_n, rows_n) = (28usize, 14usize);
-        let mut mesh = egui::Mesh::default();
-        for k in 0..=rows_n {
-            let y = bar.top() + 3.0 + depth * k as f32 / rows_n as f32;
-            for i in 0..=cols_n {
-                let x = x0 + (x1 - x0) * i as f32 / cols_n as f32;
-                mesh.colored_vertex(pos2(x, y), mix(glow, p.paper, f64::from(weight(x, y))));
-            }
-        }
-        let n = cols_n as u32 + 1;
-        for k in 0..rows_n as u32 {
-            for i in 0..n - 1 {
-                let (a, b) = (k * n + i, k * n + i + 1);
-                mesh.add_triangle(a, b, a + n);
-                mesh.add_triangle(b, b + n, a + n);
-            }
-        }
-        full.add(egui::Shape::mesh(mesh));
-    }
-    for x in [card.left() + 1.5, card.right() - 1.5] {
-        full.line_segment([pos2(x, card.bottom() - 4.0), pos2(x, bar.top() + 3.0)], Stroke::new(3.0, gold));
-    }
+    bar_frame(&full, p, real_card, card, bar, t, card_fill);
     let painter = full.with_clip_rect(bar.shrink(2.0).intersect(full.clip_rect()));
     let data = app.world.data();
     let living: HashMap<i32, bool> = app.characters.living().iter().map(|l| (l.char_id, l.seasonal)).collect();

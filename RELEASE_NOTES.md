@@ -18,7 +18,8 @@ v0.0.8:
 - Sets that change their skin by the ring worn (like the Shaman Necromancer) show their character again; a set without a skin shows its class
 
 **Keys:** 
-- Clicking a mystery key opens a bar below it with every key it can give, the ones you hold highlighted
+- Clicking a mystery key opens a bar below it with every key it can give, joined to its key as a set's bar is
+- Seasonal keys come first
 
 **Social:** 
 - The Daily Quests page is gone; Social has Chat and Discord
