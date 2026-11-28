@@ -2416,7 +2416,7 @@ impl InventoryView {
                                     rarity,
                                     pos2(tr.right() - 3.0, tr.bottom() - 3.0),
                                     o.best.get(id).copied().unwrap_or(0).max(0) as usize,
-                                    5.0,
+                                    SET_BADGE,
                                 );
                             }
                             painter.rect_stroke(tr, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
@@ -2514,6 +2514,15 @@ impl InventoryView {
                                         Rect::from_center_size(tr.center(), vec2(TILE - 10.0, TILE - 10.0)),
                                         uv(),
                                         if have { Color32::WHITE } else { Color32::from_white_alpha(64) },
+                                    );
+                                }
+                                if have && app.collection.entry(*id).is_some() {
+                                    enchant_badge(
+                                        &painter,
+                                        rarity,
+                                        pos2(tr.right() - 3.0, tr.bottom() - 3.0),
+                                        o.best.get(id).copied().unwrap_or(0).max(0) as usize,
+                                        SET_BADGE,
                                     );
                                 }
                                 painter.rect_stroke(tr, 0.0, Stroke::new(1.5, mix(SHINY, Color32::BLACK, 0.3)), StrokeKind::Inside);
@@ -3692,6 +3701,8 @@ struct BarLook {
 pub static THEMED_LOOKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Pictures: the themed sets of which 3 or more shiny pieces are held count as fully shiny (to show the sparkles).
 pub static SHINY_PREVIEW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The rarity badges on the sets' pieces: half again their own size.
+const SET_BADGE: f32 = 7.5;
 /// A shiny's silver.
 const SHINY: Color32 = Color32::from_rgb(0xC9, 0xD8, 0xE8);
 
