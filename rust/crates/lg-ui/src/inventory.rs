@@ -1205,7 +1205,7 @@ impl InventoryView {
                 // narrower when the section is (melted): the title keeps its room
                 let sw = if head.width() < 760.0 { 150.0 } else { 220.0 };
                 let sr = Rect::from_min_size(pos2(fx - 8.0 - sw, head.top() + 3.0), vec2(sw, h - 6.0));
-                crate::widgets::search_field(ui, &p, sr, &mut search, "Search items or enchants", "collection-search");
+                crate::widgets::search_field_clearable(ui, &p, sr, &mut search, "Search items or enchants", "collection-search");
                 widgets::tip(
                     ui,
                     sr,

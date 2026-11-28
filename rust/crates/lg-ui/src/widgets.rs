@@ -614,10 +614,21 @@ pub fn brighter(c: Color32) -> Color32 {
 /// A one-line text field (Java `JTextField` with a placeholder): paper with a line border, gold when focused;
 /// the text typed goes into `value`. Gives whether it changed.
 pub fn search_field(ui: &mut Ui, p: &Palette, r: Rect, value: &mut String, placeholder: &str, id: &str) -> bool {
+    text_field(ui, p, r, value, placeholder, id, false)
+}
+
+/// A search field: [`search_field`] with an x at its right while something is typed, which empties it.
+pub fn search_field_clearable(ui: &mut Ui, p: &Palette, r: Rect, value: &mut String, placeholder: &str, id: &str) -> bool {
+    text_field(ui, p, r, value, placeholder, id, true)
+}
+
+fn text_field(ui: &mut Ui, p: &Palette, r: Rect, value: &mut String, placeholder: &str, id: &str, clearable: bool) -> bool {
     let painter = ui.painter().clone();
     let bg = painter.add(Shape::Noop);
     let font = text(18.0);
-    let inner = r.shrink2(vec2(8.0, 2.0));
+    // room at the right for the x
+    let x_w = if clearable { 24.0 } else { 0.0 };
+    let inner = Rect::from_min_max(r.min + vec2(8.0, 2.0), r.max - vec2(8.0 + x_w, 2.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)));
     child.visuals_mut().extreme_bg_color = Color32::TRANSPARENT;
     child.visuals_mut().selection.bg_fill = p.text_sel;
@@ -634,7 +645,23 @@ pub fn search_field(ui: &mut Ui, p: &Palette, r: Rect, value: &mut String, place
     let focused = resp.has_focus();
     painter.set(bg, Shape::rect_filled(r, 0.0, p.paper));
     painter.rect_stroke(r, 0.0, Stroke::new(1.0, if focused { p.gold } else { p.line }), StrokeKind::Inside);
-    resp.changed()
+    let mut changed = resp.changed();
+    if clearable && !value.is_empty() {
+        let xr = Rect::from_center_size(pos2(r.right() - 6.0 - x_w / 2.0, r.center().y), vec2(x_w, x_w));
+        let x = ui
+            .interact(xr, ui.scope_id().with((id, "clear")), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("Clear the search");
+        let ink = if x.hovered() { p.gold } else { p.ink_muted };
+        for (a, b) in [(vec2(-5.0, -5.0), vec2(5.0, 5.0)), (vec2(-5.0, 5.0), vec2(5.0, -5.0))] {
+            painter.line_segment([xr.center() + a, xr.center() + b], Stroke::new(2.0, ink));
+        }
+        if x.clicked() {
+            value.clear();
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Java `setToolTipText` on a painted part: the text when the pointer rests over `r` (several lines with `\n`).

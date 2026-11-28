@@ -431,7 +431,7 @@ fn pick(
     let painter = ui.painter().clone();
     let f = text(18.0);
     let lr = jtext::draw(&painter, pos2(body.left(), body.top() + 15.0), Align2::LEFT_CENTER, "Search: ", &f, p.ink);
-    widgets::search_field(
+    widgets::search_field_clearable(
         ui,
         p,
         Rect::from_min_max(pos2(lr.right(), body.top()), pos2(body.right(), body.top() + 30.0)),

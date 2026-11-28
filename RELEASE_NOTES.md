@@ -13,3 +13,6 @@ v0.0.8:
 
 **Social:** 
 - The Daily Quests page is gone; Social has Chat and Discord
+
+**Search:** 
+- An x at the right of the search fields clears the search
