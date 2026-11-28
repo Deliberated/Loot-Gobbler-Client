@@ -54,8 +54,8 @@ pub struct InventoryView {
     pub melt: bool,
     /// Where the melt goes when it ends: 0 back to Items, 1 on to the sets (the items slide out left).
     pub melt_exit: usize,
-    /// The melt's sets: the themed ones (else the ST sets); its switch flips them.
-    pub melt_themed: bool,
+    /// The Sets page (and the melt) shows the themed sets, else the ST sets: the toggle in its head flips them.
+    pub sets_themed: bool,
     /// How far melted (0 apart, 1 one), moving towards `melt`.
     melt_t: f32,
     /// Parting from the melt: the moving edge the page it goes to is shown up to (its layout as it will stand).
@@ -263,7 +263,16 @@ impl InventoryView {
                 };
                 widgets::optimize_icon(painter, pos2(head.left() + 18.0, head.center().y), 22.0, ink);
                 jtext::draw(painter, pos2(head.left() + 36.0, head.center().y), Align2::LEFT_CENTER, "OPTIMIZATION", &font, ink);
-                let out = forge_switch(ui, p, rarity, pos2(head.right() - 6.0, head.top() + 1.0), head.height() - 2.0, mode, allowed);
+                let out = forge_switch(
+                    ui,
+                    p,
+                    rarity,
+                    pos2(head.right() - 6.0, head.top() + 1.0),
+                    head.height() - 2.0,
+                    mode,
+                    allowed,
+                    f32::INFINITY,
+                );
                 next_mode = out.mode;
                 next_rarities = out.rarities;
             },
@@ -509,27 +518,26 @@ fn heartbeat(elapsed: f64) -> Vec<f32> {
 /// Items and ST Sets melting into one tab (`t` 0 apart, 1 one; parting plays it backwards), drawn over the tabs: gold
 /// pours from Items over the gap into ST Sets, which fills from its left, then the gap closes into the one box with
 /// "ITEMS AND ST SETS".
-fn melt_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, t: f32, from_sets: bool, themed: bool) {
+fn melt_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, t: f32, from_sets: bool) {
     let painter = ui.painter().clone();
     let font = small();
     let w0 = jtext::width(&painter, "ITEMS", &font) + 30.0;
-    let w1 = jtext::width(&painter, "ST SETS", &font) + 30.0;
-    let w2 = jtext::width(&painter, "THEMED SETS", &font) + 30.0;
+    let w1 = jtext::width(&painter, "SETS", &font) + 30.0;
     let r0 = Rect::from_min_size(at, vec2(w0, h));
     let r1 = Rect::from_min_size(pos2(at.x + w0 + 8.0, at.y), vec2(w1, h));
-    let r2 = Rect::from_min_size(pos2(r1.right() + 8.0, at.y), vec2(w2, h));
     let gold = p.gold;
     let ease = |v: f32| {
         let v = v.clamp(0.0, 1.0);
         v * v * (3.0 - 2.0 * v)
     };
+    // the two tabs drawn under it covered
+    painter.rect_filled(r0.union(r1).expand(1.0), 0.0, p.sand);
     let box_ = |r: Rect, fill: Color32, label: &str, ink: Color32| {
         painter.rect(r, 0.0, fill, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
         jtext::draw(&painter, r.center(), Align2::CENTER_CENTER, label, &font, ink);
     };
     if t >= 0.9 {
-        let one = r0.union(r2);
-        painter.rect_filled(one.expand(1.0), 0.0, p.sand);
+        let one = r0.union(r1);
         painter.rect(one, 0.0, gold, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
         jtext::draw(
             &painter,
@@ -541,18 +549,14 @@ fn melt_tabs(ui: &Ui, p: &Palette, at: egui::Pos2, h: f32, t: f32, from_sets: bo
         );
         return;
     }
-    // the tabs drawn under it covered: Items and the sets' one (the other one shown plain)
-    let (sets, sets_l, other, other_l) = if themed { (r2, "THEMED SETS", r1, "ST SETS") } else { (r1, "ST SETS", r2, "THEMED SETS") };
-    painter.rect_filled(r0.union(r2).expand(1.0), 0.0, p.sand);
-    box_(other, p.paper, other_l, p.ink_soft);
-    // from Items: Items gold, pouring right into the sets; from (or to) the sets: the other way
-    let (src, dst, src_l, dst_l) = if from_sets { (sets, r0, sets_l, "ITEMS") } else { (r0, sets, "ITEMS", sets_l) };
+    // from Items: Items gold, pouring right into Sets; from (or to) Sets: the other way
+    let (src, dst, src_l, dst_l) = if from_sets { (r1, r0, "SETS", "ITEMS") } else { (r0, r1, "ITEMS", "SETS") };
     box_(src, gold, src_l, p.on_accent);
     box_(dst, p.paper, dst_l, p.ink_soft);
-    // the stream over the gap from the side it comes from, thickening at the end until it closes it
+    // the stream over the gap, thickening at the end until it closes it
     let stream = ease(t / 0.25);
     let sh = 6.0 + 24.0 * ease((t - 0.55) / 0.35);
-    let (a, b) = if from_sets { (sets.left() - 10.0 * stream, sets.left() + 1.5) } else { (r0.right() - 1.5, r0.right() + 10.0 * stream) };
+    let (a, b) = if from_sets { (r1.left() - 10.0 * stream, r1.left() + 1.5) } else { (r0.right() - 1.5, r0.right() + 10.0 * stream) };
     painter.rect_filled(Rect::from_min_max(pos2(a, r0.center().y - sh / 2.0), pos2(b, r0.center().y + sh / 2.0)), 3.0, gold);
     // the other filling from the side it is poured into, its front rounded
     let fill = ease((t - 0.2) / 0.5);
@@ -690,30 +694,27 @@ impl InventoryView {
         {
             c.asks.push(crate::window::Ask::Set("collectionUpeColumn".into(), (!column_on).to_string()));
         }
-        const PAGES: [&str; 5] = ["Items", "ST Sets", "Themed Sets", "Keys", "Log"];
-        // ST Sets or Themed Sets from Items: they melt into one page (its switch flips the sets); a set page again: those
-        // sets plain; Items: back to the items
+        const PAGES: [&str; 4] = ["Items", "Sets", "Keys", "Log"];
+        // Sets from Items: the two melt into one page; Sets again: the plain sets; Items: back to the items
         if let Some(i) = widgets::segmented(ui, &p, pos2(pages_x, all.top()), 36.0, &PAGES, self.page, false, &[]) {
             match (self.melt, i) {
-                (false, 1 | 2) if self.page == 0 => {
+                (false, 1) if self.page == 0 => {
                     self.melt = true;
                     self.melt_exit = 0;
-                    self.melt_themed = i == 2;
                 }
-                (true, 1 | 2) => {
+                (true, 1) => {
                     self.melt = false;
                     self.melt_exit = 1;
-                    self.melt_themed = i == 2;
-                    self.page = i;
+                    self.page = 1;
                 }
                 // on from the melt to Keys or Log: the melted box pours into it, the melt simply gone
-                (true, _) if i >= 3 => {
+                (true, _) if i >= 2 => {
                     self.melt = false;
                     self.melt_exit = 0;
                     self.melt_t = 0.0;
                     self.reveal = None;
                     self.page = i;
-                    widgets::segmented_pour_merged(ui, pos2(pages_x, all.top()), &PAGES, 0, 2, "Items and Sets", i);
+                    widgets::segmented_pour_merged(ui, pos2(pages_x, all.top()), &PAGES, 0, 1, "Items and Sets", i);
                 }
                 (true, _) => {
                     self.melt = false;
@@ -722,10 +723,9 @@ impl InventoryView {
                 }
                 // from the plain ST Sets, Items: first the two melted (the items slide in from the left); Items again
                 // then the items alone
-                (false, 0) if self.page == 1 || self.page == 2 => {
+                (false, 0) if self.page == 1 => {
                     self.melt = true;
                     self.melt_exit = 1;
-                    self.melt_themed = self.page == 2;
                     self.page = 0;
                 }
                 _ => self.page = i,
@@ -740,16 +740,15 @@ impl InventoryView {
         let speed = widgets::POUR_S;
         self.melt_t = if self.melt_t < goal { (self.melt_t + dt / speed).min(goal) } else { (self.melt_t - dt / speed).max(goal) };
         let mt = self.melt_t * self.melt_t * (3.0 - 2.0 * self.melt_t);
-        if mt > 0.0 && self.page <= 2 {
+        if mt > 0.0 && self.page <= 1 {
             if self.melt && self.melt_t < 1.0 {
-                // melting in: gold flows on from the tab left into the other, the first staying filled; the three
+                // melting in: gold flows on from the tab left into the other, the first staying filled; the two
                 // show as one once it is there
-                let sets_tab = if self.melt_themed { 2 } else { 1 };
-                let (from, to) = if self.melt_exit == 0 { (0, sets_tab) } else { (sets_tab, 0) };
+                let (from, to) = if self.melt_exit == 0 { (0, 1) } else { (1, 0) };
                 widgets::pour_spread(ui, &p, pos2(pages_x, all.top()), 36.0, &PAGES, false, from, to, self.melt_t);
             } else {
                 // parting: the two run apart again from the side the sets are on
-                melt_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, mt, self.melt_exit == 1, self.melt_themed);
+                melt_tabs(ui, &p, pos2(pages_x, all.top()), 36.0, mt, self.melt_exit == 1);
             }
         }
         // the forge resources, right-aligned on the same row: the regular side at the right, the seasonal one before it
@@ -795,7 +794,7 @@ impl InventoryView {
         }
         // melted (or melting, or parting): the collection squeezed to the left, the sets coming in from the right;
         // parting to the sets the collection slides out to the left
-        if mt > 0.0 && self.page <= 2 {
+        if mt > 0.0 && self.page <= 1 {
             let mid = body.left() + (body.width() * 0.5).round();
             // from or to the plain ST Sets the items slide at the left; from or to Items the sets come and go at the right
             let (items_r, sets_r) = if self.melt_exit == 0 {
@@ -831,7 +830,7 @@ impl InventoryView {
                 if whole {
                     self.reveal = Some(if sets { r.left() } else { r.right() });
                     if sets {
-                        let themed = self.melt_themed;
+                        let themed = self.sets_themed;
                         self.st_sets(&mut child, c, rarity, body, false, themed);
                     } else {
                         self.items(&mut child, c, rarity, body, false);
@@ -842,7 +841,7 @@ impl InventoryView {
                 if sets {
                     // a gap from the collection, as between the sections elsewhere
                     let r = Rect::from_min_max(pos2(r.left() + 8.0, r.top()), r.max);
-                    let themed = self.melt_themed;
+                    let themed = self.sets_themed;
                     self.st_sets(&mut child, c, rarity, r, true, themed);
                 } else {
                     self.items(&mut child, c, rarity, r, true);
@@ -855,10 +854,12 @@ impl InventoryView {
         }
         self.beat = None;
         match self.page {
-            1 => self.st_sets(ui, c, rarity, body, false, false),
-            2 => self.st_sets(ui, c, rarity, body, false, true),
-            3 => self.keys(ui, c, body),
-            4 => self.log(ui, c, body),
+            1 => {
+                let themed = self.sets_themed;
+                self.st_sets(ui, c, rarity, body, false, themed)
+            }
+            2 => self.keys(ui, c, body),
+            3 => self.log(ui, c, body),
             _ => self.items(ui, c, rarity, body, false),
         }
     }
@@ -1478,7 +1479,7 @@ impl InventoryView {
             );
             // crafting melts in the ST sets
             if self.melt && !was_melt {
-                self.melt_themed = false;
+                self.sets_themed = false;
             }
             side = Rect::from_min_max(pos2(side.left(), or.bottom() + 8.0), side.max);
         }
@@ -2094,7 +2095,7 @@ impl InventoryView {
         let run_focus = crate::focus::current(app, c.props).is_some();
         // the forge suggestions: off, as a collector (the best copy of each ST item kept), or with a backup kept too
         use lg_app::st_forge::{FREED_KEY, Mode};
-        let mode = if themed { Mode::Off } else { Mode::of(c.props.get(Mode::KEY)) };
+        let mode = Mode::of(c.props.get(Mode::KEY));
         let allowed = lg_app::st_forge::rarities(c.props.get(lg_app::st_forge::RARITIES_KEY));
         let mut next_rarities: Option<[bool; 5]> = None;
         let freed: std::collections::HashSet<i32> =
@@ -2205,37 +2206,46 @@ impl InventoryView {
             ui,
             &p,
             main,
-            &match (focus, themed) {
-                (Some(ch), false) => format!("ST Sets · {}", ch.class_name),
-                (Some(ch), true) => format!("Themed Sets · {}", ch.class_name),
-                (None, false) => "Collection · ST Sets".to_string(),
-                (None, true) => "Collection · Themed Sets".to_string(),
-            },
+            &format!("{} ·", focus.map_or("Collection", |ch| ch.class_name.as_str())),
             fixed::GOLD,
             |ui, head| {
-                // melted with the items: the switch between the ST and the themed sets, at the right
-                if grid_only {
-                    let names = ["ST", "Themed"];
-                    let sw = widgets::segmented_width(ui.painter(), &names, true);
-                    let at = pos2(head.right() - sw, head.top());
-                    if let Some(i) = widgets::segmented(ui, &p, at, head.height(), &names, usize::from(themed), true, &[]) {
-                        switch_to = Some(i == 1);
-                    }
-                    return;
-                }
-                // themed sets: no tokens to filter by, nothing to forge
-                if themed {
-                    return;
-                }
                 let painter = ui.painter().clone();
                 let h = head.height();
-                let fw = widgets::segmented_width(&painter, &filters, true);
-                let fx = head.right() - fw;
-                if let Some(i) = widgets::segmented(ui, &p, pos2(fx, head.top()), h, &filters, filter, true, &[]) {
-                    filter = i;
+                // after the title, which sets: ST or themed
+                let title_w = jtext::width(
+                    &painter,
+                    &format!("{} ·", focus.map_or("Collection", |ch| ch.class_name.as_str())).to_uppercase(),
+                    &crate::theme::head(17.0),
+                );
+                let kinds = ["ST", "Themed"];
+                let kinds_end = head.left() + 26.0 + title_w + 10.0 + widgets::segmented_width(&painter, &kinds, true);
+                if let Some(i) = widgets::segmented(
+                    ui,
+                    &p,
+                    pos2(head.left() + 26.0 + title_w + 10.0, head.top()),
+                    h,
+                    &kinds,
+                    usize::from(themed),
+                    true,
+                    &[],
+                ) {
+                    switch_to = Some(i == 1);
                 }
+                // at the right: All / Tokens (the ST sets only), and before them Collector Mode
+                let fx = if themed {
+                    head.right() + 8.0
+                } else {
+                    let fw = widgets::segmented_width(&painter, &filters, true);
+                    let fx = head.right() - fw;
+                    if let Some(i) = widgets::segmented(ui, &p, pos2(fx, head.top()), h, &filters, filter, true, &[]) {
+                        filter = i;
+                    }
+                    fx
+                };
                 // the forge suggestions: a pill with a switch of three places (a click: the next)
-                let out = forge_switch(ui, &p, rarity, pos2(fx - 8.0, head.top() + 1.0), h - 2.0, mode, allowed);
+                // narrow: without its label (it shows on hover)
+                let room = fx - 8.0 - (kinds_end + 10.0);
+                let out = forge_switch(ui, &p, rarity, pos2(fx - 8.0, head.top() + 1.0), h - 2.0, mode, allowed, room);
                 if out.mode.is_some() {
                     next_mode = out.mode;
                 }
@@ -2495,11 +2505,12 @@ impl InventoryView {
             self.st_filter = filter;
         }
         if let Some(t) = switch_to
-            && t != self.melt_themed
+            && t != self.sets_themed
         {
-            self.melt_themed = t;
+            self.sets_themed = t;
             self.st_selected = None;
             self.st_piece = None;
+            self.st_show = None;
         }
         // a craft planned, or no longer
         match plan_click {
@@ -3517,13 +3528,16 @@ fn forge_switch(
     h: f32,
     mode: lg_app::st_forge::Mode,
     allowed: [bool; 5],
+    room: f32,
 ) -> SwitchOut {
     use lg_app::st_forge::Mode;
     let painter = ui.painter().clone();
     let font = small();
-    let label = "COLLECTOR MODE";
-    let tw = jtext::width(&painter, label, &font);
     let (track_w, pad, pick_w) = (56.0, 16.0, 40.0);
+    // its label only where there is room for it
+    let full = pad + jtext::width(&painter, "COLLECTOR MODE", &font) + 14.0 + track_w + 12.0 + pick_w + pad - 6.0;
+    let label = if full <= room { "COLLECTOR MODE" } else { "" };
+    let tw = if label.is_empty() { -14.0 } else { jtext::width(&painter, label, &font) };
     let w = pad + tw + 14.0 + track_w + 12.0 + pick_w + pad - 6.0;
     let r = Rect::from_min_size(pos2(right_top.x - w, right_top.y), vec2(w, h));
     // the pill, sunk into the page
@@ -3536,6 +3550,7 @@ fn forge_switch(
         Stroke::new(1.0, Color32::from_rgba_unmultiplied(0xE8, 0xD8, 0xB0, 40)),
     );
     let hover = ui.interact(r, ui.scope_id().with("collector-mode"), Sense::hover());
+    let hover = if label.is_empty() { hover.on_hover_text("Collector Mode") } else { hover };
     let lit = hover.contains_pointer();
     jtext::draw(&painter, pos2(r.left() + pad, r.center().y), Align2::LEFT_CENTER, label, &font, if lit { p.ink } else { p.ink_soft });
     // the switch: a dark track (tinted by the mode) and its silver knob sliding to its place; it alone is clicked

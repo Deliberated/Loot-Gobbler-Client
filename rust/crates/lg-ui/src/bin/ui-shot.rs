@@ -716,7 +716,7 @@ fn main() {
                             Some(r) => (true, r),
                             None => (false, rest),
                         };
-                        win.inventory.melt_themed = themed;
+                        win.inventory.sets_themed = themed;
                         let data = app.world.data();
                         let sets = if themed { &data.themed_sets } else { &data.st_sets };
                         if let Some(s) = rest.strip_prefix(':').and_then(|t| sets.iter().find(|s| s.title == t)) {

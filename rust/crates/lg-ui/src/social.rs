@@ -1,5 +1,5 @@
-//! The Social tab: Chat (the chat log with its channels), Daily Quests and Discord (both greyed out under a notice,
-//! as in the Java app: under construction).
+//! The Social tab: Chat (the chat log with its channels) and Discord (greyed out under a notice, as in the Java app:
+//! under construction).
 
 use crate::jtext;
 use crate::profile::Ctx;
@@ -54,9 +54,7 @@ impl SocialView {
     pub fn show(&mut self, ui: &mut Ui, c: &mut Ctx) {
         let p = *c.p;
         let all = ui.max_rect().shrink(8.0);
-        if let Some(i) =
-            widgets::segmented(ui, &p, pos2(all.left() + 7.0, all.top()), 36.0, &["Chat", "Daily Quests", "Discord"], self.page, false, &[])
-        {
+        if let Some(i) = widgets::segmented(ui, &p, pos2(all.left() + 7.0, all.top()), 36.0, &["Chat", "Discord"], self.page, false, &[]) {
             self.page = i;
         }
         let body = Rect::from_min_max(pos2(all.left(), all.top() + 36.0 + 8.0), all.max);
@@ -64,24 +62,6 @@ impl SocialView {
         let ui = &mut slid;
         match self.page {
             0 => chat(ui, c, body.shrink(8.0)),
-            1 => under_construction(
-                ui,
-                &p,
-                body,
-                "Daily quests are under construction - they will come from the Loot Gobbler server.",
-                |ui, r| {
-                    let painter = ui.painter();
-                    painter.rect_stroke(r, 0.0, Stroke::new(1.0, p.line), StrokeKind::Inside);
-                    jtext::draw(
-                        painter,
-                        pos2(r.center().x, r.top() + 6.0),
-                        Align2::CENTER_TOP,
-                        "Enter Daily Quest Room to see quests",
-                        &text(18.0),
-                        p.ink,
-                    );
-                },
-            ),
             _ => under_construction(ui, &p, body, "Discord webhooks are under construction - nothing is posted for now.", |ui, r| {
                 discord(ui, &p, r.shrink(8.0))
             }),

@@ -346,7 +346,7 @@ impl Window {
     }
 
     /// Opens a tab, or a page of it: "Inventory:st", "Inventory:log", "Characters:<charId|classes|pets>",
-    /// "Battles:dps|overlay", "Social:quests|discord", "Guild:<page name>".
+    /// "Battles:dps|overlay", "Social:discord", "Guild:<page name>".
     pub fn open(&mut self, spec: &str) {
         let (tab, page) = spec.split_once(':').map_or((spec, ""), |(t, p)| (t, p));
         self.shell.selected = tab.to_string();
@@ -378,7 +378,12 @@ impl Window {
                     Err(_) => self.inventory.search = p[5..].to_string(),
                 }
             }
-            ("Inventory", p) => self.inventory.page = ["", "st", "themed", "keys", "log"].iter().position(|x| *x == p).unwrap_or(0),
+            // the Sets page: "st" its ST sets, "themed" its themed sets
+            ("Inventory", which @ ("st" | "themed")) => {
+                self.inventory.page = 1;
+                self.inventory.sets_themed = which == "themed";
+            }
+            ("Inventory", p) => self.inventory.page = ["", "st", "keys", "log"].iter().position(|x| *x == p).unwrap_or(0),
             ("Characters", "classes") => self.characters.page = 1,
             ("Characters", "pets") => self.characters.page = 2,
             ("Characters", p) if p.starts_with("class:") => {
@@ -396,7 +401,7 @@ impl Window {
                 self.battles.selected = p[6..].parse().unwrap_or(0);
             }
             ("Battles", p) => self.battles.page = ["", "dps", "overlay"].iter().position(|x| *x == p).unwrap_or(0),
-            ("Social", p) => self.social.page = ["", "quests", "discord"].iter().position(|x| *x == p).unwrap_or(0),
+            ("Social", p) => self.social.page = ["", "discord"].iter().position(|x| *x == p).unwrap_or(0),
             ("Guild", p) => self.guild.page = GUILD_PAGES.iter().position(|x| *x == p).unwrap_or(0),
             _ => {}
         }
