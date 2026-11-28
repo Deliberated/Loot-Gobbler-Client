@@ -71,6 +71,8 @@ pub struct InventoryView {
     pub tour_pick: bool,
     /// The key clicked on the Keys page: the side shows what it gives (a mystery key) or its dungeon.
     pub key_selected: Option<i32>,
+    /// Whether it was clicked among the seasonal keys (its bar opens there only).
+    pub key_seasonal: bool,
     /// The item whose history replaces the Recent list (Java `historyItem`).
     pub history: Option<i32>,
     /// An item opened from another tab, to be scrolled to and pulsed once the grid is drawn (Java `showItem`).
@@ -1720,7 +1722,11 @@ impl InventoryView {
         };
         let groups = [("Regular", side_of(false)), ("Seasonal", side_of(true))];
         let selected = self.key_selected;
+        let selected_seasonal = self.key_seasonal;
         let mut pick: Option<Option<i32>> = None;
+        let mut pick_seasonal = false;
+        // how many of each key you hold (as the cards count them): the bars' tiles show it
+        let held_n: HashMap<i32, usize> = copies.iter().map(|(id, h)| (*id, h.len())).collect();
         let overhead = 2.0 + 12.0;
         let base = overhead + 20.0 - GAP;
         let (main, side) = widgets::side_split(ui, c.p, c.props, "keys", body, 280.0, 220.0, 200.0, Some((base, CARD_MIN_WIDTH + GAP)));
@@ -1832,16 +1838,57 @@ impl InventoryView {
                                 let resp = ui
                                     .interact(cr, ui.scope_id().with(("key-card", *id, *label)), Sense::click())
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                    .on_hover_text(format!("{}: click for what it opens", name(*id)));
-                                let on = selected == Some(*id);
+                                    .on_hover_text(if mystery_keys(data, *id).is_some() {
+                                        format!("{}: click for the keys it can give", name(*id))
+                                    } else {
+                                        format!("{}: click for what it opens", name(*id))
+                                    });
+                                let on = selected == Some(*id) && selected_seasonal == (*label == "Seasonal");
                                 if on || resp.hovered() {
                                     painter.rect_stroke(cr, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
                                 }
                                 if resp.clicked() {
+                                    let here = *label == "Seasonal";
                                     pick = Some(if on { None } else { Some(*id) });
+                                    pick_seasonal = here;
                                 }
                             }
                             y += ch + GAP;
+                            // a mystery key clicked: a bar under its row with the keys it can give, opening and
+                            // closing smoothly (the most open one of the row)
+                            let mut bar: Option<(usize, i32, f32)> = None;
+                            for (k, (id, _)) in row.iter().enumerate() {
+                                if mystery_keys(data, *id).is_none() {
+                                    continue;
+                                }
+                                let open = selected == Some(*id) && selected_seasonal == (*label == "Seasonal");
+                                let t = ui.ctx().animate_bool_with_time(ui.scope_id().with(("key-bar", *id, *label)), open, 0.22);
+                                if t > 0.0 && bar.is_none_or(|b| t > b.2) {
+                                    bar = Some((k, *id, t));
+                                }
+                            }
+                            if let Some((k, id, t)) = bar {
+                                let t = t * t * (3.0 - 2.0 * t);
+                                let full_h =
+                                    key_bar(ui, &p, icons, app, &held_n, id, Rect::from_min_size(pos2(x, y), vec2(full, 0.0)), false);
+                                let br = Rect::from_min_size(pos2(x, y), vec2(full, (full_h * t).round()));
+                                // the joint up to its card, then the bar framed in gold
+                                let card = Rect::from_min_size(pos2(x + k as f32 * (cw + GAP), y - GAP - ch), vec2(cw, ch));
+                                painter.rect_filled(
+                                    Rect::from_min_max(pos2(card.left(), card.bottom()), pos2(card.right(), br.top() + 2.0)),
+                                    0.0,
+                                    p.gold,
+                                );
+                                painter.rect_filled(br, 0.0, p.header);
+                                let mut clipped = ui.new_child(egui::UiBuilder::new().max_rect(br));
+                                clipped.set_clip_rect(br.intersect(ui.clip_rect()));
+                                key_bar(&clipped, &p, icons, app, &held_n, id, br, true);
+                                painter.rect_stroke(br, 0.0, Stroke::new(2.0, p.gold), StrokeKind::Inside);
+                                y += br.height() + GAP * t;
+                                if t < 1.0 {
+                                    ui.ctx().request_repaint();
+                                }
+                            }
                         }
                     }
                     ui.allocate_exact_size(vec2(r.width() - 12.0, y + 10.0 - top.y), Sense::hover());
@@ -1850,6 +1897,7 @@ impl InventoryView {
         );
         if let Some(k) = pick {
             self.key_selected = k;
+            self.key_seasonal = pick_seasonal;
         }
         // the side: how many, per side
         let painter = ui.painter().clone();
@@ -3079,6 +3127,91 @@ fn mystery_label(key: &str) -> Option<(&'static str, bool)> {
         "Exalted Mystery Key" => Some(("LEGEND_KEY", true)),
         _ => None,
     }
+}
+
+/// A mystery key's possible dungeon keys (with their dungeons, by name) and whether that list is assumed (the game
+/// data does not say for it); None for any other key.
+fn mystery_keys(data: &lg_gamedata::GameData, id: i32) -> Option<(Vec<(i32, &String)>, bool)> {
+    let item = data.items.item(id)?;
+    if !item.name.to_lowercase().ends_with("mystery key") {
+        return None;
+    }
+    let (label, assumed) = mystery_label(&item.key)?;
+    let mut keys: Vec<(i32, &String)> = data
+        .key_dungeons
+        .iter()
+        .filter(|(k, _)| data.items.item(**k).is_some_and(|i| i.labels.contains(label)))
+        .map(|(k, d)| (*k, d))
+        .collect();
+    keys.sort_by(|a, b| a.1.cmp(b.1));
+    Some((keys, assumed))
+}
+
+/// The bar under a mystery key clicked on the Keys page: the keys it can give as tiles (the key, its dungeon, how many
+/// you hold, the dungeon's difficulty), as many across as fit `r`'s width. Drawn when `draw`; gives its full height.
+#[allow(clippy::too_many_arguments)]
+fn key_bar(
+    ui: &Ui,
+    p: &Palette,
+    icons: &mut crate::icons::Icons,
+    app: &lg_app::App,
+    held_n: &HashMap<i32, usize>,
+    id: i32,
+    r: Rect,
+    draw: bool,
+) -> f32 {
+    const TILE_W: f32 = 230.0;
+    const TILE_H: f32 = 44.0;
+    const GAP: f32 = 6.0;
+    let painter = ui.painter().clone();
+    let data = app.world.data();
+    let Some((keys, assumed)) = mystery_keys(data, id) else { return 0.0 };
+    let (f16, fs) = (text(16.0), small());
+    let (lh16, lhs) = (jtext::height(&painter, &f16), jtext::height(&painter, &fs));
+    let (x, w) = (r.left() + 12.0, r.width() - 24.0);
+    let mut y = r.top() + 10.0;
+    let head = format!(
+        "GIVES ONE OF THESE {} KEYS{}",
+        keys.len(),
+        if assumed { "  ·  assumed: the same as the Aspirant Exalted Mystery Key (the game data does not say)" } else { "" }
+    );
+    if draw {
+        jtext::draw(&painter, pos2(x, y), Align2::LEFT_TOP, &widgets::fit(&painter, &head, &fs, w), &fs, p.ink_muted);
+    }
+    y += lhs + 8.0;
+    let cols = (((w + GAP) / (TILE_W + GAP)).floor() as usize).max(1);
+    let tile_w = ((w - (cols as f32 - 1.0) * GAP) / cols as f32).floor();
+    let held = |k: i32| held_n.get(&k).copied().unwrap_or(0);
+    for (i, (k, dungeon)) in keys.iter().enumerate() {
+        let tr =
+            Rect::from_min_size(pos2(x + (i % cols) as f32 * (tile_w + GAP), y + (i / cols) as f32 * (TILE_H + GAP)), vec2(tile_w, TILE_H));
+        if !draw {
+            continue;
+        }
+        let n = held(*k);
+        painter.rect_filled(tr, 0.0, if n > 0 { mix(p.gold, p.paper, 0.7) } else { p.paper });
+        painter.rect_stroke(tr, 0.0, Stroke::new(1.0, if n > 0 { p.gold } else { Color32::BLACK }), StrokeKind::Inside);
+        if let Some(t) = icons.object(ui.ctx(), data, *k, 32) {
+            painter.image(t.id(), Rect::from_min_size(pos2(tr.left() + 6.0, tr.center().y - 16.0), vec2(32.0, 32.0)), uv(), Color32::WHITE);
+        }
+        let tx = tr.left() + 6.0 + 32.0 + 8.0;
+        let room = tr.right() - 6.0 - tx;
+        let top = tr.center().y - lh16;
+        jtext::draw(&painter, pos2(tx, top), Align2::LEFT_TOP, &widgets::fit(&painter, dungeon, &f16, room), &f16, p.ink);
+        let diff = data.difficulty.get(dungeon.as_str()).map_or("?".to_string(), |v| format!("{v}"));
+        let sub = if n > 0 { format!("{n} held  ·  difficulty {diff}") } else { format!("difficulty {diff}") };
+        jtext::draw(
+            &painter,
+            pos2(tx, top + lh16),
+            Align2::LEFT_TOP,
+            &widgets::fit(&painter, &sub, &f16, room),
+            &f16,
+            if n > 0 { p.gold } else { fixed::MUTED },
+        );
+    }
+    let rows = keys.len().div_ceil(cols) as f32;
+    y += rows * (TILE_H + GAP) - GAP + 12.0;
+    y - r.top()
 }
 
 /// The Keys page's details for one key, drawn from `at` in width `w`: a mystery key's possible dungeon keys, or a
