@@ -2127,6 +2127,24 @@ impl InventoryView {
             })
             .collect();
         shown.sort_by(|a, b| n_of(b).cmp(&n_of(a)).then(a.title.cmp(&b.title)));
+        let mock = if themed { SHINY_MOCKUP.load(std::sync::atomic::Ordering::Relaxed) } else { 0 };
+        let shiny_pieces = |s: &lg_gamedata::st_sets::StSet| s.pieces.map(|id| data.shiny_of.get(&id).copied().unwrap_or(0));
+        let twins: Vec<lg_gamedata::st_sets::StSet> = if mock == 1 {
+            shown
+                .iter()
+                .map(|s| lg_gamedata::st_sets::StSet {
+                    name: format!("{} shiny", s.name),
+                    title: format!("{} · Shiny", s.title),
+                    pieces: shiny_pieces(s),
+                    ..(*s).clone()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if mock == 1 {
+            shown = shown.iter().zip(&twins).flat_map(|(s, t)| [*s, t]).collect();
+        }
         // a tour's set: picked from what this page counts and shows
         if !themed && std::mem::take(&mut self.tour_pick) {
             let pick = shown
@@ -2259,7 +2277,9 @@ impl InventoryView {
                     let painter = ui.painter().clone();
                     let cw = ((r.width() - 12.0 - 20.0 - (cols - 1.0) * GAP) / cols).floor();
                     let lh = jtext::height(&painter, &text(18.0));
-                    let ch = 6.0 + 72.0 + 2.0 + lh + 2.0 + 6.0;
+                    // the second row (mockup 2): the shiny pieces under the plain ones
+                    let figure_h = if mock == 2 { 2.0 * TILE + 6.0 } else { 72.0 };
+                    let ch = 6.0 + figure_h + 2.0 + lh + 2.0 + 6.0;
                     if shown.is_empty() {
                         jtext::draw(
                             &painter,
@@ -2309,13 +2329,16 @@ impl InventoryView {
                         }
                         let n = n_of(s);
                         let done = n == 4;
-                        painter.rect_filled(cr, 0.0, if done { mix(p.gold, p.paper, 0.45) } else { p.header });
-                        painter.rect_stroke(
-                            cr,
-                            0.0,
-                            Stroke::new(if done { 2.0 } else { 1.0 }, if done { p.gold } else { Color32::BLACK }),
-                            StrokeKind::Inside,
-                        );
+                        // a shiny twin (mockup 1): silver, its pieces with no shiny version left empty
+                        let twin = mock == 1 && s.name.ends_with(" shiny");
+                        let (fill, edge) = match (twin, done) {
+                            (true, true) => (mix(SHINY, p.paper, 0.45), SHINY),
+                            (true, false) => (mix(SHINY, p.header, 0.88), mix(SHINY, Color32::BLACK, 0.4)),
+                            (false, true) => (mix(p.gold, p.paper, 0.45), p.gold),
+                            (false, false) => (p.header, Color32::BLACK),
+                        };
+                        painter.rect_filled(cr, 0.0, fill);
+                        painter.rect_stroke(cr, 0.0, Stroke::new(if done || twin { 2.0 } else { 1.0 }, edge), StrokeKind::Inside);
                         // a click on the card: the side shows what forging its missing pieces takes (again: hidden)
                         let selected = selected_name.as_deref() == Some(s.name.as_str());
                         if ui
@@ -2331,16 +2354,23 @@ impl InventoryView {
                         {
                             painter.image(
                                 t.id(),
-                                Rect::from_center_size(pos2(cr.left() + 6.0 + 36.0, cr.top() + 6.0 + 36.0), vec2(64.0, 64.0)),
+                                Rect::from_center_size(pos2(cr.left() + 6.0 + 36.0, cr.top() + 6.0 + figure_h / 2.0), vec2(64.0, 64.0)),
                                 uv(),
                                 Color32::WHITE,
                             );
                         }
                         // the four pieces beside the skin
                         let tx = cr.left() + 6.0 + 72.0 + 10.0;
-                        let ty = cr.top() + 6.0 + (72.0 - TILE) / 2.0;
+                        let ty = if mock == 2 { cr.top() + 6.0 } else { cr.top() + 6.0 + (72.0 - TILE) / 2.0 };
                         for (k, id) in s.pieces.iter().enumerate() {
                             let tr = Rect::from_min_size(pos2(tx + k as f32 * (TILE + 6.0), ty), vec2(TILE, TILE));
+                            // no shiny version of it: an empty dashed slot
+                            if *id == 0 {
+                                no_shiny(&painter, tr);
+                                ui.interact(tr, ui.scope_id().with(("no-shiny", &s.name, k)), Sense::hover())
+                                    .on_hover_text("No shiny version of this piece");
+                                continue;
+                            }
                             let have = has(*id);
                             // a missing piece whose craft is planned: a soft green under it
                             let planned_here = !have && planned_now.iter().any(|pl| pl.piece == *id);
@@ -2424,6 +2454,36 @@ impl InventoryView {
                                 piece_pick = Some(if selected && st_piece == Some(*id) { None } else { Some(*id) });
                             }
                         }
+                        // mockup 2: the shiny pieces in a second row, silver-framed
+                        if mock == 2 {
+                            for (k, id) in shiny_pieces(s).iter().enumerate() {
+                                let tr = Rect::from_min_size(pos2(tx + k as f32 * (TILE + 6.0), ty + TILE + 6.0), vec2(TILE, TILE));
+                                if *id == 0 {
+                                    no_shiny(&painter, tr);
+                                    ui.interact(tr, ui.scope_id().with(("no-shiny", &s.name, k)), Sense::hover())
+                                        .on_hover_text("No shiny version of this piece");
+                                    continue;
+                                }
+                                let have = has(*id);
+                                painter.rect_filled(
+                                    tr,
+                                    0.0,
+                                    if have { mix(SHINY, Color32::WHITE, 0.5) } else { Color32::from_rgb(5, 5, 5) },
+                                );
+                                if let Some(t) = icons.object(ui.ctx(), data, *id, (TILE - 10.0) as u32) {
+                                    painter.image(
+                                        t.id(),
+                                        Rect::from_center_size(tr.center(), vec2(TILE - 10.0, TILE - 10.0)),
+                                        uv(),
+                                        if have { Color32::WHITE } else { Color32::from_white_alpha(64) },
+                                    );
+                                }
+                                painter.rect_stroke(tr, 0.0, Stroke::new(1.5, mix(SHINY, Color32::BLACK, 0.3)), StrokeKind::Inside);
+                                let name = data.items.item(*id).map_or(String::new(), |i| i.name.clone());
+                                ui.interact(tr, ui.scope_id().with(("shiny-piece", *id, k)), Sense::hover())
+                                    .on_hover_text(format!("{name} (shiny){}", if have { "" } else { " - missing" }));
+                            }
+                        }
                         let token = token_of(s);
                         // the set: its name, its bonus, and the token the forge crafts its pieces from
                         let mut tip: Vec<widgets::TipLine> = vec![vec![(s.name.clone(), None, true)], vec![(s.bonus.clone(), None, false)]];
@@ -2443,7 +2503,14 @@ impl InventoryView {
                         }
                         // along the bottom: the name (underlined, smaller to fit), the class and count
                         let by = cr.bottom() - 6.0 - lh / 2.0 - 1.0;
-                        let cls = format!("{}{}", s.class_name, if done { String::new() } else { format!("   {n} / 4") });
+                        let cls = if mock == 2 {
+                            let sh = shiny_pieces(s);
+                            let have_sh = sh.iter().filter(|id| **id != 0 && has(**id)).count();
+                            let exist = sh.iter().filter(|id| **id != 0).count();
+                            format!("{}   {n} / 4  ·  shiny {have_sh} / {exist}", s.class_name)
+                        } else {
+                            format!("{}{}", s.class_name, if done { String::new() } else { format!("   {n} / 4") })
+                        };
                         let cls_w = 8.0 + 6.0 + jtext::width(&painter, &cls, &text(18.0));
                         let cx = cr.right() - 10.0 - cls_w;
                         painter.rect_filled(
@@ -2696,6 +2763,26 @@ impl InventoryView {
                 }
             },
         );
+    }
+}
+
+/// A set's slot for a piece that has no shiny version: empty, a dashed edge.
+fn no_shiny(painter: &egui::Painter, r: Rect) {
+    painter.rect_filled(r, 0.0, Color32::from_black_alpha(60));
+    let c = Color32::from_white_alpha(70);
+    let mut x = r.left();
+    while x < r.right() {
+        let e = (x + 4.0).min(r.right());
+        painter.line_segment([pos2(x, r.top() + 0.5), pos2(e, r.top() + 0.5)], Stroke::new(1.0, c));
+        painter.line_segment([pos2(x, r.bottom() - 0.5), pos2(e, r.bottom() - 0.5)], Stroke::new(1.0, c));
+        x += 8.0;
+    }
+    let mut y = r.top();
+    while y < r.bottom() {
+        let e = (y + 4.0).min(r.bottom());
+        painter.line_segment([pos2(r.left() + 0.5, y), pos2(r.left() + 0.5, e)], Stroke::new(1.0, c));
+        painter.line_segment([pos2(r.right() - 0.5, y), pos2(r.right() - 0.5, e)], Stroke::new(1.0, c));
+        y += 8.0;
     }
 }
 
@@ -3515,6 +3602,12 @@ struct BarLook {
     /// The card's own colour, fading down into the bar.
     card_fill: Color32,
 }
+
+/// Mockups of the themed sets with their shiny versions: 0 off, 1 a shiny twin card beside each set, 2 the shiny pieces
+/// in a second row of the card.
+pub static SHINY_MOCKUP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// A shiny's silver.
+const SHINY: Color32 = Color32::from_rgb(0xC9, 0xD8, 0xE8);
 
 /// Collector Mode (the ST Sets' forge suggestions; the optimization's too), its right end at `right_top`, `h` tall: a
 /// pill set into the page (darker, a shadow along its top, a light edge along its bottom) saying "COLLECTOR MODE",

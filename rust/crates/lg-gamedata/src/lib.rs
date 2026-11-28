@@ -133,6 +133,8 @@ pub struct GameData {
     pub st_sets: Vec<st_sets::StSet>,
     /// The themed sets (four untiered items around one look and class), shown as the ST sets are.
     pub themed_sets: Vec<st_sets::StSet>,
+    /// Each item's shiny copy, by the plain item.
+    pub shiny_of: HashMap<i32, i32>,
     /// How hard each dungeon is, as the game rates it.
     pub difficulty: HashMap<String, f64>,
     /// Dungeon key (item id) -> the dungeon its portal leads to.
@@ -187,6 +189,7 @@ impl GameData {
         }
         let themed = themed_sets::load(&d.items, |name| d.classes.iter().find(|c| c.name == name).map(|c| c.id));
         d.themed_sets = themed;
+        d.shiny_of = themed_sets::shiny_twins(&d.items);
         d.difficulty = difficulty::load(&assets.join("xml"));
         d.key_dungeons = difficulty::key_dungeons(&assets.join("xml"))
             .into_iter()

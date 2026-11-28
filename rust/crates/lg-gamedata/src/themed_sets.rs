@@ -128,6 +128,17 @@ pub const THEMED: [(&str, &str, &str, [&str; 4], &str); 17] = [
     ),
 ];
 
+/// Each item's shiny copy (the item showing the same name, labelled shiny), by the plain item.
+pub fn shiny_twins(items: &Items) -> std::collections::HashMap<i32, i32> {
+    let mut plain: std::collections::HashMap<&str, i32> = std::collections::HashMap::new();
+    for i in items.items.values().filter(|i| !i.is_shiny() && !i.name.is_empty()) {
+        // the lowest id for a name shown by several
+        let e = plain.entry(i.name.as_str()).or_insert(i.id);
+        *e = (*e).min(i.id);
+    }
+    items.items.values().filter(|i| i.is_shiny()).filter_map(|s| plain.get(s.name.as_str()).map(|p| (*p, s.id))).collect()
+}
+
 /// The themed sets whose four items the data has, in the list's order; `class_id` gives a class's object type by its
 /// name (the card's figure: the class as it starts out).
 pub fn load(items: &Items, class_id: impl Fn(&str) -> Option<i32>) -> Vec<StSet> {
